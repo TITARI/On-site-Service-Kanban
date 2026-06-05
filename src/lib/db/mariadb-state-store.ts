@@ -24,6 +24,13 @@ import type { AppState } from "../domain/app-state";
 import { createTicketService, type SubmitTicketInput } from "../services/ticket-service";
 import { processWechatWatchtowerMessage, type WatchtowerResult } from "../services/wechat-watchtower-service";
 import type { IntakeMessageInput } from "../services/message-intake-service";
+import type {
+  AgentRegistrationResult,
+  EventReceipt,
+  RegisterAgentInput,
+  SubmitEventsInput,
+  WechatEventInput
+} from "../integrations/wxauto/contracts";
 import { getDatabasePool, type DatabaseConnection, withDatabaseTransaction } from "./connection";
 
 type Row = RowDataPacket & Record<string, unknown>;
@@ -77,6 +84,24 @@ function dateOrNull(value?: string) {
 
 function stableId(prefix: string, value: string) {
   return `${prefix}-${createHash("sha256").update(value).digest("base64url")}`;
+}
+
+function eventToIntake(input: SubmitEventsInput, event: WechatEventInput): IntakeMessageInput {
+  return {
+    channel: "wechat",
+    externalMessageId: event.messageId,
+    senderId: event.senderId,
+    senderName: event.senderName,
+    senderGroup: event.conversationType === "group" ? event.conversationId : undefined,
+    sourceConversationId: event.conversationId,
+    text: event.text,
+    imageUrls: event.imageUrls,
+    receivedAt: event.receivedAt,
+    raw: {
+      wxautoDeviceId: input.deviceId,
+      sequence: event.sequence
+    }
+  };
 }
 
 function mergedConfig(config?: Partial<AppConfig>): AppConfig {
@@ -1433,6 +1458,116 @@ export class MariaDbStateStore {
       await this.writeState(state, connection);
       return result;
     });
+  }
+
+  async registerWxautoAgent(
+    input: RegisterAgentInput,
+    connection: DatabaseConnection = getDatabasePool()
+  ): Promise<AgentRegistrationResult> {
+    const now = new Date();
+    await execute(
+      connection,
+      `INSERT INTO wxauto_agents (
+        id, display_name, app_version, worker_version, windows_version,
+        wechat_process_state, wechat_login_state, safety_mode, capabilities_json,
+        last_seen_at, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON DUPLICATE KEY UPDATE
+        display_name = VALUES(display_name),
+        app_version = VALUES(app_version),
+        worker_version = VALUES(worker_version),
+        windows_version = VALUES(windows_version),
+        wechat_process_state = VALUES(wechat_process_state),
+        wechat_login_state = VALUES(wechat_login_state),
+        safety_mode = VALUES(safety_mode),
+        capabilities_json = VALUES(capabilities_json),
+        last_seen_at = VALUES(last_seen_at),
+        updated_at = VALUES(updated_at)`,
+      [
+        input.deviceId,
+        input.displayName,
+        input.appVersion,
+        input.workerVersion,
+        input.windowsVersion,
+        input.wechatProcessState,
+        input.wechatLoginState,
+        input.safetyMode,
+        json(input.capabilities),
+        now,
+        now,
+        now
+      ]
+    );
+
+    const config = await latestConfig(connection);
+    const integration = config.messageIntegrations?.find((item) => item.channel === "wechat");
+    return {
+      deviceId: input.deviceId,
+      serverTime: now.toISOString(),
+      minimumAppVersion: "0.1.0",
+      recommendedPollIntervalMs: 2000,
+      integrationEnabled: Boolean(integration?.enabled)
+    };
+  }
+
+  async submitWxautoEvents(
+    input: SubmitEventsInput,
+    suppliedConnection?: DatabaseConnection
+  ): Promise<EventReceipt[]> {
+    const work = async (connection: DatabaseConnection) => {
+      const receipts: EventReceipt[] = [];
+
+      for (const event of input.events) {
+        const receiptId = stableId("wxauto-receipt", `${input.deviceId}:${event.messageId}`);
+        const reservation = await execute(
+          connection,
+          `INSERT IGNORE INTO wxauto_event_receipts (
+            id, agent_id, message_id, inbound_message_id, action, result_json, created_at
+          ) VALUES (?, ?, ?, NULL, 'processing', ?, ?)`,
+          [
+            receiptId,
+            input.deviceId,
+            event.messageId,
+            json({ messageId: event.messageId, action: "duplicate" }),
+            new Date()
+          ]
+        );
+
+        if (reservation.affectedRows === 0) {
+          const [existing] = await rows<Row>(
+            connection,
+            "SELECT result_json FROM wxauto_event_receipts WHERE agent_id = ? AND message_id = ? LIMIT 1",
+            [input.deviceId, event.messageId]
+          );
+          receipts.push(parseJsonValue<EventReceipt>(
+            existing?.result_json,
+            { messageId: event.messageId, action: "duplicate" }
+          ));
+          continue;
+        }
+
+        const state = await this.readState(connection);
+        const result = await processWechatWatchtowerMessage(state, eventToIntake(input, event));
+        await this.writeState(state, connection);
+        const receipt: EventReceipt = {
+          messageId: event.messageId,
+          action: result.action,
+          inboundMessageId: result.record?.id
+        };
+        await execute(
+          connection,
+          `UPDATE wxauto_event_receipts
+          SET inbound_message_id = ?, action = ?, result_json = ?
+          WHERE id = ?`,
+          [result.record?.id ?? null, result.action, json(receipt), receiptId]
+        );
+        receipts.push(receipt);
+      }
+
+      return receipts;
+    };
+
+    return suppliedConnection ? work(suppliedConnection) : withDatabaseTransaction(work);
   }
 
   async claimOutboundMessages(limit = 10) {

@@ -8,6 +8,12 @@ import type { AppConfig } from "../seed";
 import type { SubmitTicketInput, SubmitTicketResult } from "../services/ticket-service";
 import type { IntakeMessageInput } from "../services/message-intake-service";
 import type { WatchtowerResult } from "../services/wechat-watchtower-service";
+import type {
+  AgentRegistrationResult,
+  EventReceipt,
+  RegisterAgentInput,
+  SubmitEventsInput
+} from "../integrations/wxauto/contracts";
 
 export type MobileBootstrapData = {
   tickets: TicketSummary[];
@@ -39,6 +45,8 @@ export type AppRepository = {
   saveTicket(ticket: Ticket, options?: { notificationText?: string }): Promise<Ticket>;
   submitTicket(input: SubmitTicketInput): Promise<SubmitTicketResult>;
   processWechatMessage(input: IntakeMessageInput): Promise<WatchtowerResult>;
+  registerWxautoAgent(input: RegisterAgentInput): Promise<AgentRegistrationResult>;
+  submitWxautoEvents(input: SubmitEventsInput): Promise<EventReceipt[]>;
   claimOutboundMessages(limit?: number): Promise<NonNullable<AppState["outboundMessages"]>>;
   markOutboundMessage(messageId: string, status: "sent" | "failed", error?: string): Promise<NonNullable<AppState["outboundMessages"]>[number] | undefined>;
   listWechatOrderLogs(limit?: number): Promise<WechatOrderLog[]>;
@@ -58,6 +66,8 @@ export function createMariaDbAppRepository(store = new MariaDbStateStore()): App
     saveTicket: (ticket, options) => store.saveTicket(ticket, options),
     submitTicket: (input) => store.submitTicket(input),
     processWechatMessage: (input) => store.processWechatMessage(input),
+    registerWxautoAgent: (input) => store.registerWxautoAgent(input),
+    submitWxautoEvents: (input) => store.submitWxautoEvents(input),
     claimOutboundMessages: (limit) => store.claimOutboundMessages(limit),
     markOutboundMessage: (messageId, status, error) => store.markOutboundMessage(messageId, status, error),
     listWechatOrderLogs: (limit = 100) => store.listWechatOrderLogs(limit)
