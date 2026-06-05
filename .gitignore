@@ -16,3 +16,6 @@ npm-debug.log*
 /release/
 *.zip
 /logs/
+*.tsbuildinfo
+/.tools/cloudflared.exe
+/@AutomationLog.txt
