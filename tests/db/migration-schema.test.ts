@@ -1,8 +1,9 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { splitSqlStatements } from "@/lib/db/migrations";
 
-describe("initial MariaDB schema", () => {
+describe("MariaDB migration schema", () => {
   const schema = readFileSync(path.join(process.cwd(), "db", "migrations", "001_initial_schema.sql"), "utf-8");
   const keywordRuleSetSchema = readFileSync(path.join(process.cwd(), "db", "migrations", "002_keyword_rule_sets.sql"), "utf-8");
   const wxautoSchema = readFileSync(path.join(process.cwd(), "db", "migrations", "003_wxauto_mcp.sql"), "utf-8");
@@ -59,6 +60,17 @@ describe("initial MariaDB schema", () => {
   });
 
   it("adds durable wxauto MCP agent, receipt, attempt and release storage", () => {
+    const outboundAlterFragments = [
+      "ALTER TABLE outbound_messages",
+      "ADD COLUMN claimed_by_agent_id varchar(128) NULL AFTER claimed_at",
+      "ADD COLUMN lease_id varchar(64) NULL AFTER claimed_by_agent_id",
+      "ADD COLUMN lease_expires_at datetime(3) NULL AFTER lease_id",
+      "ADD COLUMN safety_rule varchar(120) NULL AFTER last_error",
+      "ADD UNIQUE KEY uniq_outbound_lease (lease_id)",
+      "ADD KEY idx_outbound_agent_lease (claimed_by_agent_id, lease_expires_at)",
+      "ADD KEY idx_outbound_lease_expiry (status, lease_expires_at, created_at)"
+    ];
+
     [
       "wxauto_agents",
       "wxauto_event_receipts",
@@ -71,5 +83,17 @@ describe("initial MariaDB schema", () => {
     expect(wxautoSchema).toContain("lease_expires_at datetime(3) NULL");
     expect(wxautoSchema).toContain("uniq_wxauto_event");
     expect(wxautoSchema).toContain("uniq_outbound_attempt_lease");
+
+    outboundAlterFragments.forEach((fragment) => {
+      expect(wxautoSchema).toContain(fragment);
+    });
+
+    const statements = splitSqlStatements(wxautoSchema);
+    expect(statements).toHaveLength(5);
+    const outboundAlter = statements.find((statement) => statement.includes("ALTER TABLE outbound_messages"));
+    expect(outboundAlter).toBeDefined();
+    outboundAlterFragments.forEach((fragment) => {
+      expect(outboundAlter).toContain(fragment);
+    });
   });
 });

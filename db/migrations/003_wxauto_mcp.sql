@@ -33,7 +33,8 @@ ALTER TABLE outbound_messages
   ADD COLUMN lease_expires_at datetime(3) NULL AFTER lease_id,
   ADD COLUMN safety_rule varchar(120) NULL AFTER last_error,
   ADD UNIQUE KEY uniq_outbound_lease (lease_id),
-  ADD KEY idx_outbound_agent_lease (claimed_by_agent_id, lease_expires_at);
+  ADD KEY idx_outbound_agent_lease (claimed_by_agent_id, lease_expires_at),
+  ADD KEY idx_outbound_lease_expiry (status, lease_expires_at, created_at);
 
 CREATE TABLE IF NOT EXISTS outbound_message_attempts (
   id varchar(64) NOT NULL PRIMARY KEY,
