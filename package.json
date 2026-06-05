@@ -1,0 +1,39 @@
+{
+  "name": "internal-collaboration-board",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "dev:external": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\start-external.ps1",
+    "build": "next build",
+    "start": "next start",
+    "start:external": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\start-external.ps1 -Mode prod",
+    "restart:external": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\start-external.ps1 -Mode prod -Restart",
+    "test": "vitest",
+    "test:run": "vitest run",
+    "db:migrate": "node scripts/db-migrate.mjs",
+    "db:import-state": "node scripts/db-import-state.mjs",
+    "bridge:wxauto": "node scripts/wxauto-rest-bridge.mjs"
+  },
+  "dependencies": {
+    "lucide-react": "latest",
+    "mysql2": "^3.22.4",
+    "next": "latest",
+    "react": "latest",
+    "react-dom": "latest",
+    "xlsx": "latest",
+    "zod": "latest"
+  },
+  "devDependencies": {
+    "@testing-library/jest-dom": "latest",
+    "@testing-library/react": "latest",
+    "@testing-library/user-event": "latest",
+    "@types/node": "latest",
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
+    "@vitejs/plugin-react": "latest",
+    "jsdom": "latest",
+    "typescript": "latest",
+    "vitest": "latest"
+  }
+}

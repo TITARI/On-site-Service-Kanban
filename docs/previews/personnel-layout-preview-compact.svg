@@ -1,0 +1,116 @@
+﻿<svg width="780" height="1180" viewBox="0 0 780 1180" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="80" y1="10" x2="710" y2="1120" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F7EBD8"/>
+      <stop offset="0.52" stop-color="#FAF7EF"/>
+      <stop offset="1" stop-color="#EAF3EA"/>
+    </linearGradient>
+    <linearGradient id="phone" x1="78" y1="50" x2="696" y2="1120" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFDF7" stop-opacity="0.98"/>
+      <stop offset="1" stop-color="#F0F6EE" stop-opacity="0.96"/>
+    </linearGradient>
+    <linearGradient id="card" x1="104" y1="302" x2="676" y2="812" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFDF7"/>
+      <stop offset="1" stop-color="#EEF6ED"/>
+    </linearGradient>
+    <linearGradient id="green" x1="126" y1="306" x2="620" y2="760" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#1F6A4D"/>
+      <stop offset="1" stop-color="#F1A93B"/>
+    </linearGradient>
+    <filter id="shadow" x="0" y="0" width="780" height="1180" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="24" stdDeviation="25" flood-color="#20362B" flood-opacity="0.13"/>
+    </filter>
+    <filter id="soft" x="0" y="0" width="780" height="1180" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="10" stdDeviation="12" flood-color="#20362B" flood-opacity="0.07"/>
+    </filter>
+    <style>
+      .sans { font-family: "Microsoft YaHei", "PingFang SC", "HarmonyOS Sans SC", Arial, sans-serif; }
+      .muted { fill: #6C746D; font-weight: 800; }
+      .title { fill: #17231D; font-weight: 900; letter-spacing: -0.7px; }
+      .green { fill: #1F6A4D; font-weight: 900; }
+      .amber { fill: #A86112; font-weight: 900; }
+    </style>
+  </defs>
+
+  <rect width="780" height="1180" fill="url(#bg)"/>
+  <circle cx="675" cy="98" r="110" fill="#FFD181" fill-opacity="0.30"/>
+  <circle cx="96" cy="246" r="148" fill="#4E8E64" fill-opacity="0.15"/>
+
+  <g filter="url(#shadow)">
+    <rect x="70" y="50" width="640" height="1080" rx="56" fill="url(#phone)" stroke="white" stroke-opacity="0.68" stroke-width="2"/>
+  </g>
+  <rect x="104" y="92" width="572" height="982" rx="34" fill="#FFFFFF" fill-opacity="0.43"/>
+
+  <g class="sans">
+    <text x="126" y="148" class="muted" font-size="23">工单详情</text>
+    <text x="126" y="194" class="title" font-size="36">A01 星河科技 搭建</text>
+    <rect x="126" y="222" width="116" height="38" rx="19" fill="#E9F6EF"/>
+    <text x="151" y="248" class="green" font-size="20">处理中</text>
+    <rect x="254" y="222" width="96" height="38" rx="19" fill="#FFF0D2"/>
+    <text x="280" y="248" class="amber" font-size="20">紧急</text>
+  </g>
+
+  <g filter="url(#shadow)">
+    <rect x="104" y="300" width="572" height="560" rx="32" fill="url(#card)" stroke="#FFFFFF" stroke-opacity="0.78" stroke-width="2"/>
+  </g>
+
+  <g class="sans">
+    <rect x="126" y="325" width="7" height="34" rx="4" fill="url(#green)"/>
+    <text x="148" y="354" class="title" font-size="32">相关人员</text>
+    <rect x="508" y="318" width="120" height="40" rx="20" fill="#E7F1E9"/>
+    <text x="534" y="345" class="green" font-size="20">4 人参与</text>
+
+    <g filter="url(#soft)">
+      <rect x="126" y="386" width="252" height="132" rx="24" fill="#FFFDF7" stroke="#DFE9DF"/>
+      <circle cx="162" cy="425" r="20" fill="#E9F6EF"/>
+      <path d="M162 416a9 9 0 1 1 0 18a9 9 0 0 1 0-18Zm-17 41c3-13 12-19 17-19s14 6 17 19" stroke="#1F6A4D" stroke-width="4" stroke-linecap="round"/>
+      <text x="194" y="432" class="muted" font-size="22">提交人</text>
+      <text x="146" y="477" class="title" font-size="27">现场成员</text>
+      <text x="146" y="506" class="green" font-size="20">13800138000</text>
+    </g>
+
+    <g filter="url(#soft)">
+      <rect x="402" y="386" width="252" height="132" rx="24" fill="#FFFDF7" stroke="#DFE9DF"/>
+      <circle cx="438" cy="425" r="20" fill="#EDF0F7"/>
+      <path d="M430 435l20-20M444 414l7 7M427 438l-6 8" stroke="#506186" stroke-width="4" stroke-linecap="round"/>
+      <text x="470" y="432" class="muted" font-size="22">处理人</text>
+      <text x="422" y="477" class="title" font-size="27">搭建王工</text>
+      <text x="422" y="506" class="green" font-size="20">13700137000</text>
+    </g>
+
+    <g filter="url(#soft)">
+      <rect x="126" y="536" width="528" height="72" rx="24" fill="#F5F9F4" stroke="#DFE9DF"/>
+      <circle cx="164" cy="572" r="20" fill="#E7F1E9"/>
+      <path d="M151 572h26M164 559v26" stroke="#1F6A4D" stroke-width="4" stroke-linecap="round"/>
+      <text x="198" y="565" class="muted" font-size="21">处理组</text>
+      <text x="198" y="595" class="title" font-size="26">搭建组</text>
+      <rect x="528" y="552" width="86" height="38" rx="19" fill="#FFFFFF"/>
+      <text x="549" y="578" class="green" font-size="19">可认领</text>
+    </g>
+
+    <text x="126" y="660" class="muted" font-size="23">反馈用户</text>
+    <text x="536" y="660" class="muted" font-size="20">最近反馈</text>
+
+    <g filter="url(#soft)">
+      <rect x="126" y="682" width="528" height="56" rx="20" fill="#FFFFFF" fill-opacity="0.88" stroke="#E4ECE3"/>
+      <circle cx="158" cy="710" r="16" fill="#1F6A4D" fill-opacity="0.12"/>
+      <text x="152" y="718" class="green" font-size="18">1</text>
+      <text x="188" y="704" class="title" font-size="24">现场成员</text>
+      <text x="188" y="727" class="muted" font-size="18">13800138000</text>
+      <text x="552" y="718" class="amber" font-size="20">16:00</text>
+    </g>
+
+    <g filter="url(#soft)">
+      <rect x="126" y="750" width="528" height="56" rx="20" fill="#FFFFFF" fill-opacity="0.72" stroke="#E4ECE3"/>
+      <circle cx="158" cy="778" r="16" fill="#1F6A4D" fill-opacity="0.12"/>
+      <text x="152" y="786" class="green" font-size="18">2</text>
+      <text x="188" y="772" class="title" font-size="24">巡场同事</text>
+      <text x="188" y="795" class="muted" font-size="18">13900139000</text>
+      <text x="552" y="786" class="amber" font-size="20">16:05</text>
+    </g>
+
+    <rect x="126" y="896" width="528" height="76" rx="24" fill="#F8FBF6" stroke="#E0E9DF"/>
+    <text x="154" y="927" class="muted" font-size="22">更紧凑版</text>
+    <text x="154" y="958" class="muted" font-size="19">主责人员仍清楚，但整体高度更低，第一屏可容纳更多工单信息。</text>
+  </g>
+</svg>

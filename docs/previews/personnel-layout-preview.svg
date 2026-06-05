@@ -1,0 +1,120 @@
+﻿<svg width="780" height="1340" viewBox="0 0 780 1340" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="84" y1="12" x2="710" y2="1220" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F7EBD8"/>
+      <stop offset="0.48" stop-color="#FAF7EF"/>
+      <stop offset="1" stop-color="#EAF3EA"/>
+    </linearGradient>
+    <linearGradient id="phone" x1="89" y1="64" x2="690" y2="1262" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFDF7" stop-opacity="0.98"/>
+      <stop offset="1" stop-color="#F0F6EE" stop-opacity="0.96"/>
+    </linearGradient>
+    <linearGradient id="card" x1="92" y1="290" x2="692" y2="1020" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFDF7"/>
+      <stop offset="1" stop-color="#EEF6ED"/>
+    </linearGradient>
+    <linearGradient id="green" x1="108" y1="312" x2="690" y2="998" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#1F6A4D"/>
+      <stop offset="1" stop-color="#F1A93B"/>
+    </linearGradient>
+    <filter id="shadow" x="0" y="0" width="780" height="1340" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="28" stdDeviation="28" flood-color="#20362B" flood-opacity="0.14"/>
+    </filter>
+    <filter id="soft" x="0" y="0" width="780" height="1340" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="14" stdDeviation="14" flood-color="#20362B" flood-opacity="0.08"/>
+    </filter>
+    <style>
+      .sans { font-family: "Microsoft YaHei", "PingFang SC", "HarmonyOS Sans SC", Arial, sans-serif; }
+      .label { fill: #6C746D; font-size: 24px; font-weight: 800; }
+      .small { fill: #6C746D; font-size: 21px; font-weight: 700; }
+      .title { fill: #17231D; font-size: 38px; font-weight: 900; letter-spacing: -0.8px; }
+      .name { fill: #17231D; font-size: 30px; font-weight: 900; }
+      .phone { fill: #1F6A4D; font-size: 22px; font-weight: 850; }
+      .chip { fill: #1F6A4D; font-size: 21px; font-weight: 900; }
+      .time { fill: #A86112; font-size: 20px; font-weight: 900; }
+    </style>
+  </defs>
+
+  <rect width="780" height="1340" rx="0" fill="url(#bg)"/>
+  <circle cx="676" cy="118" r="122" fill="#FFD181" fill-opacity="0.32"/>
+  <circle cx="102" cy="268" r="160" fill="#4E8E64" fill-opacity="0.16"/>
+
+  <g filter="url(#shadow)">
+    <rect x="70" y="54" width="640" height="1228" rx="58" fill="url(#phone)" stroke="white" stroke-opacity="0.66" stroke-width="2"/>
+  </g>
+
+  <rect x="104" y="100" width="572" height="1112" rx="34" fill="#FFFFFF" fill-opacity="0.45"/>
+
+  <g class="sans">
+    <text x="126" y="164" class="label">工单详情</text>
+    <text x="126" y="213" class="title">A01 星河科技 搭建</text>
+    <rect x="126" y="244" width="134" height="42" rx="21" fill="#E9F6EF"/>
+    <text x="151" y="273" class="chip">处理中</text>
+    <rect x="274" y="244" width="114" height="42" rx="21" fill="#FFF0D2"/>
+    <text x="299" y="273" fill="#A86112" font-size="21" font-weight="900">紧急</text>
+  </g>
+
+  <g filter="url(#shadow)">
+    <rect x="104" y="326" width="572" height="678" rx="34" fill="url(#card)" stroke="#FFFFFF" stroke-opacity="0.76" stroke-width="2"/>
+  </g>
+
+  <g class="sans">
+    <rect x="126" y="352" width="8" height="38" rx="4" fill="url(#green)"/>
+    <text x="148" y="383" class="title" font-size="34">相关人员</text>
+    <rect x="496" y="350" width="132" height="44" rx="22" fill="#E7F1E9"/>
+    <text x="523" y="379" class="chip">4 人参与</text>
+
+    <g filter="url(#soft)">
+      <rect x="126" y="426" width="252" height="178" rx="28" fill="#FFFDF7" stroke="#DFE9DF"/>
+      <circle cx="166" cy="468" r="24" fill="#E9F6EF"/>
+      <path d="M166 456a12 12 0 1 1 0 24a12 12 0 0 1 0-24Zm-22 54c4-16 16-24 22-24s18 8 22 24" stroke="#1F6A4D" stroke-width="5" stroke-linecap="round"/>
+      <text x="202" y="468" class="label">提交人</text>
+      <text x="148" y="535" class="name">现场成员</text>
+      <text x="148" y="571" class="phone">13800138000</text>
+    </g>
+
+    <g filter="url(#soft)">
+      <rect x="402" y="426" width="252" height="178" rx="28" fill="#FFFDF7" stroke="#DFE9DF"/>
+      <circle cx="442" cy="468" r="24" fill="#EDF0F7"/>
+      <path d="M432 480l24-24M448 456l8 8M429 483l-7 10" stroke="#506186" stroke-width="5" stroke-linecap="round"/>
+      <text x="478" y="468" class="label">处理人</text>
+      <text x="424" y="535" class="name">搭建王工</text>
+      <text x="424" y="571" class="phone">13700137000</text>
+    </g>
+
+    <g filter="url(#soft)">
+      <rect x="126" y="630" width="528" height="96" rx="28" fill="#F5F9F4" stroke="#DFE9DF"/>
+      <circle cx="170" cy="678" r="25" fill="#E7F1E9"/>
+      <path d="M154 678h32M170 662v32" stroke="#1F6A4D" stroke-width="5" stroke-linecap="round"/>
+      <text x="212" y="669" class="label">处理组</text>
+      <text x="212" y="704" class="name" font-size="28">搭建组</text>
+      <rect x="524" y="657" width="94" height="42" rx="21" fill="#FFFFFF"/>
+      <text x="546" y="685" class="chip">可认领</text>
+    </g>
+
+    <text x="126" y="786" class="label">反馈用户</text>
+    <text x="540" y="786" class="small">按最近反馈排序</text>
+
+    <g filter="url(#soft)">
+      <rect x="126" y="816" width="528" height="72" rx="24" fill="#FFFFFF" fill-opacity="0.86" stroke="#E4ECE3"/>
+      <circle cx="163" cy="852" r="18" fill="#1F6A4D" fill-opacity="0.12"/>
+      <text x="156" y="860" fill="#1F6A4D" font-size="20" font-weight="900">1</text>
+      <text x="196" y="846" class="name" font-size="25">现场成员</text>
+      <text x="196" y="875" class="small">13800138000</text>
+      <text x="544" y="861" class="time">16:00</text>
+    </g>
+
+    <g filter="url(#soft)">
+      <rect x="126" y="904" width="528" height="72" rx="24" fill="#FFFFFF" fill-opacity="0.72" stroke="#E4ECE3"/>
+      <circle cx="163" cy="940" r="18" fill="#1F6A4D" fill-opacity="0.12"/>
+      <text x="156" y="948" fill="#1F6A4D" font-size="20" font-weight="900">2</text>
+      <text x="196" y="934" class="name" font-size="25">巡场同事</text>
+      <text x="196" y="963" class="small">13900139000</text>
+      <text x="544" y="949" class="time">16:05</text>
+    </g>
+
+    <rect x="126" y="1034" width="528" height="96" rx="28" fill="#F8FBF6" stroke="#E0E9DF"/>
+    <text x="154" y="1074" class="label">排版思路</text>
+    <text x="154" y="1111" class="small">核心责任人卡片化，反馈人收成紧凑列表，电话和时间不丢。</text>
+  </g>
+</svg>
