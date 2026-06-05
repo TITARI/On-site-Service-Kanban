@@ -139,9 +139,41 @@ export type OutboundMessage = {
   retryCount: number;
   lastError?: string;
   claimedAt?: string;
+  claimedByAgentId?: string;
+  leaseId?: string;
+  leaseExpiresAt?: string;
+  safetyRule?: string;
   sentAt?: string;
   createdAt: string;
   updatedAt: string;
+};
+
+export type WxautoAgent = {
+  id: string;
+  displayName: string;
+  appVersion: string;
+  workerVersion: string;
+  windowsVersion: string;
+  wechatProcessState: "running" | "not_running" | "unknown";
+  wechatLoginState: "logged_in" | "logged_out" | "unknown";
+  safetyMode: "strict";
+  capabilities: Array<"text" | "image">;
+  lastSeenAt: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type WxautoRelease = {
+  version: string;
+  channel: string;
+  fileName: string;
+  filePath: string;
+  fileSize: number;
+  sha256: string;
+  releaseNotes: string;
+  manifest: Record<string, unknown>;
+  signature: string;
+  publishedAt: string;
 };
 
 export type MessageIntegrationConfig = {
