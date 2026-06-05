@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 describe("initial MariaDB schema", () => {
   const schema = readFileSync(path.join(process.cwd(), "db", "migrations", "001_initial_schema.sql"), "utf-8");
   const keywordRuleSetSchema = readFileSync(path.join(process.cwd(), "db", "migrations", "002_keyword_rule_sets.sql"), "utf-8");
+  const wxautoSchema = readFileSync(path.join(process.cwd(), "db", "migrations", "003_wxauto_mcp.sql"), "utf-8");
 
   it("creates the core tables required by the database design", () => {
     [
@@ -55,5 +56,20 @@ describe("initial MariaDB schema", () => {
     expect(keywordRuleSetSchema).toContain("INSERT IGNORE INTO keyword_terms");
     expect(keywordRuleSetSchema).toContain("uniq_keyword_term_per_rule_set");
     expect(keywordRuleSetSchema).toContain("idx_keyword_match_logs_message");
+  });
+
+  it("adds durable wxauto MCP agent, receipt, attempt and release storage", () => {
+    [
+      "wxauto_agents",
+      "wxauto_event_receipts",
+      "outbound_message_attempts",
+      "wxauto_releases"
+    ].forEach((table) => {
+      expect(wxautoSchema).toContain(`CREATE TABLE IF NOT EXISTS ${table}`);
+    });
+    expect(wxautoSchema).toContain("lease_id varchar(64) NULL");
+    expect(wxautoSchema).toContain("lease_expires_at datetime(3) NULL");
+    expect(wxautoSchema).toContain("uniq_wxauto_event");
+    expect(wxautoSchema).toContain("uniq_outbound_attempt_lease");
   });
 });
