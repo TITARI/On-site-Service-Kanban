@@ -124,7 +124,7 @@ export type PendingWorkOrderSession = {
   lastPromptAt?: string;
 };
 
-export type OutboundMessageStatus = "pending" | "sending" | "sent" | "failed";
+export type OutboundMessageStatus = "pending" | "sending" | "sent" | "failed" | "blocked";
 
 export type OutboundMessage = {
   id: string;

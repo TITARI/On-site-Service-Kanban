@@ -22,12 +22,23 @@ describe("app repository", () => {
       integrationEnabled: true
     };
     const receipts = [{ messageId: "wx-1", action: "ignored" as const }];
+    const leases = [{
+      messageId: "outbound-1",
+      leaseId: "lease-1",
+      leaseExpiresAt: "2026-06-05T08:02:00.000Z",
+      targetName: "现场群",
+      text: "工单已创建",
+      createdAt: "2026-06-05T08:00:00.000Z"
+    }];
+    const completion = { accepted: true };
     const store = {
       getConfig: vi.fn(async () => config),
       saveTicket: vi.fn(async (ticket) => ticket),
       listWechatOrderLogs: vi.fn(async () => []),
       registerWxautoAgent: vi.fn(async () => registration),
-      submitWxautoEvents: vi.fn(async () => receipts)
+      submitWxautoEvents: vi.fn(async () => receipts),
+      claimWxautoOutbound: vi.fn(async () => leases),
+      completeWxautoOutbound: vi.fn(async () => completion)
     } as unknown as MariaDbStateStore;
     const repository = createMariaDbAppRepository(store);
     const registerInput = {
@@ -54,15 +65,31 @@ describe("app repository", () => {
         receivedAt: "2026-06-05T08:00:00.000Z"
       }]
     };
+    const claimInput = {
+      deviceId: "device-a",
+      limit: 10,
+      supportedMessageTypes: ["text" as const]
+    };
+    const completeInput = {
+      deviceId: "device-a",
+      messageId: "outbound-1",
+      leaseId: "lease-1",
+      status: "sent" as const,
+      attemptedAt: "2026-06-05T08:01:00.000Z"
+    };
 
     await expect(repository.getConfig()).resolves.toBe(config);
     await expect(repository.listWechatOrderLogs(20)).resolves.toEqual([]);
     await expect(repository.registerWxautoAgent(registerInput)).resolves.toBe(registration);
     await expect(repository.submitWxautoEvents(submitInput)).resolves.toBe(receipts);
+    await expect(repository.claimWxautoOutbound(claimInput)).resolves.toBe(leases);
+    await expect(repository.completeWxautoOutbound(completeInput)).resolves.toBe(completion);
 
     expect(store.getConfig).toHaveBeenCalledOnce();
     expect(store.listWechatOrderLogs).toHaveBeenCalledWith(20);
     expect(store.registerWxautoAgent).toHaveBeenCalledWith(registerInput);
     expect(store.submitWxautoEvents).toHaveBeenCalledWith(submitInput);
+    expect(store.claimWxautoOutbound).toHaveBeenCalledWith(claimInput);
+    expect(store.completeWxautoOutbound).toHaveBeenCalledWith(completeInput);
   });
 });

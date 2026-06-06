@@ -1,5 +1,5 @@
 import type { AppState } from "../domain/app-state";
-import type { KeywordGroup, Ticket } from "../domain/types";
+import type { KeywordGroup, OutboundMessage, Ticket } from "../domain/types";
 import type { TicketSummary } from "../domain/ticket-summary";
 import { MariaDbStateStore, type WechatOrderLog } from "../db/mariadb-state-store";
 import { resolveStorageMode, type StorageMode } from "../db/storage-mode";
@@ -10,7 +10,10 @@ import type { IntakeMessageInput } from "../services/message-intake-service";
 import type { WatchtowerResult } from "../services/wechat-watchtower-service";
 import type {
   AgentRegistrationResult,
+  ClaimOutboundInput,
+  CompleteOutboundInput,
   EventReceipt,
+  OutboundLease,
   RegisterAgentInput,
   SubmitEventsInput
 } from "../integrations/wxauto/contracts";
@@ -47,6 +50,8 @@ export type AppRepository = {
   processWechatMessage(input: IntakeMessageInput): Promise<WatchtowerResult>;
   registerWxautoAgent(input: RegisterAgentInput): Promise<AgentRegistrationResult>;
   submitWxautoEvents(input: SubmitEventsInput): Promise<EventReceipt[]>;
+  claimWxautoOutbound(input: ClaimOutboundInput): Promise<OutboundLease[]>;
+  completeWxautoOutbound(input: CompleteOutboundInput): Promise<{ accepted: boolean; message?: OutboundMessage }>;
   claimOutboundMessages(limit?: number): Promise<NonNullable<AppState["outboundMessages"]>>;
   markOutboundMessage(messageId: string, status: "sent" | "failed", error?: string): Promise<NonNullable<AppState["outboundMessages"]>[number] | undefined>;
   listWechatOrderLogs(limit?: number): Promise<WechatOrderLog[]>;
@@ -68,6 +73,8 @@ export function createMariaDbAppRepository(store = new MariaDbStateStore()): App
     processWechatMessage: (input) => store.processWechatMessage(input),
     registerWxautoAgent: (input) => store.registerWxautoAgent(input),
     submitWxautoEvents: (input) => store.submitWxautoEvents(input),
+    claimWxautoOutbound: (input) => store.claimWxautoOutbound(input),
+    completeWxautoOutbound: (input) => store.completeWxautoOutbound(input),
     claimOutboundMessages: (limit) => store.claimOutboundMessages(limit),
     markOutboundMessage: (messageId, status, error) => store.markOutboundMessage(messageId, status, error),
     listWechatOrderLogs: (limit = 100) => store.listWechatOrderLogs(limit)
