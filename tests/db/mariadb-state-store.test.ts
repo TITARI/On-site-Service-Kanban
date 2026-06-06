@@ -123,6 +123,19 @@ function fakeConnection(): DatabaseConnection {
         created_at: rowDate(),
         updated_at: rowDate()
       }]];
+      if (sql.includes("FROM wxauto_releases")) return [[{
+        version: "0.2.0",
+        channel: "stable",
+        file_name: "wxauto-desktop-Setup-0.2.0.exe",
+        file_path: "data/wxauto-updates/0.2.0/wxauto-desktop-Setup-0.2.0.exe",
+        file_size: 123,
+        sha256: "a".repeat(64),
+        release_notes: "Test release",
+        manifest_json: JSON.stringify({ payload: "{\"version\":\"0.2.0\"}" }),
+        signature: "base64-signature",
+        published_at: rowDate(),
+        created_at: rowDate()
+      }]];
       return [[]];
     })
   } as unknown as DatabaseConnection;
@@ -143,6 +156,11 @@ describe("MariaDbStateStore", () => {
       id: "device-a",
       displayName: "Front Desk PC",
       wechatLoginState: "logged_in"
+    })]);
+    expect(data.wxautoReleases).toEqual([expect.objectContaining({
+      version: "0.2.0",
+      channel: "stable",
+      fileName: "wxauto-desktop-Setup-0.2.0.exe"
     })]);
   });
 });

@@ -45,11 +45,26 @@ describe("app repository", () => {
       createdAt: "2026-06-05T08:00:00.000Z",
       updatedAt: "2026-06-05T08:00:00.000Z"
     }];
+    const release = {
+      version: "0.2.0",
+      channel: "stable",
+      fileName: "wxauto-desktop-Setup-0.2.0.exe",
+      filePath: "data/wxauto-updates/0.2.0/wxauto-desktop-Setup-0.2.0.exe",
+      fileSize: 123,
+      sha256: "a".repeat(64),
+      releaseNotes: "Test release",
+      manifest: { payload: "{\"version\":\"0.2.0\"}" },
+      signature: "base64-signature",
+      publishedAt: "2026-06-05T08:00:00.000Z"
+    };
     const store = {
       getConfig: vi.fn(async () => config),
       saveTicket: vi.fn(async (ticket) => ticket),
       listWechatOrderLogs: vi.fn(async () => []),
       listWxautoAgents: vi.fn(async () => agents),
+      listWxautoReleases: vi.fn(async () => [release]),
+      saveWxautoRelease: vi.fn(async (input) => input),
+      getWxautoRelease: vi.fn(async () => release),
       registerWxautoAgent: vi.fn(async () => registration),
       submitWxautoEvents: vi.fn(async () => receipts),
       claimWxautoOutbound: vi.fn(async () => leases),
@@ -100,10 +115,16 @@ describe("app repository", () => {
     await expect(repository.claimWxautoOutbound(claimInput)).resolves.toBe(leases);
     await expect(repository.completeWxautoOutbound(completeInput)).resolves.toBe(completion);
     await expect(repository.listWxautoAgents()).resolves.toBe(agents);
+    await expect(repository.listWxautoReleases()).resolves.toEqual([release]);
+    await expect(repository.saveWxautoRelease(release)).resolves.toBe(release);
+    await expect(repository.getWxautoRelease("0.2.0")).resolves.toBe(release);
 
     expect(store.getConfig).toHaveBeenCalledOnce();
     expect(store.listWechatOrderLogs).toHaveBeenCalledWith(20);
     expect(store.listWxautoAgents).toHaveBeenCalledOnce();
+    expect(store.listWxautoReleases).toHaveBeenCalledOnce();
+    expect(store.saveWxautoRelease).toHaveBeenCalledWith(release);
+    expect(store.getWxautoRelease).toHaveBeenCalledWith("0.2.0");
     expect(store.registerWxautoAgent).toHaveBeenCalledWith(registerInput);
     expect(store.submitWxautoEvents).toHaveBeenCalledWith(submitInput);
     expect(store.claimWxautoOutbound).toHaveBeenCalledWith(claimInput);

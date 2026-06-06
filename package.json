@@ -13,7 +13,8 @@
     "test:run": "vitest run",
     "db:migrate": "node scripts/db-migrate.mjs",
     "db:import-state": "node scripts/db-import-state.mjs",
-    "bridge:wxauto": "node scripts/wxauto-rest-bridge.mjs"
+    "bridge:wxauto": "node scripts/wxauto-rest-bridge.mjs",
+    "update:keys": "node scripts/generate-wxauto-update-keys.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.29.0",

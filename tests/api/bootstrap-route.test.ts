@@ -92,6 +92,18 @@ describe("bootstrap route", () => {
         lastSeenAt: "2026-06-05T08:00:00.000Z",
         createdAt: "2026-06-05T08:00:00.000Z",
         updatedAt: "2026-06-05T08:00:00.000Z"
+      }],
+      wxautoReleases: [{
+        version: "0.2.0",
+        channel: "stable",
+        fileName: "wxauto-desktop-Setup-0.2.0.exe",
+        filePath: "data/wxauto-updates/0.2.0/wxauto-desktop-Setup-0.2.0.exe",
+        fileSize: 123,
+        sha256: "a".repeat(64),
+        releaseNotes: "Test release",
+        manifest: { payload: "{\"version\":\"0.2.0\"}" },
+        signature: "base64-signature",
+        publishedAt: "2026-06-05T08:00:00.000Z"
       }]
     });
     store.mobileBootstrap.mockResolvedValue({
@@ -155,6 +167,13 @@ describe("bootstrap route", () => {
         id: "device-a",
         displayName: "Front Desk PC",
         wechatLoginState: "logged_in"
+      })
+    ]);
+    expect(payload.wxautoReleases).toEqual([
+      expect.objectContaining({
+        version: "0.2.0",
+        channel: "stable",
+        fileName: "wxauto-desktop-Setup-0.2.0.exe"
       })
     ]);
   });

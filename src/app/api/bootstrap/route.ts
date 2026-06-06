@@ -33,6 +33,7 @@ export async function GET(request: Request) {
     pendingWorkOrderSessions: state.pendingWorkOrderSessions ?? [],
     outboundMessages: state.outboundMessages ?? [],
     wxautoAgents: state.wxautoAgents ?? [],
+    wxautoReleases: state.wxautoReleases ?? [],
     config: stripConfigSecrets(state.config)
   });
 }

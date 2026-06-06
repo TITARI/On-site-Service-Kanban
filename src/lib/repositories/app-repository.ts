@@ -1,5 +1,5 @@
 import type { AppState } from "../domain/app-state";
-import type { KeywordGroup, OutboundMessage, Ticket, WxautoAgent } from "../domain/types";
+import type { KeywordGroup, OutboundMessage, Ticket, WxautoAgent, WxautoRelease } from "../domain/types";
 import type { TicketSummary } from "../domain/ticket-summary";
 import { MariaDbStateStore, type WechatOrderLog } from "../db/mariadb-state-store";
 import { resolveStorageMode, type StorageMode } from "../db/storage-mode";
@@ -33,6 +33,7 @@ export type AdminBootstrapData = {
   pendingWorkOrderSessions: NonNullable<AppState["pendingWorkOrderSessions"]>;
   outboundMessages: NonNullable<AppState["outboundMessages"]>;
   wxautoAgents: WxautoAgent[];
+  wxautoReleases: WxautoRelease[];
   config: AppConfig;
 };
 
@@ -57,6 +58,9 @@ export type AppRepository = {
   markOutboundMessage(messageId: string, status: "sent" | "failed", error?: string): Promise<NonNullable<AppState["outboundMessages"]>[number] | undefined>;
   completeLegacyOutbound(messageId: string, status: "sent" | "failed", error?: string): Promise<NonNullable<AppState["outboundMessages"]>[number] | undefined>;
   listWxautoAgents(): Promise<WxautoAgent[]>;
+  listWxautoReleases(): Promise<WxautoRelease[]>;
+  saveWxautoRelease(release: WxautoRelease): Promise<WxautoRelease>;
+  getWxautoRelease(version: string): Promise<WxautoRelease | undefined>;
   listWechatOrderLogs(limit?: number): Promise<WechatOrderLog[]>;
 };
 
@@ -82,6 +86,9 @@ export function createMariaDbAppRepository(store = new MariaDbStateStore()): App
     markOutboundMessage: (messageId, status, error) => store.markOutboundMessage(messageId, status, error),
     completeLegacyOutbound: (messageId, status, error) => store.completeLegacyOutbound(messageId, status, error),
     listWxautoAgents: () => store.listWxautoAgents(),
+    listWxautoReleases: () => store.listWxautoReleases(),
+    saveWxautoRelease: (release) => store.saveWxautoRelease(release),
+    getWxautoRelease: (version) => store.getWxautoRelease(version),
     listWechatOrderLogs: (limit = 100) => store.listWechatOrderLogs(limit)
   };
 }

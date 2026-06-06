@@ -16,7 +16,8 @@ import type {
   TicketReply,
   TicketTimelineItem,
   UserGroup,
-  WxautoAgent
+  WxautoAgent,
+  WxautoRelease
 } from "../domain/types";
 import { normalizeAiPromptConfig } from "../domain/ai-config";
 import { keywordRuleSetsOf, normalizeKeywordGroups } from "../domain/keyword-config";
@@ -1361,6 +1362,21 @@ async function readWxautoAgents(connection: DatabaseConnection): Promise<WxautoA
   }));
 }
 
+function wxautoReleaseFromRow(row: Row): WxautoRelease {
+  return {
+    version: String(row.version),
+    channel: String(row.channel),
+    fileName: String(row.file_name),
+    filePath: String(row.file_path),
+    fileSize: Number(row.file_size),
+    sha256: String(row.sha256),
+    releaseNotes: String(row.release_notes),
+    manifest: parseJsonValue<Record<string, unknown>>(row.manifest_json, {}),
+    signature: String(row.signature),
+    publishedAt: requiredIso(row.published_at)
+  };
+}
+
 function outboundMessageFromRow(row: Row): OutboundMessage {
   return {
     id: String(row.id),
@@ -1519,12 +1535,65 @@ export class MariaDbStateStore {
       pendingWorkOrderSessions: await readPendingSessions(connection),
       outboundMessages: await readRecentOutboundMessages(connection),
       wxautoAgents: await this.listWxautoAgents(connection),
+      wxautoReleases: await this.listWxautoReleases(connection),
       config: await latestConfig(connection)
     };
   }
 
   async listWxautoAgents(connection: DatabaseConnection = getDatabasePool()): Promise<WxautoAgent[]> {
     return await readWxautoAgents(connection);
+  }
+
+  async listWxautoReleases(connection: DatabaseConnection = getDatabasePool()): Promise<WxautoRelease[]> {
+    const releaseRows = await rows<Row>(
+      connection,
+      "SELECT * FROM wxauto_releases ORDER BY published_at DESC"
+    );
+    return releaseRows.map(wxautoReleaseFromRow);
+  }
+
+  async getWxautoRelease(version: string, connection: DatabaseConnection = getDatabasePool()): Promise<WxautoRelease | undefined> {
+    const [release] = await rows<Row>(
+      connection,
+      "SELECT * FROM wxauto_releases WHERE version = ? LIMIT 1",
+      [version]
+    );
+    return release ? wxautoReleaseFromRow(release) : undefined;
+  }
+
+  async saveWxautoRelease(release: WxautoRelease): Promise<WxautoRelease> {
+    const publishedAt = new Date(release.publishedAt);
+    await execute(
+      getDatabasePool(),
+      `INSERT INTO wxauto_releases (
+        version, channel, file_name, file_path, file_size, sha256,
+        release_notes, manifest_json, signature, published_at, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON DUPLICATE KEY UPDATE
+        channel = VALUES(channel),
+        file_name = VALUES(file_name),
+        file_path = VALUES(file_path),
+        file_size = VALUES(file_size),
+        sha256 = VALUES(sha256),
+        release_notes = VALUES(release_notes),
+        manifest_json = VALUES(manifest_json),
+        signature = VALUES(signature),
+        published_at = VALUES(published_at)`,
+      [
+        release.version,
+        release.channel,
+        release.fileName,
+        release.filePath,
+        release.fileSize,
+        release.sha256,
+        release.releaseNotes,
+        json(release.manifest),
+        release.signature,
+        publishedAt,
+        new Date()
+      ]
+    );
+    return release;
   }
 
   async getConfig(connection: DatabaseConnection = getDatabasePool()) {
