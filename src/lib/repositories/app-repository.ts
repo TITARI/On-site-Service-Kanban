@@ -1,5 +1,5 @@
 import type { AppState } from "../domain/app-state";
-import type { KeywordGroup, OutboundMessage, Ticket } from "../domain/types";
+import type { KeywordGroup, OutboundMessage, Ticket, WxautoAgent } from "../domain/types";
 import type { TicketSummary } from "../domain/ticket-summary";
 import { MariaDbStateStore, type WechatOrderLog } from "../db/mariadb-state-store";
 import { resolveStorageMode, type StorageMode } from "../db/storage-mode";
@@ -32,6 +32,7 @@ export type AdminBootstrapData = {
   conversations: NonNullable<AppState["conversations"]>;
   pendingWorkOrderSessions: NonNullable<AppState["pendingWorkOrderSessions"]>;
   outboundMessages: NonNullable<AppState["outboundMessages"]>;
+  wxautoAgents: WxautoAgent[];
   config: AppConfig;
 };
 
@@ -55,6 +56,7 @@ export type AppRepository = {
   claimOutboundMessages(limit?: number): Promise<NonNullable<AppState["outboundMessages"]>>;
   markOutboundMessage(messageId: string, status: "sent" | "failed", error?: string): Promise<NonNullable<AppState["outboundMessages"]>[number] | undefined>;
   completeLegacyOutbound(messageId: string, status: "sent" | "failed", error?: string): Promise<NonNullable<AppState["outboundMessages"]>[number] | undefined>;
+  listWxautoAgents(): Promise<WxautoAgent[]>;
   listWechatOrderLogs(limit?: number): Promise<WechatOrderLog[]>;
 };
 
@@ -79,6 +81,7 @@ export function createMariaDbAppRepository(store = new MariaDbStateStore()): App
     claimOutboundMessages: (limit) => store.claimOutboundMessages(limit),
     markOutboundMessage: (messageId, status, error) => store.markOutboundMessage(messageId, status, error),
     completeLegacyOutbound: (messageId, status, error) => store.completeLegacyOutbound(messageId, status, error),
+    listWxautoAgents: () => store.listWxautoAgents(),
     listWechatOrderLogs: (limit = 100) => store.listWechatOrderLogs(limit)
   };
 }

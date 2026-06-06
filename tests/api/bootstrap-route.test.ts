@@ -77,7 +77,23 @@ describe("bootstrap route", () => {
     store.adminBootstrap.mockReset();
     store.mobileBootstrap.mockReset();
     store.getConfig.mockReset();
-    store.adminBootstrap.mockResolvedValue(store.state);
+    store.adminBootstrap.mockResolvedValue({
+      ...store.state,
+      wxautoAgents: [{
+        id: "device-a",
+        displayName: "Front Desk PC",
+        appVersion: "0.1.0",
+        workerVersion: "0.1.0",
+        windowsVersion: "Windows 11",
+        wechatProcessState: "running",
+        wechatLoginState: "logged_in",
+        safetyMode: "strict",
+        capabilities: ["text"],
+        lastSeenAt: "2026-06-05T08:00:00.000Z",
+        createdAt: "2026-06-05T08:00:00.000Z",
+        updatedAt: "2026-06-05T08:00:00.000Z"
+      }]
+    });
     store.mobileBootstrap.mockResolvedValue({
       tickets: store.state.tickets.map(({ imageUrls, replies, timeline, aiDecisions, ...summary }) => summary),
       config: defaultConfig()
@@ -126,5 +142,20 @@ describe("bootstrap route", () => {
     expect(response.status).toBe(200);
     expect(store.mobileBootstrap).toHaveBeenCalled();
     expect(store.adminBootstrap).not.toHaveBeenCalled();
+  });
+
+  it("returns wxauto agent health with admin bootstrap requests", async () => {
+    const route = await import("@/app/api/bootstrap/route");
+
+    const response = await route.GET(new Request("http://localhost/api/bootstrap"));
+    const payload = await response.json();
+
+    expect(payload.wxautoAgents).toEqual([
+      expect.objectContaining({
+        id: "device-a",
+        displayName: "Front Desk PC",
+        wechatLoginState: "logged_in"
+      })
+    ]);
   });
 });

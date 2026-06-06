@@ -32,6 +32,7 @@ export async function GET(request: Request) {
     conversations: state.conversations ?? [],
     pendingWorkOrderSessions: state.pendingWorkOrderSessions ?? [],
     outboundMessages: state.outboundMessages ?? [],
+    wxautoAgents: state.wxautoAgents ?? [],
     config: stripConfigSecrets(state.config)
   });
 }

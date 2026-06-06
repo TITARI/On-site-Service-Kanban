@@ -16,9 +16,10 @@ import {
   type LucideIcon
 } from "lucide-react";
 import * as XLSX from "xlsx";
+import { WxautoAgentPanel } from "@/components/admin/wxauto-agent-panel";
 import { AI_PROVIDER_PRESETS, aiPromptDefaultsOf, aiPromptTemplatesOf, copyAiPromptTemplate, providerPresetFor } from "@/lib/domain/ai-config";
 import { keywordRuleSetsOf, normalizeKeywordGroups } from "@/lib/domain/keyword-config";
-import type { AiPromptDefaults, AiPromptScenario, AiPromptTemplate, AiProviderPresetId, BoothRecord, ChatIdentity, Conversation, InboundMessageRecord, KeywordGroup, KeywordRuleSet, KeywordTerm, OutboundMessage, PendingWorkOrderSession, Person } from "@/lib/domain/types";
+import type { AiPromptDefaults, AiPromptScenario, AiPromptTemplate, AiProviderPresetId, BoothRecord, ChatIdentity, Conversation, InboundMessageRecord, KeywordGroup, KeywordRuleSet, KeywordTerm, OutboundMessage, PendingWorkOrderSession, Person, WxautoAgent } from "@/lib/domain/types";
 import type { TicketSummary } from "@/lib/domain/ticket-summary";
 import { messageIntegrationsOf, userGroupsOf, type AppConfig } from "@/lib/seed";
 
@@ -335,6 +336,7 @@ function AdminWorkbench({
   chatIdentities,
   conversations,
   pendingWorkOrderSessions,
+  wxautoAgents,
   enabledAiModels,
   enabledMessageIntegrations
 }: {
@@ -347,6 +349,7 @@ function AdminWorkbench({
   chatIdentities: ChatIdentity[];
   conversations: Conversation[];
   pendingWorkOrderSessions: PendingWorkOrderSession[];
+  wxautoAgents: WxautoAgent[];
   enabledAiModels: number;
   enabledMessageIntegrations: number;
 }) {
@@ -431,6 +434,8 @@ function AdminWorkbench({
         </section>
 
         <div className="admin-side-stack">
+          <WxautoAgentPanel agents={wxautoAgents} />
+
           <section className="admin-card">
             <div className="admin-card-head">
               <div>
@@ -524,6 +529,7 @@ export function AdminConfigCenter({
   conversations = [],
   pendingWorkOrderSessions = [],
   outboundMessages = [],
+  wxautoAgents = [],
   onRefresh
 }: {
   config: AppConfig;
@@ -537,6 +543,7 @@ export function AdminConfigCenter({
   conversations?: Conversation[];
   pendingWorkOrderSessions?: PendingWorkOrderSession[];
   outboundMessages?: OutboundMessage[];
+  wxautoAgents?: WxautoAgent[];
   onRefresh: () => void;
 }) {
   const [statusQueue, setStatusQueue] = useState<AdminFeedback[]>([]);
@@ -1027,6 +1034,7 @@ export function AdminConfigCenter({
           chatIdentities={chatIdentities}
           conversations={conversations}
           pendingWorkOrderSessions={pendingWorkOrderSessions}
+          wxautoAgents={wxautoAgents}
           enabledAiModels={config.aiModels.filter((model) => model.enabled).length}
           enabledMessageIntegrations={messageIntegrations.filter((item) => item.enabled).length}
         />

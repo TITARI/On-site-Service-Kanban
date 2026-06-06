@@ -5,7 +5,7 @@ import { LogIn, LogOut, ShieldCheck } from "lucide-react";
 import { AdminConfigCenter, type AdminView, type WechatOrderLog } from "@/components/admin-panel";
 import { clearAdminSession, readAdminSession, storeAdminSession } from "@/lib/client/admin-auth";
 import { isAdminPassword } from "@/lib/client/auth";
-import type { BoothRecord, ChatIdentity, Conversation, InboundMessageRecord, OutboundMessage, PendingWorkOrderSession, Person } from "@/lib/domain/types";
+import type { BoothRecord, ChatIdentity, Conversation, InboundMessageRecord, OutboundMessage, PendingWorkOrderSession, Person, WxautoAgent } from "@/lib/domain/types";
 import type { TicketSummary } from "@/lib/domain/ticket-summary";
 import type { AppConfig } from "@/lib/seed";
 import { StatusMessage } from "./status-message";
@@ -19,6 +19,7 @@ type AdminBootstrap = {
   conversations: Conversation[];
   pendingWorkOrderSessions: PendingWorkOrderSession[];
   outboundMessages: OutboundMessage[];
+  wxautoAgents: WxautoAgent[];
   config: AppConfig;
 };
 
@@ -156,6 +157,7 @@ export function AdminBackendShell({ view }: { view: AdminView }) {
         conversations={data.conversations}
         pendingWorkOrderSessions={data.pendingWorkOrderSessions}
         outboundMessages={data.outboundMessages}
+        wxautoAgents={data.wxautoAgents ?? []}
         wechatOrderLogs={logs}
         onRefresh={refresh}
       />

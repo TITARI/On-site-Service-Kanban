@@ -15,7 +15,8 @@ import type {
   Ticket,
   TicketReply,
   TicketTimelineItem,
-  UserGroup
+  UserGroup,
+  WxautoAgent
 } from "../domain/types";
 import { normalizeAiPromptConfig } from "../domain/ai-config";
 import { keywordRuleSetsOf, normalizeKeywordGroups } from "../domain/keyword-config";
@@ -1339,6 +1340,27 @@ async function readRecentOutboundMessages(connection: DatabaseConnection, limit 
   return messageRows.map(outboundMessageFromRow);
 }
 
+async function readWxautoAgents(connection: DatabaseConnection): Promise<WxautoAgent[]> {
+  const agentRows = await rows<Row>(
+    connection,
+    "SELECT * FROM wxauto_agents ORDER BY last_seen_at DESC"
+  );
+  return agentRows.map((row) => ({
+    id: String(row.id),
+    displayName: String(row.display_name),
+    appVersion: String(row.app_version),
+    workerVersion: String(row.worker_version),
+    windowsVersion: String(row.windows_version),
+    wechatProcessState: row.wechat_process_state as WxautoAgent["wechatProcessState"],
+    wechatLoginState: row.wechat_login_state as WxautoAgent["wechatLoginState"],
+    safetyMode: "strict",
+    capabilities: parseJsonValue<WxautoAgent["capabilities"]>(row.capabilities_json, ["text"]),
+    lastSeenAt: requiredIso(row.last_seen_at),
+    createdAt: requiredIso(row.created_at),
+    updatedAt: requiredIso(row.updated_at)
+  }));
+}
+
 function outboundMessageFromRow(row: Row): OutboundMessage {
   return {
     id: String(row.id),
@@ -1496,8 +1518,13 @@ export class MariaDbStateStore {
       conversations: await readConversations(connection),
       pendingWorkOrderSessions: await readPendingSessions(connection),
       outboundMessages: await readRecentOutboundMessages(connection),
+      wxautoAgents: await this.listWxautoAgents(connection),
       config: await latestConfig(connection)
     };
+  }
+
+  async listWxautoAgents(connection: DatabaseConnection = getDatabasePool()): Promise<WxautoAgent[]> {
+    return await readWxautoAgents(connection);
   }
 
   async getConfig(connection: DatabaseConnection = getDatabasePool()) {

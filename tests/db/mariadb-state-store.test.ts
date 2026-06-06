@@ -109,6 +109,20 @@ function fakeConnection(): DatabaseConnection {
         created_at: rowDate(),
         updated_at: rowDate()
       }]];
+      if (sql.includes("FROM wxauto_agents")) return [[{
+        id: "device-a",
+        display_name: "Front Desk PC",
+        app_version: "0.1.0",
+        worker_version: "0.1.0",
+        windows_version: "Windows 11",
+        wechat_process_state: "running",
+        wechat_login_state: "logged_in",
+        safety_mode: "strict",
+        capabilities_json: JSON.stringify(["text"]),
+        last_seen_at: rowDate(),
+        created_at: rowDate(),
+        updated_at: rowDate()
+      }]];
       return [[]];
     })
   } as unknown as DatabaseConnection;
@@ -125,5 +139,10 @@ describe("MariaDbStateStore", () => {
     expect(data.conversations).toEqual([expect.objectContaining({ id: "conv-1", linkedPersonIds: ["person-1"] })]);
     expect(data.pendingWorkOrderSessions).toEqual([expect.objectContaining({ id: "pending-1", missingFields: ["phone"] })]);
     expect(data.outboundMessages).toEqual([expect.objectContaining({ id: "outbound-1", status: "pending" })]);
+    expect(data.wxautoAgents).toEqual([expect.objectContaining({
+      id: "device-a",
+      displayName: "Front Desk PC",
+      wechatLoginState: "logged_in"
+    })]);
   });
 });

@@ -31,10 +31,25 @@ describe("app repository", () => {
       createdAt: "2026-06-05T08:00:00.000Z"
     }];
     const completion = { accepted: true };
+    const agents = [{
+      id: "device-a",
+      displayName: "Front Desk PC",
+      appVersion: "0.1.0",
+      workerVersion: "0.1.0",
+      windowsVersion: "Windows 11",
+      wechatProcessState: "running" as const,
+      wechatLoginState: "logged_in" as const,
+      safetyMode: "strict" as const,
+      capabilities: ["text" as const],
+      lastSeenAt: "2026-06-05T08:00:00.000Z",
+      createdAt: "2026-06-05T08:00:00.000Z",
+      updatedAt: "2026-06-05T08:00:00.000Z"
+    }];
     const store = {
       getConfig: vi.fn(async () => config),
       saveTicket: vi.fn(async (ticket) => ticket),
       listWechatOrderLogs: vi.fn(async () => []),
+      listWxautoAgents: vi.fn(async () => agents),
       registerWxautoAgent: vi.fn(async () => registration),
       submitWxautoEvents: vi.fn(async () => receipts),
       claimWxautoOutbound: vi.fn(async () => leases),
@@ -84,9 +99,11 @@ describe("app repository", () => {
     await expect(repository.submitWxautoEvents(submitInput)).resolves.toBe(receipts);
     await expect(repository.claimWxautoOutbound(claimInput)).resolves.toBe(leases);
     await expect(repository.completeWxautoOutbound(completeInput)).resolves.toBe(completion);
+    await expect(repository.listWxautoAgents()).resolves.toBe(agents);
 
     expect(store.getConfig).toHaveBeenCalledOnce();
     expect(store.listWechatOrderLogs).toHaveBeenCalledWith(20);
+    expect(store.listWxautoAgents).toHaveBeenCalledOnce();
     expect(store.registerWxautoAgent).toHaveBeenCalledWith(registerInput);
     expect(store.submitWxautoEvents).toHaveBeenCalledWith(submitInput);
     expect(store.claimWxautoOutbound).toHaveBeenCalledWith(claimInput);
