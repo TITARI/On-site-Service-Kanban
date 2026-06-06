@@ -7,6 +7,7 @@ describe("MariaDB migration schema", () => {
   const schema = readFileSync(path.join(process.cwd(), "db", "migrations", "001_initial_schema.sql"), "utf-8");
   const keywordRuleSetSchema = readFileSync(path.join(process.cwd(), "db", "migrations", "002_keyword_rule_sets.sql"), "utf-8");
   const wxautoSchema = readFileSync(path.join(process.cwd(), "db", "migrations", "003_wxauto_mcp.sql"), "utf-8");
+  const wxautoStateLockSchema = readFileSync(path.join(process.cwd(), "db", "migrations", "004_wxauto_state_lock.sql"), "utf-8");
 
   it("creates the core tables required by the database design", () => {
     [
@@ -95,5 +96,20 @@ describe("MariaDB migration schema", () => {
     outboundAlterFragments.forEach((fragment) => {
       expect(outboundAlter).toContain(fragment);
     });
+  });
+
+  it("initializes the wxauto state-write transaction lock", () => {
+    expect(wxautoStateLockSchema).toContain("CREATE TABLE IF NOT EXISTS wxauto_integration_locks");
+    expect(wxautoStateLockSchema).toContain("name varchar(64) NOT NULL PRIMARY KEY");
+    expect(wxautoStateLockSchema).toContain("updated_at datetime(3) NOT NULL");
+    expect(wxautoStateLockSchema).toContain("ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+    expect(wxautoStateLockSchema).toContain("INSERT IGNORE INTO wxauto_integration_locks");
+    expect(wxautoStateLockSchema).toContain("'state-write'");
+    expect(wxautoStateLockSchema).toContain("CURRENT_TIMESTAMP(3)");
+
+    const statements = splitSqlStatements(wxautoStateLockSchema);
+    expect(statements).toHaveLength(2);
+    expect(statements[1]).toContain("INSERT IGNORE INTO wxauto_integration_locks");
+    expect(statements[1]).toContain("'state-write'");
   });
 });

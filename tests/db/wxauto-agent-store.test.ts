@@ -1,19 +1,26 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { PoolConnection } from "mysql2/promise";
 import { MariaDbStateStore } from "@/lib/db/mariadb-state-store";
-import type { DatabaseConnection } from "@/lib/db/connection";
 import { defaultConfig } from "@/lib/seed";
 
 type RecordedCall = [sql: string, params?: unknown[]];
+const stateLockSql = "SELECT name FROM wxauto_integration_locks WHERE name = 'state-write' FOR UPDATE";
 
 function recordingConnection(options: {
   reservationAffectedRows?: number;
   receiptRows?: unknown[];
   configRows?: unknown[];
+  lockRows?: unknown[];
 } = {}) {
   const calls: RecordedCall[] = [];
+  const operations: string[] = [];
   const execute = vi.fn(async (sql: string, params?: unknown[]) => {
     calls.push([sql, params]);
+    operations.push(sql.replace(/\s+/g, " ").trim());
 
+    if (sql.includes("FROM wxauto_integration_locks")) {
+      return [options.lockRows ?? [{ name: "state-write" }]];
+    }
     if (sql.includes("INSERT IGNORE INTO wxauto_event_receipts")) {
       return [{ affectedRows: options.reservationAffectedRows ?? 1 }];
     }
@@ -28,11 +35,29 @@ function recordingConnection(options: {
     }
     return [{ affectedRows: 1 }];
   });
+  const beginTransaction = vi.fn(async () => {
+    operations.push("beginTransaction");
+  });
+  const commit = vi.fn(async () => {
+    operations.push("commit");
+  });
+  const rollback = vi.fn(async () => {
+    operations.push("rollback");
+  });
 
   return {
-    connection: { execute } as unknown as DatabaseConnection,
+    connection: {
+      execute,
+      beginTransaction,
+      commit,
+      rollback
+    } as unknown as PoolConnection,
     execute,
-    calls
+    beginTransaction,
+    commit,
+    rollback,
+    calls,
+    operations
   };
 }
 
@@ -110,7 +135,7 @@ describe("wxauto agent store", () => {
       action: "processed" as const,
       inboundMessageId: "message-1"
     };
-    const { connection, calls } = recordingConnection({
+    const { connection, calls, operations, beginTransaction, commit, rollback } = recordingConnection({
       reservationAffectedRows: 0,
       receiptRows: [{ result_json: JSON.stringify(storedReceipt) }]
     });
@@ -118,9 +143,15 @@ describe("wxauto agent store", () => {
     const receipts = await new MariaDbStateStore().submitWxautoEvents(eventInput, connection);
 
     expect(receipts).toEqual([storedReceipt]);
-    expect(calls.map(([sql]) => sql.trim())).toHaveLength(2);
-    expect(calls[0][0]).toContain("INSERT IGNORE INTO wxauto_event_receipts");
-    expect(calls[1][0]).toContain("SELECT result_json FROM wxauto_event_receipts");
+    expect(beginTransaction).toHaveBeenCalledTimes(1);
+    expect(commit).toHaveBeenCalledTimes(1);
+    expect(rollback).not.toHaveBeenCalled();
+    expect(operations[0]).toBe("beginTransaction");
+    expect(operations[1]).toBe(stateLockSql);
+    expect(operations[2]).toContain("INSERT IGNORE INTO wxauto_event_receipts");
+    expect(operations[3]).toContain("SELECT result_json FROM wxauto_event_receipts");
+    expect(operations[4]).toBe("commit");
+    expect(calls).toHaveLength(3);
     expect(calls.some(([sql]) => /\bDELETE FROM\b/i.test(sql))).toBe(false);
     expect(calls.some(([sql]) => sql.includes("UPDATE wxauto_event_receipts"))).toBe(false);
     expect(calls.some(([sql]) => sql.includes("FROM exhibition_booths"))).toBe(false);
@@ -129,7 +160,7 @@ describe("wxauto agent store", () => {
   it("processes the reservation winner and stores the final receipt in the same connection", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-06-05T09:30:00.000Z"));
-    const { connection, calls } = recordingConnection();
+    const { connection, calls, operations, beginTransaction, commit, rollback } = recordingConnection();
     const input = {
       ...eventInput,
       events: [{ ...eventInput.events[0], text: "" }]
@@ -142,6 +173,14 @@ describe("wxauto agent store", () => {
       action: "ignored",
       inboundMessageId: expect.stringMatching(/^message-/)
     }]);
+
+    expect(beginTransaction).toHaveBeenCalledTimes(1);
+    expect(commit).toHaveBeenCalledTimes(1);
+    expect(rollback).not.toHaveBeenCalled();
+    expect(operations[0]).toBe("beginTransaction");
+    expect(operations[1]).toBe(stateLockSql);
+    expect(operations[2]).toContain("INSERT IGNORE INTO wxauto_event_receipts");
+    expect(operations.at(-1)).toBe("commit");
 
     const inboundInsert = calls.find(([sql]) => sql.includes("INSERT INTO inbound_messages"));
     expect(inboundInsert?.[1]).toEqual([
@@ -169,5 +208,38 @@ describe("wxauto agent store", () => {
     expect(receiptUpdate?.[1]?.[3]).toMatch(/^wxauto-receipt-/);
     expect(calls.some(([sql]) => /\bDELETE FROM wxauto_event_receipts\b/i.test(sql))).toBe(false);
     expect(calls.some(([sql]) => /\bDELETE FROM wxauto_agents\b/i.test(sql))).toBe(false);
+    expect(calls.some(([sql]) => /\bDELETE FROM wxauto_integration_locks\b/i.test(sql))).toBe(false);
+  });
+
+  it("rolls back when the state-write lock row is not initialized", async () => {
+    const { connection, calls, beginTransaction, commit, rollback } = recordingConnection({
+      lockRows: []
+    });
+
+    await expect(new MariaDbStateStore().submitWxautoEvents(eventInput, connection))
+      .rejects.toThrow("wxauto state lock is not initialized");
+
+    expect(beginTransaction).toHaveBeenCalledTimes(1);
+    expect(commit).not.toHaveBeenCalled();
+    expect(rollback).toHaveBeenCalledTimes(1);
+    expect(calls).toHaveLength(1);
+    expect(calls[0][0].replace(/\s+/g, " ").trim()).toBe(stateLockSql);
+  });
+
+  it("rolls back and does not commit when batch work throws", async () => {
+    const { connection, operations, beginTransaction, commit, rollback } = recordingConnection();
+    const store = new MariaDbStateStore();
+    vi.spyOn(store, "readState").mockRejectedValue(new Error("business failure"));
+
+    await expect(store.submitWxautoEvents(eventInput, connection))
+      .rejects.toThrow("business failure");
+
+    expect(beginTransaction).toHaveBeenCalledTimes(1);
+    expect(commit).not.toHaveBeenCalled();
+    expect(rollback).toHaveBeenCalledTimes(1);
+    expect(operations[0]).toBe("beginTransaction");
+    expect(operations[1]).toBe(stateLockSql);
+    expect(operations[2]).toContain("INSERT IGNORE INTO wxauto_event_receipts");
+    expect(operations.at(-1)).toBe("rollback");
   });
 });

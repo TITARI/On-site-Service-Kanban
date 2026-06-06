@@ -1,5 +1,6 @@
 ﻿import type { ResultSetHeader, RowDataPacket } from "mysql2/promise";
 import { createHash } from "node:crypto";
+import type { PoolConnection } from "mysql2/promise";
 import type {
   AiDecision,
   BoothRecord,
@@ -31,7 +32,12 @@ import type {
   SubmitEventsInput,
   WechatEventInput
 } from "../integrations/wxauto/contracts";
-import { getDatabasePool, type DatabaseConnection, withDatabaseTransaction } from "./connection";
+import {
+  getDatabasePool,
+  type DatabaseConnection,
+  withDatabaseConnection,
+  withDatabaseTransaction
+} from "./connection";
 
 type Row = RowDataPacket & Record<string, unknown>;
 type SqlValue = string | number | boolean | Date | null;
@@ -1512,9 +1518,9 @@ export class MariaDbStateStore {
 
   async submitWxautoEvents(
     input: SubmitEventsInput,
-    suppliedConnection?: DatabaseConnection
+    suppliedConnection?: PoolConnection
   ): Promise<EventReceipt[]> {
-    const work = async (connection: DatabaseConnection) => {
+    const work = async (connection: PoolConnection) => {
       const receipts: EventReceipt[] = [];
 
       for (const event of input.events) {
@@ -1567,7 +1573,29 @@ export class MariaDbStateStore {
       return receipts;
     };
 
-    return suppliedConnection ? work(suppliedConnection) : withDatabaseTransaction(work);
+    const runTransaction = async (connection: PoolConnection) => {
+      await connection.beginTransaction();
+      try {
+        const lockRows = await rows<Row>(
+          connection,
+          "SELECT name FROM wxauto_integration_locks WHERE name = 'state-write' FOR UPDATE"
+        );
+        if (lockRows.length === 0) {
+          throw new Error("wxauto state lock is not initialized");
+        }
+
+        const receipts = await work(connection);
+        await connection.commit();
+        return receipts;
+      } catch (error) {
+        await connection.rollback();
+        throw error;
+      }
+    };
+
+    return suppliedConnection
+      ? runTransaction(suppliedConnection)
+      : withDatabaseConnection(runTransaction);
   }
 
   async claimOutboundMessages(limit = 10) {
