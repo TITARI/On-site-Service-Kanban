@@ -468,6 +468,7 @@ describe("outbound lease compatibility", () => {
     expect(recorded.operations[0]).toBe("beginTransaction");
     expect(recorded.operations[1]).toBe(stateLockSql);
     expect(recorded.operations[2]).toContain("SELECT * FROM outbound_messages");
+    expect(recorded.operations[2]).toMatch(/LIMIT \? FOR UPDATE$/);
     expect(recorded.operations.at(-1)).toBe("commit");
   });
 

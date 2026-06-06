@@ -1622,7 +1622,7 @@ export class MariaDbStateStore {
             OR (status = 'failed' AND retry_count < 3)
             OR (status = 'sending' AND claimed_at IS NOT NULL AND claimed_at <= ?)
          ORDER BY created_at
-         LIMIT ?`,
+         LIMIT ? FOR UPDATE`,
         [new Date(now.getTime() - 120000), limit]
       );
       const messages = candidates.map((row) => ({
