@@ -17,9 +17,10 @@ import {
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { WxautoAgentPanel } from "@/components/admin/wxauto-agent-panel";
+import { WxautoUpdatePanel } from "@/components/admin/wxauto-update-panel";
 import { AI_PROVIDER_PRESETS, aiPromptDefaultsOf, aiPromptTemplatesOf, copyAiPromptTemplate, providerPresetFor } from "@/lib/domain/ai-config";
 import { keywordRuleSetsOf, normalizeKeywordGroups } from "@/lib/domain/keyword-config";
-import type { AiPromptDefaults, AiPromptScenario, AiPromptTemplate, AiProviderPresetId, BoothRecord, ChatIdentity, Conversation, InboundMessageRecord, KeywordGroup, KeywordRuleSet, KeywordTerm, OutboundMessage, PendingWorkOrderSession, Person, WxautoAgent } from "@/lib/domain/types";
+import type { AiPromptDefaults, AiPromptScenario, AiPromptTemplate, AiProviderPresetId, BoothRecord, ChatIdentity, Conversation, InboundMessageRecord, KeywordGroup, KeywordRuleSet, KeywordTerm, OutboundMessage, PendingWorkOrderSession, Person, WxautoAgent, WxautoRelease } from "@/lib/domain/types";
 import type { TicketSummary } from "@/lib/domain/ticket-summary";
 import { messageIntegrationsOf, userGroupsOf, type AppConfig } from "@/lib/seed";
 
@@ -530,6 +531,7 @@ export function AdminConfigCenter({
   pendingWorkOrderSessions = [],
   outboundMessages = [],
   wxautoAgents = [],
+  wxautoReleases = [],
   onRefresh
 }: {
   config: AppConfig;
@@ -544,6 +546,7 @@ export function AdminConfigCenter({
   pendingWorkOrderSessions?: PendingWorkOrderSession[];
   outboundMessages?: OutboundMessage[];
   wxautoAgents?: WxautoAgent[];
+  wxautoReleases?: WxautoRelease[];
   onRefresh: () => void;
 }) {
   const [statusQueue, setStatusQueue] = useState<AdminFeedback[]>([]);
@@ -1496,6 +1499,7 @@ export function AdminConfigCenter({
           <button className="secondary-button" type="submit" disabled={savingConfigId === "messages"}>保存微信企微配置</button>
         </form>
       </div>}
+      {(showAll || view === "system") && <WxautoUpdatePanel releases={wxautoReleases} onPublished={onRefresh} />}
       {(showAll || view === "system") && <div className="admin-card config-list" id="admin-keywords">
         <h3>关键词配置</h3>
         <form className="config-list-form" onSubmit={saveKeywordGroups}>

@@ -159,6 +159,7 @@ export function AdminBackendShell({ view }: { view: AdminView }) {
         pendingWorkOrderSessions={data.pendingWorkOrderSessions}
         outboundMessages={data.outboundMessages}
         wxautoAgents={data.wxautoAgents ?? []}
+        wxautoReleases={data.wxautoReleases ?? []}
         wechatOrderLogs={logs}
         onRefresh={refresh}
       />
