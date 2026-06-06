@@ -1363,6 +1363,109 @@ function outboundMessageFromRow(row: Row): OutboundMessage {
   };
 }
 
+async function completeWxautoOutboundOnConnection(
+  connection: DatabaseConnection,
+  input: CompleteOutboundInput
+): Promise<{ accepted: boolean; message?: OutboundMessage }> {
+  const [priorAttempt] = await rows<Row>(
+    connection,
+    "SELECT * FROM outbound_message_attempts WHERE lease_id = ? LIMIT 1",
+    [input.leaseId]
+  );
+
+  if (priorAttempt) {
+    if (
+      String(priorAttempt.message_id) !== input.messageId
+      || String(priorAttempt.agent_id) !== input.deviceId
+    ) {
+      return { accepted: false };
+    }
+    const [message] = await rows<Row>(
+      connection,
+      "SELECT * FROM outbound_messages WHERE id = ? LIMIT 1",
+      [input.messageId]
+    );
+    return {
+      accepted: true,
+      message: message ? outboundMessageFromRow(message) : undefined
+    };
+  }
+
+  const [message] = await rows<Row>(
+    connection,
+    "SELECT * FROM outbound_messages WHERE id = ? LIMIT 1 FOR UPDATE",
+    [input.messageId]
+  );
+  if (
+    !message
+    || String(message.lease_id) !== input.leaseId
+    || String(message.claimed_by_agent_id) !== input.deviceId
+  ) {
+    return { accepted: false };
+  }
+
+  const completedAt = new Date();
+  await execute(
+    connection,
+    `INSERT INTO outbound_message_attempts (
+      id, message_id, agent_id, lease_id, status, error_text, safety_rule,
+      attempted_at, completed_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      `attempt-${crypto.randomUUID()}`,
+      input.messageId,
+      input.deviceId,
+      input.leaseId,
+      input.status,
+      input.error ?? null,
+      input.safetyRule ?? null,
+      new Date(input.attemptedAt),
+      completedAt
+    ]
+  );
+
+  if (input.status === "sent") {
+    await execute(
+      connection,
+      `UPDATE outbound_messages
+       SET status = 'sent', sent_at = ?, last_error = NULL, safety_rule = NULL, updated_at = ?
+       WHERE id = ?`,
+      [completedAt, completedAt, input.messageId]
+    );
+  } else if (input.status === "blocked_by_safety_policy") {
+    await execute(
+      connection,
+      `UPDATE outbound_messages
+       SET status = 'blocked', last_error = ?, safety_rule = ?, updated_at = ?
+       WHERE id = ?`,
+      [
+        input.error?.trim() || "Blocked by safety policy",
+        input.safetyRule ?? null,
+        completedAt,
+        input.messageId
+      ]
+    );
+  } else {
+    await execute(
+      connection,
+      `UPDATE outbound_messages
+       SET status = 'failed', retry_count = retry_count + 1, last_error = ?, updated_at = ?
+       WHERE id = ?`,
+      [input.error?.trim() || "发送失败", completedAt, input.messageId]
+    );
+  }
+
+  const [updated] = await rows<Row>(
+    connection,
+    "SELECT * FROM outbound_messages WHERE id = ? LIMIT 1",
+    [input.messageId]
+  );
+  return {
+    accepted: true,
+    message: updated ? outboundMessageFromRow(updated) : undefined
+  };
+}
+
 export type WechatOrderLog = {
   id: string;
   inboundMessageId?: string;
@@ -1560,6 +1663,10 @@ export class MariaDbStateStore {
         );
 
         if (reservation.affectedRows === 0) {
+          if (input.deviceId === "legacy-http") {
+            receipts.push({ messageId: event.messageId, action: "duplicate" });
+            continue;
+          }
           const [existing] = await rows<Row>(
             connection,
             "SELECT result_json FROM wxauto_event_receipts WHERE agent_id = ? AND message_id = ? LIMIT 1",
@@ -1754,107 +1861,9 @@ export class MariaDbStateStore {
       await connection.beginTransaction();
       try {
         await lockWxautoStateWrite(connection);
-        const [priorAttempt] = await rows<Row>(
-          connection,
-          "SELECT * FROM outbound_message_attempts WHERE lease_id = ? LIMIT 1",
-          [input.leaseId]
-        );
-
-        if (priorAttempt) {
-          if (
-            String(priorAttempt.message_id) !== input.messageId
-            || String(priorAttempt.agent_id) !== input.deviceId
-          ) {
-            await connection.commit();
-            return { accepted: false };
-          }
-          const [message] = await rows<Row>(
-            connection,
-            "SELECT * FROM outbound_messages WHERE id = ? LIMIT 1",
-            [input.messageId]
-          );
-          await connection.commit();
-          return {
-            accepted: true,
-            message: message ? outboundMessageFromRow(message) : undefined
-          };
-        }
-
-        const [message] = await rows<Row>(
-          connection,
-          "SELECT * FROM outbound_messages WHERE id = ? LIMIT 1 FOR UPDATE",
-          [input.messageId]
-        );
-        if (
-          !message
-          || String(message.lease_id) !== input.leaseId
-          || String(message.claimed_by_agent_id) !== input.deviceId
-        ) {
-          await connection.commit();
-          return { accepted: false };
-        }
-
-        const completedAt = new Date();
-        await execute(
-          connection,
-          `INSERT INTO outbound_message_attempts (
-            id, message_id, agent_id, lease_id, status, error_text, safety_rule,
-            attempted_at, completed_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [
-            `attempt-${crypto.randomUUID()}`,
-            input.messageId,
-            input.deviceId,
-            input.leaseId,
-            input.status,
-            input.error ?? null,
-            input.safetyRule ?? null,
-            new Date(input.attemptedAt),
-            completedAt
-          ]
-        );
-
-        if (input.status === "sent") {
-          await execute(
-            connection,
-            `UPDATE outbound_messages
-             SET status = 'sent', sent_at = ?, last_error = NULL, safety_rule = NULL, updated_at = ?
-             WHERE id = ?`,
-            [completedAt, completedAt, input.messageId]
-          );
-        } else if (input.status === "blocked_by_safety_policy") {
-          await execute(
-            connection,
-            `UPDATE outbound_messages
-             SET status = 'blocked', last_error = ?, safety_rule = ?, updated_at = ?
-             WHERE id = ?`,
-            [
-              input.error?.trim() || "Blocked by safety policy",
-              input.safetyRule ?? null,
-              completedAt,
-              input.messageId
-            ]
-          );
-        } else {
-          await execute(
-            connection,
-            `UPDATE outbound_messages
-             SET status = 'failed', retry_count = retry_count + 1, last_error = ?, updated_at = ?
-             WHERE id = ?`,
-            [input.error?.trim() || "发送失败", completedAt, input.messageId]
-          );
-        }
-
-        const [updated] = await rows<Row>(
-          connection,
-          "SELECT * FROM outbound_messages WHERE id = ? LIMIT 1",
-          [input.messageId]
-        );
+        const result = await completeWxautoOutboundOnConnection(connection, input);
         await connection.commit();
-        return {
-          accepted: true,
-          message: updated ? outboundMessageFromRow(updated) : undefined
-        };
+        return result;
       } catch (error) {
         await connection.rollback();
         throw error;
@@ -1864,6 +1873,44 @@ export class MariaDbStateStore {
     return suppliedConnection
       ? runTransaction(suppliedConnection)
       : withDatabaseConnection(runTransaction);
+  }
+
+  async completeLegacyOutbound(messageId: string, status: "sent" | "failed", error?: string) {
+    const runTransaction = async (connection: PoolConnection) => {
+      await connection.beginTransaction();
+      try {
+        await lockWxautoStateWrite(connection);
+        const [message] = await rows<Row>(
+          connection,
+          "SELECT * FROM outbound_messages WHERE id = ? LIMIT 1 FOR UPDATE",
+          [messageId]
+        );
+        if (
+          !message
+          || String(message.claimed_by_agent_id) !== "legacy-http"
+          || !message.lease_id
+        ) {
+          await connection.commit();
+          return undefined;
+        }
+
+        const result = await completeWxautoOutboundOnConnection(connection, {
+          deviceId: "legacy-http",
+          messageId,
+          leaseId: String(message.lease_id),
+          status,
+          error,
+          attemptedAt: new Date().toISOString()
+        });
+        await connection.commit();
+        return result.accepted ? result.message : undefined;
+      } catch (caught) {
+        await connection.rollback();
+        throw caught;
+      }
+    };
+
+    return await withDatabaseConnection(runTransaction);
   }
 
   async readState(connection: DatabaseConnection = getDatabasePool()): Promise<AppState> {

@@ -54,6 +54,7 @@ export type AppRepository = {
   completeWxautoOutbound(input: CompleteOutboundInput): Promise<{ accepted: boolean; message?: OutboundMessage }>;
   claimOutboundMessages(limit?: number): Promise<NonNullable<AppState["outboundMessages"]>>;
   markOutboundMessage(messageId: string, status: "sent" | "failed", error?: string): Promise<NonNullable<AppState["outboundMessages"]>[number] | undefined>;
+  completeLegacyOutbound(messageId: string, status: "sent" | "failed", error?: string): Promise<NonNullable<AppState["outboundMessages"]>[number] | undefined>;
   listWechatOrderLogs(limit?: number): Promise<WechatOrderLog[]>;
 };
 
@@ -77,6 +78,7 @@ export function createMariaDbAppRepository(store = new MariaDbStateStore()): App
     completeWxautoOutbound: (input) => store.completeWxautoOutbound(input),
     claimOutboundMessages: (limit) => store.claimOutboundMessages(limit),
     markOutboundMessage: (messageId, status, error) => store.markOutboundMessage(messageId, status, error),
+    completeLegacyOutbound: (messageId, status, error) => store.completeLegacyOutbound(messageId, status, error),
     listWechatOrderLogs: (limit = 100) => store.listWechatOrderLogs(limit)
   };
 }

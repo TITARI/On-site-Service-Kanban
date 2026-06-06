@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppState } from "@/lib/domain/app-state";
+import type { EventReceipt, SubmitEventsInput } from "@/lib/integrations/wxauto/contracts";
 import type { AppRepository } from "@/lib/repositories/app-repository";
 import { defaultConfig } from "@/lib/seed";
 import { processWechatWatchtowerMessage } from "@/lib/services/wechat-watchtower-service";
@@ -7,14 +8,16 @@ import { processWechatWatchtowerMessage } from "@/lib/services/wechat-watchtower
 const store = vi.hoisted(() => ({
   state: undefined as AppState | undefined,
   getConfig: vi.fn(),
-  processWechatMessage: vi.fn()
+  processWechatMessage: vi.fn(),
+  submitWxautoEvents: vi.fn()
 }));
 
 vi.mock("@/lib/repositories/app-repository", () => ({
   getAppRepository: (): AppRepository => ({
     kind: "mariadb",
     getConfig: store.getConfig,
-    processWechatMessage: store.processWechatMessage
+    processWechatMessage: store.processWechatMessage,
+    submitWxautoEvents: store.submitWxautoEvents
   } as unknown as AppRepository)
 }));
 
@@ -52,8 +55,35 @@ beforeEach(() => {
   };
   store.getConfig.mockReset();
   store.processWechatMessage.mockReset();
+  store.submitWxautoEvents.mockReset();
   store.getConfig.mockImplementation(async () => store.state!.config);
   store.processWechatMessage.mockImplementation(async (input) => processWechatWatchtowerMessage(store.state!, input));
+  store.submitWxautoEvents.mockImplementation(async (input: SubmitEventsInput): Promise<EventReceipt[]> => {
+    const receipts: EventReceipt[] = [];
+    for (const event of input.events) {
+      const result = await processWechatWatchtowerMessage(store.state!, {
+        channel: "wechat",
+        externalMessageId: event.messageId,
+        senderId: event.senderId,
+        senderName: event.senderName,
+        senderGroup: event.conversationType === "group" ? event.conversationId : undefined,
+        sourceConversationId: event.conversationId,
+        text: event.text,
+        imageUrls: event.imageUrls,
+        receivedAt: event.receivedAt,
+        raw: {
+          wxautoDeviceId: input.deviceId,
+          sequence: event.sequence
+        }
+      });
+      receipts.push({
+        messageId: event.messageId,
+        action: result.action,
+        inboundMessageId: result.record?.id
+      });
+    }
+    return receipts;
+  });
 });
 
 describe("message intake route", () => {
@@ -67,10 +97,25 @@ describe("message intake route", () => {
     }));
 
     expect(response.status).toBe(200);
-    const { record } = await response.json();
-    expect(record.analysis.suggestedAction).toBe("create-ticket");
+    const receipt = await response.json();
+    expect(receipt).toMatchObject({
+      messageId: "wx-msg-1",
+      inboundMessageId: expect.any(String)
+    });
+    expect(store.state?.messageRecords.at(-1)?.analysis.suggestedAction).toBe("create-ticket");
     expect(store.state?.messageRecords).toHaveLength(1);
-    expect(store.processWechatMessage).toHaveBeenCalledOnce();
+    expect(store.submitWxautoEvents).toHaveBeenCalledWith({
+      deviceId: "legacy-http",
+      events: [expect.objectContaining({
+        messageId: "wx-msg-1",
+        conversationId: expect.any(String),
+        conversationType: "direct",
+        senderName: expect.any(String),
+        imageUrls: [],
+        receivedAt: expect.any(String)
+      })]
+    });
+    expect(store.processWechatMessage).not.toHaveBeenCalled();
   });
 
   it("normalizes common MCP payload aliases before recording the message", async () => {
@@ -84,12 +129,22 @@ describe("message intake route", () => {
     }));
 
     expect(response.status).toBe(200);
-    const { record } = await response.json();
+    const receipt = await response.json();
+    const record = store.state!.messageRecords.at(-1)!;
+    expect(receipt.messageId).toBe("mcp-msg-2");
     expect(record.externalMessageId).toBe("mcp-msg-2");
     expect(record.senderName).toBe("企微机器人");
-    expect(record.senderPhone).toBe("13600136000");
     expect(record.text).toBe("A01 网络又断了，请尽快处理");
     expect(record.imageUrls).toEqual(["data:image/png;base64,abc"]);
+    expect(store.submitWxautoEvents).toHaveBeenCalledWith({
+      deviceId: "legacy-http",
+      events: [expect.objectContaining({
+        messageId: "mcp-msg-2",
+        senderName: "企微机器人",
+        text: "A01 网络又断了，请尽快处理",
+        imageUrls: ["data:image/png;base64,abc"]
+      })]
+    });
   });
 
   it("rejects messages when the configured MCP secret is wrong", async () => {
@@ -102,7 +157,32 @@ describe("message intake route", () => {
     }, { "x-mcp-secret": "bad-secret" }));
 
     expect(response.status).toBe(401);
-    expect(store.processWechatMessage).not.toHaveBeenCalled();
+    expect(store.submitWxautoEvents).not.toHaveBeenCalled();
+  });
+
+  it("returns a duplicate receipt for the same legacy HTTP message id", async () => {
+    store.state!.config.messageIntegrations = store.state!.config.messageIntegrations?.map((item) => (
+      item.channel === "wechat" ? { ...item, enabled: true } : item
+    ));
+    const payload = {
+      channel: "wechat",
+      externalMessageId: "legacy-duplicate-1",
+      senderId: "wxid-duplicate",
+      senderName: "Legacy Sender",
+      sourceConversationId: "legacy-conversation",
+      text: "hello"
+    };
+
+    const first = await POST(request(payload));
+    const second = await POST(request(payload));
+
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+    await first.json();
+    expect(await second.json()).toMatchObject({
+      messageId: "legacy-duplicate-1",
+      action: "duplicate"
+    });
   });
 
   it("prompts unknown WeChat users to register before creating a ticket", async () => {

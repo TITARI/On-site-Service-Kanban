@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { badRequest, errorMessage, parseJson } from "@/lib/api/errors";
+import { createWxautoIntegrationService } from "@/lib/integrations/wxauto/service";
 import { getAppRepository } from "@/lib/repositories/app-repository";
 
 const claimSchema = z.object({ limit: z.number().int().min(1).max(50).default(10) });
@@ -28,6 +29,15 @@ export async function POST(request: Request) {
   if (!integration?.enabled) return badRequest("微信 MCP 接入未启用");
   if (!isAuthorized(request, integration.secretEnv)) return NextResponse.json({ message: "MCP 密钥校验失败" }, { status: 401 });
 
-  const messages = await repository.claimOutboundMessages(input.limit);
+  const leases = await createWxautoIntegrationService(repository).claimOutbound({
+    deviceId: "legacy-http",
+    limit: input.limit,
+    supportedMessageTypes: ["text"]
+  });
+  const messages = leases.map((message) => ({
+    ...message,
+    id: message.messageId,
+    status: "sending"
+  }));
   return NextResponse.json({ messages });
 }

@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
+import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { badRequest, errorMessage, parseJson } from "@/lib/api/errors";
+import { createWxautoIntegrationService } from "@/lib/integrations/wxauto/service";
 import { getAppRepository } from "@/lib/repositories/app-repository";
 import type { IntakeMessageInput } from "@/lib/services/message-intake-service";
 
@@ -77,6 +79,19 @@ export async function POST(request: Request) {
   if (!integration?.enabled) return badRequest("微信/企微 MCP 接入未启用");
   if (!isAuthorized(request, integration.secretEnv)) return NextResponse.json({ message: "MCP 密钥校验失败" }, { status: 401 });
 
-  const result = await repository.processWechatMessage(body);
-  return NextResponse.json(result);
+  const [receipt] = await createWxautoIntegrationService(repository).submitEvents({
+    deviceId: "legacy-http",
+    events: [{
+      messageId: body.externalMessageId ?? `legacy-${randomUUID()}`,
+      sequence: Date.now(),
+      conversationId: body.sourceConversationId ?? body.senderGroup ?? body.senderName ?? "微信会话",
+      conversationType: body.senderGroup ? "group" : "direct",
+      senderId: body.senderId,
+      senderName: body.senderName ?? "微信用户",
+      text: body.text ?? "",
+      imageUrls: body.imageUrls ?? [],
+      receivedAt: body.receivedAt ?? new Date().toISOString()
+    }]
+  });
+  return NextResponse.json(receipt);
 }
