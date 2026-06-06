@@ -1,7 +1,22 @@
 import { describe, expect, it, vi } from "vitest";
 import { defaultConfig } from "@/lib/seed";
-import { createAppRepository, createMariaDbAppRepository } from "@/lib/repositories/app-repository";
+import { createAppRepository, createFileAppRepository, createMariaDbAppRepository } from "@/lib/repositories/app-repository";
 import type { MariaDbStateStore } from "@/lib/db/mariadb-state-store";
+import type { AppState } from "@/lib/domain/app-state";
+
+function state(): AppState {
+  return {
+    booths: [{ boothNumber: "A01", companyName: "Test Company", companyShortName: "Test", salesOwner: "Owner", builder: "Builder" }],
+    tickets: [],
+    messageRecords: [],
+    people: [],
+    chatIdentities: [],
+    conversations: [],
+    pendingWorkOrderSessions: [],
+    outboundMessages: [],
+    config: defaultConfig()
+  };
+}
 
 describe("app repository", () => {
   it("creates a MariaDB repository when DATABASE_URL is configured", () => {
@@ -10,6 +25,34 @@ describe("app repository", () => {
     } as unknown as NodeJS.ProcessEnv);
 
     expect(repository.kind).toBe("mariadb");
+  });
+
+  it("uses the JSON file repository in development when DATABASE_URL is missing", () => {
+    const repository = createAppRepository({
+      NODE_ENV: "development"
+    } as unknown as NodeJS.ProcessEnv);
+
+    expect(repository.kind).toBe("file");
+  });
+
+  it("bootstraps admin data from the JSON file repository", async () => {
+    const appState = state();
+    const repository = createFileAppRepository({
+      readState: vi.fn(async () => appState),
+      writeState: vi.fn(async () => undefined)
+    });
+
+    await expect(repository.adminBootstrap()).resolves.toEqual({
+      tickets: [],
+      booths: appState.booths,
+      messageRecords: [],
+      people: [],
+      chatIdentities: [],
+      conversations: [],
+      pendingWorkOrderSessions: [],
+      outboundMessages: [],
+      config: appState.config
+    });
   });
 
   it("delegates repository methods to the MariaDB state store", async () => {

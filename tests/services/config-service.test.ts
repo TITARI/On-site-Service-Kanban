@@ -3,6 +3,29 @@ import { mergeConfigSecrets, stripConfigSecrets, validateConfig } from "@/lib/se
 import { defaultConfig } from "@/lib/seed";
 
 describe("config service", () => {
+  it("normalizes the default auto acceptance settings", () => {
+    const config = defaultConfig();
+
+    expect(validateConfig(config).autoAcceptance).toEqual({ enabled: true, timeoutMinutes: 30 });
+  });
+
+  it("accepts valid auto acceptance settings including disabling the feature", () => {
+    const config = defaultConfig();
+
+    expect(validateConfig({ ...config, autoAcceptance: { enabled: false, timeoutMinutes: 60 } }).autoAcceptance).toEqual({
+      enabled: false,
+      timeoutMinutes: 60
+    });
+  });
+
+  it("rejects auto acceptance timeout minutes outside the supported range", () => {
+    const config = defaultConfig();
+
+    expect(() => validateConfig({ ...config, autoAcceptance: { enabled: true, timeoutMinutes: 0 } })).toThrow("自动验收时效需为 1 至 10080 分钟的整数");
+    expect(() => validateConfig({ ...config, autoAcceptance: { enabled: true, timeoutMinutes: 10081 } })).toThrow("自动验收时效需为 1 至 10080 分钟的整数");
+    expect(() => validateConfig({ ...config, autoAcceptance: { enabled: true, timeoutMinutes: 1.5 } })).toThrow("自动验收时效需为 1 至 10080 分钟的整数");
+  });
+
   it("requires at least one enabled non-auto issue type", () => {
     const config = defaultConfig();
     config.issueTypes = [{ id: "auto", name: "自动", urgencyMinutes: 0, priorityWeight: 0, enabled: true }];

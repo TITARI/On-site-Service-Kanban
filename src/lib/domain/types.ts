@@ -126,6 +126,11 @@ export type PendingWorkOrderSession = {
 
 export type OutboundMessageStatus = "pending" | "sending" | "sent" | "failed";
 
+export type AutoAcceptanceConfig = {
+  enabled: boolean;
+  timeoutMinutes: number;
+};
+
 export type OutboundMessage = {
   id: string;
   channel: MessageChannel;

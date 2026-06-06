@@ -11,6 +11,7 @@ import {
 
 const store = vi.hoisted(() => ({
   state: undefined as AppState | undefined,
+  runAutoAcceptance: vi.fn(),
   getConfig: vi.fn(),
   claimOutboundMessages: vi.fn(),
   markOutboundMessage: vi.fn()
@@ -19,6 +20,7 @@ const store = vi.hoisted(() => ({
 vi.mock("@/lib/repositories/app-repository", () => ({
   getAppRepository: (): AppRepository => ({
     kind: "mariadb",
+    runAutoAcceptance: store.runAutoAcceptance,
     getConfig: store.getConfig,
     claimOutboundMessages: store.claimOutboundMessages,
     markOutboundMessage: store.markOutboundMessage
@@ -57,9 +59,11 @@ function request(body: unknown, headers: Record<string, string> = {}) {
 
 beforeEach(() => {
   store.state = state();
+  store.runAutoAcceptance.mockReset();
   store.getConfig.mockReset();
   store.claimOutboundMessages.mockReset();
   store.markOutboundMessage.mockReset();
+  store.runAutoAcceptance.mockResolvedValue(undefined);
   store.getConfig.mockImplementation(async () => store.state!.config);
   store.claimOutboundMessages.mockImplementation(async (limit?: number) => claimPendingOutboundMessages(store.state!, { limit }));
   store.markOutboundMessage.mockImplementation(async (messageId: string, status: "sent" | "failed", error?: string) => {
@@ -85,7 +89,9 @@ describe("wechat outbound routes", () => {
     const { messages } = await response.json();
     expect(messages).toHaveLength(1);
     expect(messages[0]).toMatchObject({ targetName: "张三", text: "请补充展位号", status: "sending" });
+    expect(store.runAutoAcceptance).toHaveBeenCalledOnce();
     expect(store.claimOutboundMessages).toHaveBeenCalledWith(5);
+    expect(store.runAutoAcceptance.mock.invocationCallOrder[0]).toBeLessThan(store.claimOutboundMessages.mock.invocationCallOrder[0]);
   });
 
   it("marks a claimed message as sent", async () => {

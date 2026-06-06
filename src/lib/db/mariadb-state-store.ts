@@ -23,6 +23,13 @@ import { defaultConfig, type AppConfig } from "../seed";
 import type { AppState } from "../domain/app-state";
 import { createTicketService, type SubmitTicketInput } from "../services/ticket-service";
 import { processWechatWatchtowerMessage, type WatchtowerResult } from "../services/wechat-watchtower-service";
+import {
+  autoAcceptanceFeedbackText,
+  autoAcceptanceProcessingText,
+  autoAcceptanceReceiptBody,
+  isTicketDueForAutoAcceptance,
+  normalizeAutoAcceptanceConfig
+} from "../services/auto-acceptance-service";
 import type { IntakeMessageInput } from "../services/message-intake-service";
 import { getDatabasePool, type DatabaseConnection, withDatabaseTransaction } from "./connection";
 
@@ -93,6 +100,7 @@ function mergedConfig(config?: Partial<AppConfig>): AppConfig {
     keywordGroups: normalizeKeywordGroups(incoming.keywordGroups?.length ? incoming.keywordGroups : defaults.keywordGroups),
     aiPromptTemplates: promptConfig.aiPromptTemplates,
     aiPromptDefaults: promptConfig.aiPromptDefaults,
+    autoAcceptance: normalizeAutoAcceptanceConfig(incoming.autoAcceptance),
     assignmentRules: incoming.assignmentRules?.length ? incoming.assignmentRules : defaults.assignmentRules
   };
 }
@@ -323,10 +331,7 @@ async function readTicketSummaries(connection: DatabaseConnection): Promise<Tick
   return ticketRows.map((row) => ticketSummaryFromRow(row, feedbackByTicket));
 }
 
-async function readTicketById(connection: DatabaseConnection, ticketId: string): Promise<Ticket | undefined> {
-  const [row] = await rows<Row>(connection, "SELECT * FROM tickets WHERE id = ? LIMIT 1", [ticketId]);
-  if (!row) return undefined;
-
+async function ticketFromRow(connection: DatabaseConnection, ticketId: string, row: Row): Promise<Ticket> {
   const feedbackRows = await rows<Row>(connection, "SELECT * FROM ticket_feedback_users WHERE ticket_id = ? ORDER BY feedback_at", [ticketId]);
   const replyRows = await rows<Row>(connection, "SELECT * FROM ticket_replies WHERE ticket_id = ? ORDER BY created_at", [ticketId]);
   const timelineRows = await rows<Row>(connection, "SELECT * FROM ticket_timeline WHERE ticket_id = ? ORDER BY created_at", [ticketId]);
@@ -390,6 +395,22 @@ async function readTicketById(connection: DatabaseConnection, ticketId: string):
     createdAt: requiredIso(row.created_at),
     updatedAt: requiredIso(row.updated_at)
   };
+}
+
+async function readTicketById(connection: DatabaseConnection, ticketId: string): Promise<Ticket | undefined> {
+  const [row] = await rows<Row>(connection, "SELECT * FROM tickets WHERE id = ? LIMIT 1", [ticketId]);
+  if (!row) return undefined;
+  return ticketFromRow(connection, ticketId, row);
+}
+
+async function readResolvedTicketByIdForUpdate(connection: DatabaseConnection, ticketId: string): Promise<Ticket | undefined> {
+  const [row] = await rows<Row>(
+    connection,
+    "SELECT * FROM tickets WHERE id = ? AND status = ? LIMIT 1 FOR UPDATE",
+    [ticketId, "已解决"]
+  );
+  if (!row) return undefined;
+  return ticketFromRow(connection, ticketId, row);
 }
 
 async function readOpenTicketsForBooth(connection: DatabaseConnection, boothNumber: string): Promise<Ticket[]> {
@@ -1204,6 +1225,100 @@ async function queueTicketFeedbackOutbound(connection: DatabaseConnection, ticke
   );
 }
 
+async function queueProcessingGroupOutbound(connection: DatabaseConnection, ticket: Ticket, text: string, now = new Date()) {
+  const trimmedText = text.trim();
+  if (!trimmedText) return;
+
+  await execute(
+    connection,
+    `INSERT INTO outbound_messages (
+      id, channel, target_conversation_id, target_chat_identity_id, target_name, text,
+      related_ticket_id, related_session_id, status, retry_count, last_error, claimed_at,
+      sent_at, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      `outbound-${crypto.randomUUID()}`,
+      "wechat",
+      null,
+      null,
+      ticket.assignmentGroup ?? ticket.handlerName ?? "刘基鑫",
+      trimmedText,
+      ticket.id,
+      null,
+      "pending",
+      0,
+      null,
+      null,
+      null,
+      now,
+      now
+    ]
+  );
+}
+
+async function appendTicketTimelineItem(connection: DatabaseConnection, item: TicketTimelineItem, now = new Date()) {
+  await execute(
+    connection,
+    `INSERT INTO ticket_timeline (
+      id, ticket_id, type, body, actor_name, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?)`,
+    [
+      item.id,
+      item.ticketId,
+      item.type,
+      item.body,
+      item.actorName,
+      dateOrNull(item.createdAt) ?? now
+    ]
+  );
+}
+
+async function runAutoAcceptanceOnConnection(connection: DatabaseConnection, now = new Date()) {
+  const config = await latestConfig(connection);
+  const autoAcceptance = normalizeAutoAcceptanceConfig(config.autoAcceptance);
+  if (!autoAcceptance.enabled) return [];
+
+  const candidateRows = await rows<Row>(
+    connection,
+    "SELECT id FROM tickets WHERE status = ? ORDER BY updated_at ASC",
+    ["已解决"]
+  );
+  const acceptedTicketIds: string[] = [];
+  const nowIso = now.toISOString();
+
+  for (const row of candidateRows) {
+    const ticketId = String(row.id);
+    const ticket = await readResolvedTicketByIdForUpdate(connection, ticketId);
+    if (!ticket || !isTicketDueForAutoAcceptance(ticket, config, nowIso)) continue;
+
+    const result = await execute(
+      connection,
+      "UPDATE tickets SET status = ?, updated_at = ? WHERE id = ? AND status = ?",
+      ["已关闭", now, ticket.id, "已解决"]
+    );
+    if (result.affectedRows < 1) continue;
+
+    const closedTicket: Ticket = {
+      ...ticket,
+      status: "已关闭",
+      updatedAt: nowIso
+    };
+    await appendTicketTimelineItem(connection, {
+      id: `timeline-${crypto.randomUUID()}`,
+      ticketId: ticket.id,
+      type: "receipt",
+      body: autoAcceptanceReceiptBody(autoAcceptance.timeoutMinutes),
+      createdAt: nowIso,
+      actorName: "系统"
+    }, now);
+    await queueTicketFeedbackOutbound(connection, closedTicket, autoAcceptanceFeedbackText(closedTicket, autoAcceptance.timeoutMinutes), now);
+    await queueProcessingGroupOutbound(connection, closedTicket, autoAcceptanceProcessingText(closedTicket), now);
+    acceptedTicketIds.push(ticket.id);
+  }
+
+  return acceptedTicketIds;
+}
+
 async function replaceConfigTables(connection: DatabaseConnection, config: AppConfig, now = new Date()) {
   for (const table of [
     "assignment_rules",
@@ -1340,6 +1455,19 @@ export type WechatOrderLog = {
 };
 
 export class MariaDbStateStore {
+  async runAutoAcceptance(now?: Date): Promise<void>;
+  async runAutoAcceptance(connection: DatabaseConnection, now?: Date): Promise<string[]>;
+  async runAutoAcceptance(first?: Date | DatabaseConnection, second = new Date()): Promise<void | string[]> {
+    if (!first || first instanceof Date) {
+      const now = first ?? second;
+      await withDatabaseTransaction(async (connection) => {
+        await runAutoAcceptanceOnConnection(connection, now);
+      });
+      return;
+    }
+    return await runAutoAcceptanceOnConnection(first, second);
+  }
+
   async mobileBootstrap(connection: DatabaseConnection = getDatabasePool()) {
     return {
       tickets: await readTicketSummaries(connection),

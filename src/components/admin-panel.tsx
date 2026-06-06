@@ -21,6 +21,11 @@ import { keywordRuleSetsOf, normalizeKeywordGroups } from "@/lib/domain/keyword-
 import type { AiPromptDefaults, AiPromptScenario, AiPromptTemplate, AiProviderPresetId, BoothRecord, ChatIdentity, Conversation, InboundMessageRecord, KeywordGroup, KeywordRuleSet, KeywordTerm, OutboundMessage, PendingWorkOrderSession, Person } from "@/lib/domain/types";
 import type { TicketSummary } from "@/lib/domain/ticket-summary";
 import { messageIntegrationsOf, userGroupsOf, type AppConfig } from "@/lib/seed";
+import {
+  AUTO_ACCEPTANCE_MAX_MINUTES,
+  AUTO_ACCEPTANCE_MIN_MINUTES,
+  normalizeAutoAcceptanceConfig
+} from "@/lib/services/auto-acceptance-service";
 
 const AUTO_ISSUE_TYPE_NAME = "自动";
 const MASKED_API_KEY = "••••••••";
@@ -553,6 +558,7 @@ export function AdminConfigCenter({
   const [aiModelLists, setAiModelLists] = useState<Partial<Record<"fast" | "smart", AiModelListState>>>({});
   const groups = config.userGroups?.length ? config.userGroups : userGroupsOf(config);
   const messageIntegrations = messageIntegrationsOf(config);
+  const autoAcceptance = normalizeAutoAcceptanceConfig(config.autoAcceptance);
   const activeGroups = groups.filter((group) => !deletedGroupIds.has(group.id));
   const usedGroupNames = new Set(tickets.map((ticket) => ticket.assignmentGroup).filter(Boolean));
   const usedIssueTypeNames = new Set(tickets.map((ticket) => ticket.issueType).filter(Boolean));
@@ -682,6 +688,27 @@ export function AdminConfigCenter({
       return;
     }
     void saveConfig({ ...config, messageIntegrations: nextIntegrations }, "微信/企微MCP配置已保存", "messages");
+  }
+
+  function saveAutoAcceptance(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const formData = new FormData(event.currentTarget);
+    const timeoutMinutes = numberValue(formData, "autoAcceptance-timeoutMinutes");
+    if (
+      !Number.isInteger(timeoutMinutes) ||
+      timeoutMinutes < AUTO_ACCEPTANCE_MIN_MINUTES ||
+      timeoutMinutes > AUTO_ACCEPTANCE_MAX_MINUTES
+    ) {
+      setStatus("自动验收时效需为 1 至 10080 分钟的整数");
+      return;
+    }
+    void saveConfig({
+      ...config,
+      autoAcceptance: {
+        enabled: isChecked(formData, "autoAcceptance-enabled"),
+        timeoutMinutes
+      }
+    }, "自动验收配置已保存", "auto-acceptance");
   }
 
   async function saveKeywordGroups(event: React.FormEvent<HTMLFormElement>) {
@@ -1457,6 +1484,33 @@ export function AdminConfigCenter({
             );
           })}
         </div>
+      </div>}
+      {(showAll || view === "system") && <div className="admin-card config-list" id="admin-auto-acceptance">
+        <h3>自动验收</h3>
+        <form className="config-list-form" onSubmit={saveAutoAcceptance} noValidate>
+          <article className="config-edit-card">
+            <strong className="config-edit-title">自动验收</strong>
+            <p className="config-lock-note">处理组标记完成后，业务组在时效内未验收将由系统自动闭环。</p>
+            <div className="config-edit-grid">
+              <label>
+                <span>处理完成后自动验收时效（分钟）</span>
+                <input
+                  name="autoAcceptance-timeoutMinutes"
+                  type="number"
+                  min={AUTO_ACCEPTANCE_MIN_MINUTES}
+                  max={AUTO_ACCEPTANCE_MAX_MINUTES}
+                  step={1}
+                  defaultValue={autoAcceptance.timeoutMinutes}
+                  aria-label="处理完成后自动验收时效（分钟）"
+                />
+              </label>
+            </div>
+            <div className="config-check-grid">
+              <label className="check-row"><input name="autoAcceptance-enabled" type="checkbox" defaultChecked={autoAcceptance.enabled} />启用自动验收</label>
+            </div>
+          </article>
+          <button className="secondary-button" type="submit" disabled={savingConfigId === "auto-acceptance"}>保存自动验收配置</button>
+        </form>
       </div>}
       {(showAll || view === "system") && <div className="admin-card config-list" id="admin-message">
         <h3>微信/企微 MCP</h3>

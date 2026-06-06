@@ -1,6 +1,6 @@
 import { normalizeKeywordGroups } from "./domain/keyword-config";
 import { defaultAiPromptDefaults, defaultAiPromptTemplates } from "./domain/ai-config";
-import type { AiModelConfig, AiPromptDefaults, AiPromptTemplate, IssueType, KeywordGroup, MessageIntegrationConfig, UserGroup } from "./domain/types";
+import type { AiModelConfig, AiPromptDefaults, AiPromptTemplate, AutoAcceptanceConfig, IssueType, KeywordGroup, MessageIntegrationConfig, UserGroup } from "./domain/types";
 
 export type AppConfig = {
   issueTypes: IssueType[];
@@ -10,6 +10,7 @@ export type AppConfig = {
   keywordGroups?: KeywordGroup[];
   aiPromptTemplates?: AiPromptTemplate[];
   aiPromptDefaults?: Partial<AiPromptDefaults>;
+  autoAcceptance?: AutoAcceptanceConfig;
   assignmentRules: Array<{ id: string; boothPattern: string; issueType: string; handlerId: string; handlerName: string; groupName: string }>;
 };
 
@@ -195,6 +196,7 @@ export function defaultConfig(): AppConfig {
     keywordGroups: defaultKeywordGroups(),
     aiPromptTemplates: defaultAiPromptTemplates(),
     aiPromptDefaults: defaultAiPromptDefaults(),
+    autoAcceptance: { enabled: true, timeoutMinutes: 30 },
     assignmentRules: [
       { id: "network-a", boothPattern: "A", issueType: "网络", handlerId: "h-network", handlerName: "网络值班", groupName: "网络组" },
       { id: "power-a", boothPattern: "A", issueType: "电力", handlerId: "h-power", handlerName: "工程值班", groupName: "工程组" }

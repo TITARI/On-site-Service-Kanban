@@ -13,6 +13,7 @@ import type {
 } from "../domain/types";
 import { normalizeKeywordGroups } from "../domain/keyword-config";
 import { defaultConfig, type AppConfig } from "../seed";
+import { normalizeAutoAcceptanceConfig } from "../services/auto-acceptance-service";
 
 export type AppState = {
   booths: BoothRecord[];
@@ -87,7 +88,8 @@ export function parseStoredState(raw: string): AppState {
         ...parsedConfig,
         messageIntegrations: parsedConfig.messageIntegrations?.length ? parsedConfig.messageIntegrations : defaults.messageIntegrations,
         userGroups: parsedConfig.userGroups?.length ? parsedConfig.userGroups : defaults.userGroups,
-        keywordGroups: normalizeKeywordGroups(parsedConfig.keywordGroups?.length ? parsedConfig.keywordGroups : defaults.keywordGroups)
+        keywordGroups: normalizeKeywordGroups(parsedConfig.keywordGroups?.length ? parsedConfig.keywordGroups : defaults.keywordGroups),
+        autoAcceptance: normalizeAutoAcceptanceConfig(parsedConfig.autoAcceptance)
       }
     };
   } catch (error) {

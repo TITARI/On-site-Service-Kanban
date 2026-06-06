@@ -697,6 +697,39 @@ describe("AdminConfigCenter user groups", () => {
     }));
   });
 
+  it("edits auto acceptance settings on the system page", async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ config }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+
+    render(<AdminConfigCenter config={{ ...config, autoAcceptance: { enabled: true, timeoutMinutes: 30 } }} view="system" onRefresh={vi.fn()} />);
+
+    expect(screen.getByRole("heading", { name: "自动验收" })).not.toBeNull();
+    await user.click(screen.getByLabelText("启用自动验收"));
+    await user.clear(screen.getByLabelText("处理完成后自动验收时效（分钟）"));
+    await user.type(screen.getByLabelText("处理完成后自动验收时效（分钟）"), "45");
+    await user.click(screen.getByRole("button", { name: "保存自动验收配置" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/admin/config", expect.objectContaining({ method: "PUT" })));
+    const body = JSON.parse(String(fetchMock.mock.calls.at(-1)?.[1]?.body));
+    expect(body.autoAcceptance).toEqual({ enabled: false, timeoutMinutes: 45 });
+  });
+
+  it("blocks invalid auto acceptance timeout minutes before saving", async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ config }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+
+    render(<AdminConfigCenter config={{ ...config, autoAcceptance: { enabled: true, timeoutMinutes: 30 } }} view="system" onRefresh={vi.fn()} />);
+
+    await user.clear(screen.getByLabelText("处理完成后自动验收时效（分钟）"));
+    await user.type(screen.getByLabelText("处理完成后自动验收时效（分钟）"), "0");
+    await user.click(screen.getByRole("button", { name: "保存自动验收配置" }));
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(screen.getByText("自动验收时效需为 1 至 10080 分钟的整数")).not.toBeNull();
+  });
+
   it("edits one keyword rule set as comma-separated terms", async () => {
     const keywordConfig: AppConfig = {
       ...config,

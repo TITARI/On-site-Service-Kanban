@@ -14,7 +14,9 @@ const submitSchema = z.object({
 });
 
 export async function GET() {
-  const tickets = await getAppRepository().listTicketSummaries();
+  const repository = getAppRepository();
+  await repository.runAutoAcceptance();
+  const tickets = await repository.listTicketSummaries();
   return NextResponse.json({ tickets });
 }
 

@@ -6,14 +6,31 @@ import type { AppState } from "@/lib/domain/app-state";
 
 const store = vi.hoisted(() => ({
   state: undefined as AppState | undefined,
+  runAutoAcceptance: vi.fn(),
+  adminBootstrap: vi.fn(),
+  mobileBootstrap: vi.fn(),
+  getConfig: vi.fn()
+}));
+
+const fallbackStore = vi.hoisted(() => ({
+  state: undefined as AppState | undefined,
+  runAutoAcceptance: vi.fn(),
   adminBootstrap: vi.fn(),
   mobileBootstrap: vi.fn(),
   getConfig: vi.fn()
 }));
 
 vi.mock("@/lib/repositories/app-repository", () => ({
+  createFileAppRepository: (): AppRepository => ({
+    kind: "file",
+    runAutoAcceptance: fallbackStore.runAutoAcceptance,
+    adminBootstrap: fallbackStore.adminBootstrap,
+    mobileBootstrap: fallbackStore.mobileBootstrap,
+    getConfig: fallbackStore.getConfig
+  } as unknown as AppRepository),
   getAppRepository: (): AppRepository => ({
     kind: "mariadb",
+    runAutoAcceptance: store.runAutoAcceptance,
     adminBootstrap: store.adminBootstrap,
     mobileBootstrap: store.mobileBootstrap,
     getConfig: store.getConfig
@@ -74,15 +91,32 @@ function state(): AppState {
 describe("bootstrap route", () => {
   beforeEach(() => {
     store.state = state();
+    store.runAutoAcceptance.mockReset();
     store.adminBootstrap.mockReset();
     store.mobileBootstrap.mockReset();
     store.getConfig.mockReset();
+    fallbackStore.state = state();
+    fallbackStore.runAutoAcceptance.mockReset();
+    fallbackStore.adminBootstrap.mockReset();
+    fallbackStore.mobileBootstrap.mockReset();
+    fallbackStore.getConfig.mockReset();
+    store.runAutoAcceptance.mockResolvedValue(undefined);
     store.adminBootstrap.mockResolvedValue(store.state);
     store.mobileBootstrap.mockResolvedValue({
       tickets: store.state.tickets.map(({ imageUrls, replies, timeline, aiDecisions, ...summary }) => summary),
       config: defaultConfig()
     });
     store.getConfig.mockResolvedValue(defaultConfig());
+    fallbackStore.runAutoAcceptance.mockResolvedValue(undefined);
+    fallbackStore.adminBootstrap.mockResolvedValue(fallbackStore.state);
+    fallbackStore.mobileBootstrap.mockResolvedValue({
+      tickets: fallbackStore.state.tickets.map(({ imageUrls, replies, timeline, aiDecisions, ...summary }) => ({
+        ...summary,
+        id: "fallback-ticket"
+      })),
+      config: defaultConfig()
+    });
+    fallbackStore.getConfig.mockResolvedValue(defaultConfig());
   });
 
   it("opts out of route caching so query scoped responses stay separate", async () => {
@@ -103,6 +137,8 @@ describe("bootstrap route", () => {
     expect(payload.tickets[0]).not.toHaveProperty("replies");
     expect(payload.tickets[0]).not.toHaveProperty("timeline");
     expect(payload.config).toEqual(defaultConfig());
+    expect(store.runAutoAcceptance).toHaveBeenCalledOnce();
+    expect(store.runAutoAcceptance.mock.invocationCallOrder[0]).toBeLessThan(store.mobileBootstrap.mock.invocationCallOrder[0]);
   });
 
   it("returns only configuration for login bootstrap requests", async () => {
@@ -112,6 +148,7 @@ describe("bootstrap route", () => {
     const payload = await response.json();
 
     expect(payload).toEqual({ config: defaultConfig() });
+    expect(store.runAutoAcceptance).not.toHaveBeenCalled();
     expect(store.getConfig).toHaveBeenCalled();
     expect(store.mobileBootstrap).not.toHaveBeenCalled();
     expect(store.adminBootstrap).not.toHaveBeenCalled();
@@ -124,7 +161,49 @@ describe("bootstrap route", () => {
     const response = await route.GET(new Request("http://localhost/api/bootstrap?scope=mobile"));
 
     expect(response.status).toBe(200);
+    expect(store.runAutoAcceptance).toHaveBeenCalledOnce();
     expect(store.mobileBootstrap).toHaveBeenCalled();
     expect(store.adminBootstrap).not.toHaveBeenCalled();
+  });
+
+  it("falls back to JSON bootstrap data when MariaDB is not ready for mobile requests", async () => {
+    const route = await import("@/app/api/bootstrap/route");
+    store.mobileBootstrap.mockRejectedValue(Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:3306"), { code: "ECONNREFUSED" }));
+
+    const response = await route.GET(new Request("http://localhost/api/bootstrap?scope=mobile"));
+    const payload = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(payload.tickets).toEqual([expect.objectContaining({ id: "fallback-ticket" })]);
+    expect(payload.storage).toEqual(expect.objectContaining({ mode: "file", fallback: true }));
+    expect(fallbackStore.mobileBootstrap).toHaveBeenCalled();
+  });
+
+  it("falls back to JSON config when MariaDB is not ready for login bootstrap", async () => {
+    const route = await import("@/app/api/bootstrap/route");
+    store.getConfig.mockRejectedValue(Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:3306"), { code: "ECONNREFUSED" }));
+
+    const response = await route.GET(new Request("http://localhost/api/bootstrap?scope=login"));
+    const payload = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(payload.config).toEqual(defaultConfig());
+    expect(payload.storage).toEqual(expect.objectContaining({ mode: "file", fallback: true }));
+    expect(fallbackStore.getConfig).toHaveBeenCalled();
+  });
+
+  it("returns a clear degraded error when neither MariaDB nor JSON bootstrap can load", async () => {
+    const route = await import("@/app/api/bootstrap/route");
+    store.adminBootstrap.mockRejectedValue(Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:3306"), { code: "ECONNREFUSED" }));
+    fallbackStore.adminBootstrap.mockRejectedValue(new Error("state file is broken"));
+
+    const response = await route.GET(new Request("http://localhost/api/bootstrap"));
+    const payload = await response.json();
+
+    expect(response.status).toBe(503);
+    expect(payload).toEqual(expect.objectContaining({
+      message: "数据源暂不可用",
+      storage: expect.objectContaining({ mode: "file", fallback: false })
+    }));
   });
 });

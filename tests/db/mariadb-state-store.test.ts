@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { MariaDbStateStore } from "@/lib/db/mariadb-state-store";
 import type { DatabaseConnection } from "@/lib/db/connection";
+import { defaultConfig } from "@/lib/seed";
 
 function rowDate() {
   return new Date("2026-06-04T01:00:00.000Z");
@@ -125,5 +126,81 @@ describe("MariaDbStateStore", () => {
     expect(data.conversations).toEqual([expect.objectContaining({ id: "conv-1", linkedPersonIds: ["person-1"] })]);
     expect(data.pendingWorkOrderSessions).toEqual([expect.objectContaining({ id: "pending-1", missingFields: ["phone"] })]);
     expect(data.outboundMessages).toEqual([expect.objectContaining({ id: "outbound-1", status: "pending" })]);
+  });
+
+  it("persists auto acceptance and queues business and processing notifications", async () => {
+    const calls: Array<{ sql: string; params: unknown[] }> = [];
+    const connection = {
+      execute: vi.fn(async (sql: string, params: unknown[] = []) => {
+        calls.push({ sql, params });
+        if (sql.includes("FROM app_config_versions")) {
+          return [[{
+            config_json: JSON.stringify({
+              ...defaultConfig(),
+              autoAcceptance: { enabled: true, timeoutMinutes: 30 }
+            })
+          }]];
+        }
+        if (sql.includes("SELECT id FROM tickets WHERE status = ?")) return [[{ id: "ticket-auto" }]];
+        if (sql.includes("FROM tickets WHERE id = ?") && sql.includes("FOR UPDATE")) {
+          return [[{
+            id: "ticket-auto",
+            title: "A01 星河科技 网络",
+            booth_number: "A01",
+            company_name: "上海星河科技有限公司",
+            company_short_name: "星河科技",
+            description: "网络断了",
+            image_urls: JSON.stringify([]),
+            issue_type: "网络",
+            submitter_id: "member-1",
+            submitter_name: "张三",
+            submitter_phone: "13800138000",
+            reporter_person_id: null,
+            reporter_chat_identity_id: "chat-1",
+            source_conversation_id: "conv-site",
+            status: "已解决",
+            accepted_at: null,
+            handler_id: "handler-1",
+            handler_name: "网络值班",
+            handler_phone: null,
+            assignment_group: "网络组",
+            urge_count: 0,
+            last_urged_at: null,
+            urge_level: 0,
+            priority_score: 25,
+            created_at: new Date("2026-06-05T07:30:00.000Z"),
+            updated_at: new Date("2026-06-05T08:00:00.000Z")
+          }]];
+        }
+        if (sql.includes("FROM ticket_feedback_users")) return [[{
+          ticket_id: "ticket-auto",
+          user_id: "member-1",
+          user_name: "张三",
+          phone: "13800138000",
+          feedback_at: new Date("2026-06-05T07:30:00.000Z")
+        }]];
+        if (sql.includes("FROM ticket_replies")) return [[]];
+        if (sql.includes("FROM ticket_timeline")) return [[{
+          id: "timeline-resolved",
+          ticket_id: "ticket-auto",
+          type: "status-changed",
+          body: "状态变更为已解决：已恢复网络",
+          created_at: new Date("2026-06-05T08:00:00.000Z"),
+          actor_name: "网络值班"
+        }]];
+        if (sql.includes("FROM ai_decisions")) return [[]];
+        if (sql.trim().startsWith("UPDATE tickets")) return [{ affectedRows: 1 }];
+        return [{ affectedRows: 1 }];
+      })
+    } as unknown as DatabaseConnection;
+
+    await new MariaDbStateStore().runAutoAcceptance(connection, new Date("2026-06-05T08:30:00.000Z"));
+
+    expect(calls.some((call) => call.sql.includes("FOR UPDATE"))).toBe(true);
+    expect(calls.some((call) => call.sql.includes("UPDATE tickets") && call.params.includes("已关闭") && call.params.includes("已解决"))).toBe(true);
+    expect(calls.some((call) => call.sql.includes("INSERT INTO ticket_timeline") && call.params.includes("业务组在 30 分钟内未验收，系统已自动验收通过并关闭工单"))).toBe(true);
+    const outboundInserts = calls.filter((call) => call.sql.includes("INSERT INTO outbound_messages"));
+    expect(outboundInserts).toHaveLength(2);
+    expect(outboundInserts.map((call) => call.params[4])).toEqual(["conv-site", "网络组"]);
   });
 });

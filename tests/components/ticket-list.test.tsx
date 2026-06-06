@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { TicketList } from "@/components/ticket-list";
 import type { Ticket } from "@/lib/domain/types";
 
@@ -44,5 +44,46 @@ describe("TicketList", () => {
     expect(screen.getByText("提交 14:32")).not.toBeNull();
     expect(screen.getByText("催单 14:40")).not.toBeNull();
     expect(screen.queryByText(/2026/)).toBeNull();
+  });
+
+  it("keeps closed tickets only inside the collapsed archive section", () => {
+    const closedTicket: Ticket = {
+      ...ticket,
+      id: "ticket-closed",
+      title: "A02 星河科技 电力",
+      issueType: "电力",
+      status: "已关闭",
+      updatedAt: "2026-05-22T09:00:00.000Z"
+    };
+
+    render(<TicketList tickets={[ticket, closedTicket]} onSelect={vi.fn()} />);
+
+    expect(screen.getByRole("heading", { name: /网络/ })).not.toBeNull();
+    const archive = screen.getByText("归档工单").closest("details");
+    expect(archive).not.toBeNull();
+    expect(within(archive!).getByText("1")).not.toBeNull();
+    expect(within(archive!).getByText("A02 星河科技 电力")).not.toBeNull();
+    expect(screen.queryByRole("heading", { name: /电力/ })).toBeNull();
+  });
+
+  it("shows the archive section instead of the empty state when only closed tickets exist", () => {
+    const closedTicket: Ticket = {
+      ...ticket,
+      id: "ticket-closed",
+      title: "A02 星河科技 电力",
+      issueType: "电力",
+      status: "已关闭",
+      updatedAt: "2026-05-22T09:00:00.000Z"
+    };
+    const onSelect = vi.fn();
+
+    render(<TicketList tickets={[closedTicket]} onSelect={onSelect} />);
+
+    expect(screen.queryByText("暂无工单")).toBeNull();
+    const archive = screen.getByText("归档工单").closest("details");
+    expect(archive).not.toBeNull();
+    fireEvent.click(within(archive!).getByText("归档工单"));
+    fireEvent.click(within(archive!).getByRole("button", { name: /A02 星河科技 电力/ }));
+    expect(onSelect).toHaveBeenCalledWith("ticket-closed");
   });
 });

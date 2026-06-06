@@ -626,6 +626,40 @@ textarea {
   gap: 11px;
 }
 
+.ticket-archive {
+  border: 1px solid rgba(31, 106, 77, 0.12);
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.72);
+  box-shadow: 0 10px 24px rgba(31, 49, 39, 0.06);
+  overflow: hidden;
+}
+
+.archive-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 13px 15px;
+  color: var(--green);
+  cursor: pointer;
+  font-family: var(--font-display);
+  font-weight: 900;
+}
+
+.archive-summary strong {
+  display: inline-grid;
+  min-width: 26px;
+  height: 26px;
+  place-items: center;
+  border-radius: 999px;
+  background: rgba(31, 106, 77, 0.08);
+  font-size: 12px;
+}
+
+.archive-list {
+  padding: 0 10px 10px;
+}
+
 .detail-route {
   display: grid;
   gap: 11px;

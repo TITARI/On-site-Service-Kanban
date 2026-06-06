@@ -28,6 +28,7 @@ export async function POST(request: Request) {
   if (!integration?.enabled) return badRequest("微信 MCP 接入未启用");
   if (!isAuthorized(request, integration.secretEnv)) return NextResponse.json({ message: "MCP 密钥校验失败" }, { status: 401 });
 
+  await repository.runAutoAcceptance();
   const messages = await repository.claimOutboundMessages(input.limit);
   return NextResponse.json({ messages });
 }

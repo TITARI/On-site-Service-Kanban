@@ -1,10 +1,12 @@
 import { normalizeKeywordGroups } from "../domain/keyword-config";
 import { normalizeAiPromptConfig } from "../domain/ai-config";
 import type { AppConfig } from "../seed";
+import { normalizeAutoAcceptanceConfig, validateAutoAcceptanceConfig } from "./auto-acceptance-service";
 
 export function stripConfigSecrets(config: AppConfig): AppConfig {
   return {
     ...config,
+    autoAcceptance: normalizeAutoAcceptanceConfig(config.autoAcceptance),
     aiModels: config.aiModels.map(({ apiKey, apiKeyConfigured, ...model }) => {
       if (!apiKey && !model.apiKeyEnv) return model;
       return { ...model, apiKeyConfigured: true };
@@ -16,6 +18,7 @@ export function mergeConfigSecrets(incoming: AppConfig, existing: AppConfig): Ap
   const existingModels = new Map(existing.aiModels.map((model) => [model.id, model]));
   return {
     ...incoming,
+    autoAcceptance: incoming.autoAcceptance ?? existing.autoAcceptance,
     aiModels: incoming.aiModels.map(({ apiKeyConfigured, ...model }) => {
       const directApiKey = typeof model.apiKey === "string" ? model.apiKey.trim() : "";
       const existingModel = existingModels.get(model.id);
@@ -31,7 +34,8 @@ export function mergeConfigSecrets(incoming: AppConfig, existing: AppConfig): Ap
 export function validateConfig(config: AppConfig) {
   const normalizedConfig = {
     ...normalizeAiPromptConfig(config),
-    keywordGroups: normalizeKeywordGroups(config.keywordGroups)
+    keywordGroups: normalizeKeywordGroups(config.keywordGroups),
+    autoAcceptance: validateAutoAcceptanceConfig(config.autoAcceptance)
   };
   const enabledIssueTypes = normalizedConfig.issueTypes.filter((item) => item.enabled && item.name !== "自动" && item.id !== "auto");
   if (enabledIssueTypes.length < 1) throw new Error("至少需要配置1个非自动问题类型");

@@ -21,7 +21,9 @@ const statusSchema = z.object({
 
 export async function GET(_: Request, { params }: { params: Promise<{ ticketId: string }> }) {
   const { ticketId } = await params;
-  const ticket = await getAppRepository().getTicket(ticketId);
+  const repository = getAppRepository();
+  await repository.runAutoAcceptance();
+  const ticket = await repository.getTicket(ticketId);
   if (!ticket) return NextResponse.json({ message: "工单不存在" }, { status: 404 });
   return NextResponse.json({ ticket });
 }
