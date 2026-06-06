@@ -54,6 +54,16 @@ async function execute(connection: DatabaseConnection, sql: string, params: SqlV
   return result;
 }
 
+async function lockWxautoStateWrite(connection: DatabaseConnection) {
+  const lockRows = await rows<Row>(
+    connection,
+    "SELECT name FROM wxauto_integration_locks WHERE name = 'state-write' FOR UPDATE"
+  );
+  if (lockRows.length === 0) {
+    throw new Error("wxauto state lock is not initialized");
+  }
+}
+
 function parseJsonValue<T>(value: unknown, fallback: T): T {
   if (value === null || value === undefined || value === "") return fallback;
   if (typeof value === "string") {
@@ -1457,13 +1467,28 @@ export class MariaDbStateStore {
     });
   }
 
-  async processWechatMessage(input: IntakeMessageInput): Promise<WatchtowerResult> {
-    return await withDatabaseTransaction(async (connection) => {
-      const state = await this.readState(connection);
-      const result = await processWechatWatchtowerMessage(state, input);
-      await this.writeState(state, connection);
-      return result;
-    });
+  async processWechatMessage(
+    input: IntakeMessageInput,
+    suppliedConnection?: PoolConnection
+  ): Promise<WatchtowerResult> {
+    const runTransaction = async (connection: PoolConnection) => {
+      await connection.beginTransaction();
+      try {
+        await lockWxautoStateWrite(connection);
+        const state = await this.readState(connection);
+        const result = await processWechatWatchtowerMessage(state, input);
+        await this.writeState(state, connection);
+        await connection.commit();
+        return result;
+      } catch (error) {
+        await connection.rollback();
+        throw error;
+      }
+    };
+
+    return suppliedConnection
+      ? runTransaction(suppliedConnection)
+      : withDatabaseConnection(runTransaction);
   }
 
   async registerWxautoAgent(
@@ -1576,14 +1601,7 @@ export class MariaDbStateStore {
     const runTransaction = async (connection: PoolConnection) => {
       await connection.beginTransaction();
       try {
-        const lockRows = await rows<Row>(
-          connection,
-          "SELECT name FROM wxauto_integration_locks WHERE name = 'state-write' FOR UPDATE"
-        );
-        if (lockRows.length === 0) {
-          throw new Error("wxauto state lock is not initialized");
-        }
-
+        await lockWxautoStateWrite(connection);
         const receipts = await work(connection);
         await connection.commit();
         return receipts;
@@ -1700,6 +1718,7 @@ export class MariaDbStateStore {
 
   async importState(state: AppState, sourceName = "data/app-state.json") {
     await withDatabaseTransaction(async (connection) => {
+      await lockWxautoStateWrite(connection);
       await this.writeState(state, connection);
       const now = new Date();
       const jobId = stableId("import", `${sourceName}:${now.toISOString()}`);

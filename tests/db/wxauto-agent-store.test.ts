@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { PoolConnection } from "mysql2/promise";
 import { MariaDbStateStore } from "@/lib/db/mariadb-state-store";
+import type { AppState } from "@/lib/domain/app-state";
 import { defaultConfig } from "@/lib/seed";
 
 type RecordedCall = [sql: string, params?: unknown[]];
@@ -75,6 +76,29 @@ const eventInput = {
     receivedAt: "2026-06-05T08:00:00.000Z"
   }]
 };
+
+const messageInput = {
+  channel: "wechat" as const,
+  externalMessageId: "legacy-message-1",
+  senderId: "wxid-legacy",
+  senderName: "Legacy Sender",
+  sourceConversationId: "legacy-conversation",
+  text: ""
+};
+
+function emptyState(): AppState {
+  return {
+    booths: [],
+    tickets: [],
+    messageRecords: [],
+    people: [],
+    chatIdentities: [],
+    conversations: [],
+    pendingWorkOrderSessions: [],
+    outboundMessages: [],
+    config: defaultConfig()
+  };
+}
 
 describe("wxauto agent store", () => {
   afterEach(() => {
@@ -241,5 +265,53 @@ describe("wxauto agent store", () => {
     expect(operations[1]).toBe(stateLockSql);
     expect(operations[2]).toContain("INSERT IGNORE INTO wxauto_event_receipts");
     expect(operations.at(-1)).toBe("rollback");
+  });
+
+  it("serializes legacy message processing with the state-write lock", async () => {
+    const { connection, operations, beginTransaction, commit, rollback } = recordingConnection();
+    const store = new MariaDbStateStore();
+    vi.spyOn(store, "readState").mockImplementation(async () => {
+      operations.push("readState");
+      return emptyState();
+    });
+    vi.spyOn(store, "writeState").mockImplementation(async () => {
+      operations.push("writeState");
+    });
+
+    const result = await store.processWechatMessage(messageInput, connection);
+
+    expect(result.action).toBe("ignored");
+    expect(beginTransaction).toHaveBeenCalledTimes(1);
+    expect(commit).toHaveBeenCalledTimes(1);
+    expect(rollback).not.toHaveBeenCalled();
+    expect(operations).toEqual([
+      "beginTransaction",
+      stateLockSql,
+      "readState",
+      "writeState",
+      "commit"
+    ]);
+  });
+
+  it("rolls back legacy message processing when state work throws", async () => {
+    const { connection, operations, beginTransaction, commit, rollback } = recordingConnection();
+    const store = new MariaDbStateStore();
+    vi.spyOn(store, "readState").mockImplementation(async () => {
+      operations.push("readState");
+      throw new Error("legacy state failure");
+    });
+
+    await expect(store.processWechatMessage(messageInput, connection))
+      .rejects.toThrow("legacy state failure");
+
+    expect(beginTransaction).toHaveBeenCalledTimes(1);
+    expect(commit).not.toHaveBeenCalled();
+    expect(rollback).toHaveBeenCalledTimes(1);
+    expect(operations).toEqual([
+      "beginTransaction",
+      stateLockSql,
+      "readState",
+      "rollback"
+    ]);
   });
 });
