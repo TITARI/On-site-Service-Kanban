@@ -18,6 +18,12 @@ npm run test:run
 npm run build
 ```
 
+生产部署前还需要执行数据库迁移：
+
+```powershell
+npm.cmd run db:migrate
+```
+
 ## 当前功能
 
 - 移动端底部导航：提交、工单、我的、管理。
@@ -75,14 +81,34 @@ data/app-state.json
 
 ## 后续集成方向
 
-- 接入微信或企业微信 MCP：把消息接收、图片、催单和处理反馈统一进入工单流。
+- 接入 wxauto 桌面客户端：通过标准 MCP Streamable HTTP 把微信消息、出站租约和发送完成回执统一进入工单流。
 - 接入真实向量检索/相似度服务：用于超时后的深度判重和人工复核建议。
 - 增加管理员配置界面：维护问题类型、责任组、派单规则和 AI 模型参数。
 
-## wxauto 方案B试跑
+## wxauto 桌面 MCP 接入
+
+推荐的新接入方式是独立 wxauto 桌面 App 作为 MCP client 连接看板：
+
+```text
+https://<board-host>/api/mcp
+```
+
+生产环境至少配置：
+
+```text
+WXAUTO_MCP_TOKEN
+WXAUTO_UPDATE_PUBLISH_TOKEN
+WXAUTO_UPDATE_SIGNING_PRIVATE_KEY
+WXAUTO_UPDATE_SIGNING_PUBLIC_KEY
+```
+
+桌面更新包保存在运行时持久目录 `data/wxauto-updates`，不要放进不可变构建产物。更新公钥 `WXAUTO_UPDATE_SIGNING_PUBLIC_KEY` 也必须嵌入桌面端构建，用于校验 Ed25519 manifest 签名。完整部署步骤见：[docs/wxauto-desktop-board-deployment.md](docs/wxauto-desktop-board-deployment.md)。
+
+## wxauto REST 兼容桥试跑
 
 - 已提供 REST 网关桥接脚本：`npm run bridge:wxauto`
 - 详细步骤见：[docs/wxauto-rest-bridge-trial.md](docs/wxauto-rest-bridge-trial.md)
+- 该方式仅保留为试跑和兼容旧部署使用；新桌面端请走标准 MCP `/api/mcp`。
 
 完整值守模式会监听所有微信新消息，由系统过滤普通聊天；陌生用户发送现场诉求时会自动追问身份组、真实姓名、手机号，注册格式为：
 

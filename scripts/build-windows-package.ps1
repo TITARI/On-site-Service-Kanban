@@ -58,10 +58,21 @@ New-Item -ItemType Directory -Force -Path $PackageNextDir | Out-Null
 Copy-Item -LiteralPath $StaticDir -Destination (Join-Path $PackageNextDir "static") -Recurse -Force
 
 $DataDir = Join-Path $Root "data"
+$PackageDataDir = Join-Path $PackageDir "data"
 if (Test-Path -LiteralPath $DataDir) {
-  Copy-Item -LiteralPath $DataDir -Destination (Join-Path $PackageDir "data") -Recurse -Force
+  Copy-Item -LiteralPath $DataDir -Destination $PackageDataDir -Recurse -Force
 } else {
-  New-Item -ItemType Directory -Force -Path (Join-Path $PackageDir "data") | Out-Null
+  New-Item -ItemType Directory -Force -Path $PackageDataDir | Out-Null
+}
+
+$PackageUpdateDir = Join-Path $PackageDataDir "wxauto-updates"
+$ResolvedPackageData = [System.IO.Path]::GetFullPath($PackageDataDir)
+$ResolvedPackageUpdates = [System.IO.Path]::GetFullPath($PackageUpdateDir)
+if (-not $ResolvedPackageUpdates.StartsWith($ResolvedPackageData, [System.StringComparison]::OrdinalIgnoreCase)) {
+  throw "wxauto update directory resolved outside package data directory."
+}
+if (Test-Path -LiteralPath $PackageUpdateDir) {
+  Remove-Item -LiteralPath $PackageUpdateDir -Recurse -Force
 }
 
 $BridgeScript = Join-Path $Root "scripts\wxauto-rest-bridge.mjs"
@@ -70,7 +81,22 @@ if (Test-Path -LiteralPath $BridgeScript) {
   Copy-Item -LiteralPath $BridgeScript -Destination (Join-Path $PackageDir "tools\wxauto-rest-bridge.mjs") -Force
 }
 
-Copy-Item -Path (Join-Path $Root "deploy\windows\*") -Destination $PackageDir -Recurse -Force
+$MigrationsDir = Join-Path $Root "db\migrations"
+$WxautoMigration = Join-Path $MigrationsDir "003_wxauto_mcp.sql"
+if (-not (Test-Path -LiteralPath $WxautoMigration)) {
+  throw "Required wxauto MCP migration was not found: $WxautoMigration"
+}
+$PackageDbDir = Join-Path $PackageDir "db"
+New-Item -ItemType Directory -Force -Path $PackageDbDir | Out-Null
+Copy-Item -LiteralPath $MigrationsDir -Destination (Join-Path $PackageDbDir "migrations") -Recurse -Force
+
+$DeployWindowsDir = Join-Path $Root "deploy\windows"
+if (Test-Path -LiteralPath $DeployWindowsDir) {
+  $DeployWindowsItems = Get-ChildItem -LiteralPath $DeployWindowsDir -Force
+  if ($DeployWindowsItems.Count -gt 0) {
+    Copy-Item -LiteralPath $DeployWindowsItems.FullName -Destination $PackageDir -Recurse -Force
+  }
+}
 
 if (Test-Path -LiteralPath (Join-Path $Root "README.md")) {
   Copy-Item -LiteralPath (Join-Path $Root "README.md") -Destination (Join-Path $PackageDir "README-PROJECT.md") -Force

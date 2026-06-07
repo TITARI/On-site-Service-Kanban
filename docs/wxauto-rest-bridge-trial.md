@@ -5,6 +5,8 @@
 - 目标接口：`POST /api/integrations/wechat/messages`
 - 本地默认地址：`http://127.0.0.1:3000/api/integrations/wechat/messages`
 
+> 新版桌面客户端应优先使用标准 MCP：`https://<board-host>/api/mcp`。本文档里的 REST 桥只作为方案B试跑、旧部署兼容和回滚工具保留，不再作为正式桌面端首选链路。
+
 ## 1. 前置条件
 
 1. Windows 已登录微信客户端。
@@ -12,6 +14,7 @@
 3. `wxauto-restful-api` 已启动（默认 `http://127.0.0.1:8001`）。
 4. 本项目已启动（默认 `http://127.0.0.1:3000`）。
 5. 在管理页启用 `微信 MCP` 或 `企业微信 MCP` 配置，并配置对应 `secretEnv`。
+6. 正式部署前已执行 `npm.cmd run db:migrate`，让 legacy HTTP 也共享 wxauto receipt/lease 语义。
 
 ## 2. 启动桥接
 
@@ -94,3 +97,9 @@ $env:BRIDGE_OUTBOUND_POLL_INTERVAL_MS = "1500"
 ```
 
 陌生微信用户发送现场诉求时，系统会先追问身份组、真实姓名、手机号。注册成功后立即生效，并继续处理注册前的原始诉求；如果还缺展位号或问题类型，会继续追问缺失字段。
+
+## 7. 与正式 MCP 桌面端的区别
+
+- REST 桥使用 `/api/integrations/wechat/*` 兼容接口；正式桌面端使用 `/api/mcp` 的标准 MCP Streamable HTTP。
+- REST 桥仍可获得租约字段并提交发送结果，但缺少桌面 agent 注册、健康状态和更新发布能力。
+- REST 桥适合现场试跑或旧版本回滚；正式发布请按 [wxauto 桌面端看板部署说明](wxauto-desktop-board-deployment.md) 配置 `WXAUTO_MCP_TOKEN`、更新签名密钥和持久更新目录。
