@@ -36,19 +36,21 @@ beforeEach(() => {
 });
 
 describe("/api/admin/wxauto-mcp", () => {
-  it("ensures the embedded MCP service has a token when the admin page loads", async () => {
+  it("starts the embedded MCP service and ensures it has a token when the admin page loads", async () => {
     const response = await route.GET();
 
     expect(response.status).toBe(200);
     const body = await response.json();
     expect(body.wxautoMcp.endpoint).toBe("/api/mcp");
+    expect(body.wxautoMcp.enabled).toBe(true);
     expect(body.wxautoMcp.accessToken).toMatch(/^wxauto_/);
     expect(store.saveConfig).toHaveBeenCalledWith(expect.objectContaining({
-      wxautoMcp: expect.objectContaining({ endpoint: "/api/mcp" }),
+      wxautoMcp: expect.objectContaining({ enabled: true, endpoint: "/api/mcp" }),
       messageIntegrations: expect.arrayContaining([
         expect.objectContaining({
           channel: "wechat",
           label: "wxauto 桌面服务",
+          enabled: true,
           endpoint: "/api/mcp",
           secretEnv: "WXAUTO_MCP_TOKEN"
         })

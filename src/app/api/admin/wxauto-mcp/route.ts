@@ -51,7 +51,7 @@ async function saveWxautoMcpConfig({
 }
 
 export async function GET() {
-  const result = await saveWxautoMcpConfig({});
+  const result = await saveWxautoMcpConfig({ enabled: true });
   return NextResponse.json(result);
 }
 
