@@ -84,6 +84,24 @@ data/app-state.json
 - 已提供 REST 网关桥接脚本：`npm run bridge:wxauto`
 - 详细步骤见：[docs/wxauto-rest-bridge-trial.md](docs/wxauto-rest-bridge-trial.md)
 
+### wxauto 桌面 App 标准 MCP
+
+新桌面 App 直接连接看板的标准 MCP Streamable HTTP 入口：
+
+```text
+http://<看板地址>/api/mcp
+```
+
+看板服务端需要配置访问令牌：
+
+```powershell
+$env:WXAUTO_MCP_TOKEN = "替换为一段足够随机的令牌"
+```
+
+桌面 App 设置页里的“访问令牌”填写同一个值。迁移期内，如果未配置 `WXAUTO_MCP_TOKEN`，看板会兼容读取旧的 `WECHAT_MCP_SECRET`，但新安装建议统一使用 `WXAUTO_MCP_TOKEN`。
+
+MCP 入口提供四个工具：`register_wxauto_agent`、`submit_wechat_events`、`claim_outbound_messages`、`complete_outbound_message`。请同时在看板管理页启用“微信 MCP”，这样入站消息和出站回执会进入现有工单值守流程。
+
 完整值守模式会监听所有微信新消息，由系统过滤普通聊天；陌生用户发送现场诉求时会自动追问身份组、真实姓名、手机号，注册格式为：
 
 ```text
