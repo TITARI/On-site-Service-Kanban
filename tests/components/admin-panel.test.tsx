@@ -666,35 +666,94 @@ describe("AdminConfigCenter user groups", () => {
     expect(body.aiPromptDefaults.classify).toBe("builtin-classify-standard");
   });
 
-  it("edits WeChat and WeCom MCP message intake settings", async () => {
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ config }), { status: 200 }));
+  it("configures the embedded wxauto MCP service without legacy server fields", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "/api/admin/wxauto-mcp" && init?.method === "PUT") {
+        return new Response(JSON.stringify({
+          wxautoMcp: {
+            enabled: true,
+            endpoint: "/api/mcp",
+            accessToken: "manual-token",
+            tokenPreview: "manual...oken",
+            autoCreateTickets: true
+          }
+        }), { status: 200 });
+      }
+      if (url === "/api/admin/wxauto-mcp") {
+        return new Response(JSON.stringify({
+          wxautoMcp: {
+            enabled: false,
+            endpoint: "/api/mcp",
+            accessToken: "generated-token",
+            tokenPreview: "generat...oken",
+            autoCreateTickets: false
+          }
+        }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ config }), { status: 200 });
+    });
     vi.stubGlobal("fetch", fetchMock);
     const user = userEvent.setup();
 
-    render(<AdminConfigCenter config={config} onRefresh={vi.fn()} />);
+    render(<AdminConfigCenter config={config} view="system" onRefresh={vi.fn()} />);
 
-    await user.click(screen.getByLabelText("微信 MCP启用"));
-    await user.clear(screen.getByLabelText("微信 MCP服务名称"));
-    await user.type(screen.getByLabelText("微信 MCP服务名称"), "wechat-workorder-mcp");
-    await user.clear(screen.getByLabelText("微信 MCP密钥环境变量"));
-    await user.type(screen.getByLabelText("微信 MCP密钥环境变量"), "WX_MCP_SECRET");
-    await user.click(screen.getByLabelText("微信 MCP自动建单"));
-    await user.click(screen.getByRole("button", { name: "保存微信企微配置" }));
+    expect(await screen.findByRole("heading", { name: "wxauto 桌面服务" })).not.toBeNull();
+    expect(screen.queryByLabelText("微信 MCP服务名称")).toBeNull();
+    expect(screen.queryByLabelText("微信 MCP密钥环境变量")).toBeNull();
+    expect((screen.getByLabelText("MCP 服务地址") as HTMLInputElement).value).toBe("/api/mcp");
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
-    const body = JSON.parse(String(fetchMock.mock.calls.at(-1)?.[1]?.body));
-    expect(body.messageIntegrations).toContainEqual(expect.objectContaining({
-      id: "wechat",
+    await user.click(screen.getByLabelText("启用 wxauto 桌面服务"));
+    await user.click(screen.getByLabelText("自动建单"));
+    await user.clear(screen.getByLabelText("wxauto访问令牌"));
+    await user.type(screen.getByLabelText("wxauto访问令牌"), "manual-token");
+    await user.click(screen.getByRole("button", { name: "保存 wxauto 设置" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/admin/wxauto-mcp", expect.objectContaining({ method: "PUT" })));
+    const putCall = fetchMock.mock.calls.find((call) => call[0] === "/api/admin/wxauto-mcp" && call[1]?.method === "PUT");
+    const body = JSON.parse(String(putCall?.[1]?.body));
+    expect(body).toMatchObject({
       enabled: true,
-      mcpServerName: "wechat-workorder-mcp",
-      secretEnv: "WX_MCP_SECRET",
-      autoCreateTickets: true
-    }));
-    expect(body.messageIntegrations).toContainEqual(expect.objectContaining({
-      id: "wecom",
-      channel: "wecom",
-      endpoint: "/api/integrations/wechat/messages"
-    }));
+      autoCreateTickets: true,
+      accessToken: "manual-token"
+    });
+  });
+
+  it("rotates the wxauto access token from the system page", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "/api/admin/wxauto-mcp" && init?.method === "PUT") {
+        return new Response(JSON.stringify({
+          wxautoMcp: {
+            enabled: true,
+            endpoint: "/api/mcp",
+            accessToken: "new-token",
+            tokenPreview: "new...oken",
+            autoCreateTickets: false
+          }
+        }), { status: 200 });
+      }
+      return new Response(JSON.stringify({
+        wxautoMcp: {
+          enabled: true,
+          endpoint: "/api/mcp",
+          accessToken: "old-token",
+          tokenPreview: "old...oken",
+          autoCreateTickets: false
+        }
+      }), { status: 200 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+
+    render(<AdminConfigCenter config={config} view="system" onRefresh={vi.fn()} />);
+
+    await screen.findByRole("heading", { name: "wxauto 桌面服务" });
+    await user.click(screen.getByRole("button", { name: "重置访问令牌" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/admin/wxauto-mcp", expect.objectContaining({ method: "PUT" })));
+    const putCall = fetchMock.mock.calls.find((call) => call[0] === "/api/admin/wxauto-mcp" && call[1]?.method === "PUT");
+    expect(JSON.parse(String(putCall?.[1]?.body))).toEqual({ rotateToken: true });
   });
 
   it("edits auto acceptance settings on the system page", async () => {
@@ -726,7 +785,7 @@ describe("AdminConfigCenter user groups", () => {
     await user.type(screen.getByLabelText("处理完成后自动验收时效（分钟）"), "0");
     await user.click(screen.getByRole("button", { name: "保存自动验收配置" }));
 
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalledWith("/api/admin/config", expect.objectContaining({ method: "PUT" }));
     expect(screen.getByText("自动验收时效需为 1 至 10080 分钟的整数")).not.toBeNull();
   });
 

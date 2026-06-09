@@ -7,7 +7,7 @@ describe("wxauto MCP authentication", () => {
       headers: { authorization: "Bearer secret-token" }
     });
 
-    expect(authenticateWxautoRequest(request, { WXAUTO_MCP_TOKEN: "secret-token" } as NodeJS.ProcessEnv))
+    expect(authenticateWxautoRequest(request, { env: { WXAUTO_MCP_TOKEN: "secret-token" } as NodeJS.ProcessEnv }))
       .toEqual({ tokenId: "wxauto-fixed-token" });
   });
 
@@ -16,14 +16,14 @@ describe("wxauto MCP authentication", () => {
       headers: { "x-mcp-secret": "bridge-secret" }
     });
 
-    expect(authenticateWxautoRequest(request, { WECHAT_MCP_SECRET: "bridge-secret" } as NodeJS.ProcessEnv))
+    expect(authenticateWxautoRequest(request, { env: { WECHAT_MCP_SECRET: "bridge-secret" } as NodeJS.ProcessEnv }))
       .toEqual({ tokenId: "wxauto-fixed-token" });
   });
 
   it("rejects missing configuration and wrong tokens", () => {
-    expect(authenticateWxautoRequest(new Request("https://board.example/api/mcp"), {} as NodeJS.ProcessEnv)).toBeNull();
+    expect(authenticateWxautoRequest(new Request("https://board.example/api/mcp"), { env: {} as NodeJS.ProcessEnv })).toBeNull();
     expect(authenticateWxautoRequest(new Request("https://board.example/api/mcp", {
       headers: { authorization: "Bearer wrong" }
-    }), { WXAUTO_MCP_TOKEN: "expected" } as NodeJS.ProcessEnv)).toBeNull();
+    }), { env: { WXAUTO_MCP_TOKEN: "expected" } as NodeJS.ProcessEnv })).toBeNull();
   });
 });

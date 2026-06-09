@@ -79,6 +79,17 @@ afterEach(() => {
 function mockBootstrapFetch(extra?: { logs?: unknown[] }) {
   return vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
+    if (url.includes("/api/admin/wxauto-mcp")) {
+      return new Response(JSON.stringify({
+        wxautoMcp: {
+          enabled: true,
+          endpoint: "/api/mcp",
+          accessToken: "test-token",
+          tokenPreview: "test...oken",
+          autoCreateTickets: false
+        }
+      }), { status: 200 });
+    }
     if (url.includes("/api/admin/wechat-order-logs")) {
       return new Response(JSON.stringify({ logs: extra?.logs ?? [] }), { status: 200 });
     }
@@ -153,8 +164,8 @@ describe("admin subroutes", () => {
     await renderWithSession(<AdminSystemPage />);
     expect(await screen.findByRole("heading", { name: "系统配置" })).not.toBeNull();
     expect(screen.getByRole("heading", { name: "AI接口" })).not.toBeNull();
-    expect(screen.getByRole("heading", { name: "微信/企微 MCP" })).not.toBeNull();
-    expect(screen.getByRole("button", { name: "保存微信企微配置" })).not.toBeNull();
+    expect(screen.getByRole("heading", { name: "wxauto 桌面服务" })).not.toBeNull();
+    expect(screen.getByRole("button", { name: "保存 wxauto 设置" })).not.toBeNull();
     expect(screen.getByRole("heading", { name: "关键词配置" })).not.toBeNull();
     expect(screen.getByRole("button", { name: "保存关键词配置" })).not.toBeNull();
   });

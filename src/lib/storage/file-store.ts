@@ -14,6 +14,7 @@ import type {
 import { normalizeKeywordGroups } from "../domain/keyword-config";
 import { defaultConfig, type AppConfig } from "../seed";
 import { normalizeAutoAcceptanceConfig } from "../services/auto-acceptance-service";
+import { normalizeWxautoMcpConfig, syncWxautoMcpMessageIntegration } from "../integrations/wxauto/config";
 
 export type AppState = {
   booths: BoothRecord[];
@@ -75,6 +76,11 @@ export function parseStoredState(raw: string): AppState {
     const parsed = JSON.parse(raw) as AppState;
     const defaults = defaultConfig();
     const parsedConfig: Partial<AppConfig> = parsed.config ?? {};
+    const wxautoMcp = normalizeWxautoMcpConfig(parsedConfig.wxautoMcp, parsedConfig.messageIntegrations);
+    const messageIntegrations = syncWxautoMcpMessageIntegration(
+      parsedConfig.messageIntegrations?.length ? parsedConfig.messageIntegrations : defaults.messageIntegrations,
+      wxautoMcp
+    );
     return {
       ...parsed,
       messageRecords: parsed.messageRecords ?? [],
@@ -86,7 +92,8 @@ export function parseStoredState(raw: string): AppState {
       config: {
         ...defaults,
         ...parsedConfig,
-        messageIntegrations: parsedConfig.messageIntegrations?.length ? parsedConfig.messageIntegrations : defaults.messageIntegrations,
+        messageIntegrations,
+        wxautoMcp,
         userGroups: parsedConfig.userGroups?.length ? parsedConfig.userGroups : defaults.userGroups,
         keywordGroups: normalizeKeywordGroups(parsedConfig.keywordGroups?.length ? parsedConfig.keywordGroups : defaults.keywordGroups),
         autoAcceptance: normalizeAutoAcceptanceConfig(parsedConfig.autoAcceptance)

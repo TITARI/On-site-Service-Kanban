@@ -160,6 +160,13 @@ export type MessageIntegrationConfig = {
   autoCreateTickets: boolean;
 };
 
+export type WxautoMcpConfig = {
+  enabled: boolean;
+  endpoint: string;
+  accessToken?: string;
+  autoCreateTickets: boolean;
+};
+
 export type KeywordRule = {
   id: string;
   keyword: string;

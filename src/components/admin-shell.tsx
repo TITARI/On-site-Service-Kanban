@@ -46,6 +46,7 @@ export function AdminBackendShell({ view }: { view: AdminView }) {
       const response = await fetch("/api/bootstrap", { cache: "no-store" });
       if (!response.ok) throw new Error("后台数据加载失败");
       setData(await response.json());
+      void fetch("/api/admin/wxauto-mcp", { cache: "no-store" }).catch(() => undefined);
       {
         const logResponse = await fetch("/api/admin/wechat-order-logs?limit=50", { cache: "no-store" });
         if (!logResponse.ok && view !== "logs") {

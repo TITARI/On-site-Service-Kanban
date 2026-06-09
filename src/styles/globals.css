@@ -2601,6 +2601,12 @@ textarea {
   font-weight: 900;
 }
 
+.config-action-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .ai-prompt-scenario-list {
   display: grid;
   gap: 10px;

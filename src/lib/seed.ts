@@ -1,11 +1,13 @@
 import { normalizeKeywordGroups } from "./domain/keyword-config";
 import { defaultAiPromptDefaults, defaultAiPromptTemplates } from "./domain/ai-config";
-import type { AiModelConfig, AiPromptDefaults, AiPromptTemplate, AutoAcceptanceConfig, IssueType, KeywordGroup, MessageIntegrationConfig, UserGroup } from "./domain/types";
+import type { AiModelConfig, AiPromptDefaults, AiPromptTemplate, AutoAcceptanceConfig, IssueType, KeywordGroup, MessageIntegrationConfig, UserGroup, WxautoMcpConfig } from "./domain/types";
+import { defaultWxautoMcpConfig, WXAUTO_MCP_ENDPOINT, WXAUTO_MCP_SECRET_ENV, WXAUTO_MCP_SERVER_NAME } from "./integrations/wxauto/config";
 
 export type AppConfig = {
   issueTypes: IssueType[];
   aiModels: AiModelConfig[];
   messageIntegrations?: MessageIntegrationConfig[];
+  wxautoMcp?: WxautoMcpConfig;
   userGroups?: UserGroup[];
   keywordGroups?: KeywordGroup[];
   aiPromptTemplates?: AiPromptTemplate[];
@@ -32,11 +34,11 @@ export function defaultMessageIntegrations(): MessageIntegrationConfig[] {
     {
       id: "wechat",
       channel: "wechat",
-      label: "微信 MCP",
+      label: "wxauto 桌面服务",
       enabled: false,
-      mcpServerName: "wechat-mcp",
-      endpoint: "/api/integrations/wechat/messages",
-      secretEnv: "WECHAT_MCP_SECRET",
+      mcpServerName: WXAUTO_MCP_SERVER_NAME,
+      endpoint: WXAUTO_MCP_ENDPOINT,
+      secretEnv: WXAUTO_MCP_SECRET_ENV,
       autoCreateTickets: false
     },
     {
@@ -192,6 +194,7 @@ export function defaultConfig(): AppConfig {
       { id: "smart", label: "高智商AI", provider: "mock", modelName: "smart-local", timeoutMs: 3000, enabled: true }
     ],
     messageIntegrations: defaultMessageIntegrations(),
+    wxautoMcp: defaultWxautoMcpConfig(),
     userGroups: defaultUserGroups(),
     keywordGroups: defaultKeywordGroups(),
     aiPromptTemplates: defaultAiPromptTemplates(),

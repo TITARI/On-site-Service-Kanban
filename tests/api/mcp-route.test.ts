@@ -59,8 +59,9 @@ beforeEach(() => {
   store.runAutoAcceptance.mockReset().mockResolvedValue(undefined);
   store.getConfig.mockReset().mockResolvedValue({
     ...defaultConfig(),
+    wxautoMcp: { enabled: true, endpoint: "/api/mcp", accessToken: "test-token", autoCreateTickets: false },
     messageIntegrations: [
-      { id: "wechat", channel: "wechat", label: "微信 MCP", enabled: true, mcpServerName: "wechat-mcp", endpoint: "/api/integrations/wechat/messages", secretEnv: "WECHAT_MCP_SECRET", autoCreateTickets: false }
+      { id: "wechat", channel: "wechat", label: "wxauto 桌面服务", enabled: true, mcpServerName: "wxauto-desktop", endpoint: "/api/mcp", secretEnv: "WXAUTO_MCP_TOKEN", autoCreateTickets: false }
     ]
   });
   store.processWechatMessage.mockReset().mockResolvedValue({

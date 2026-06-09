@@ -18,9 +18,10 @@ import {
 import * as XLSX from "xlsx";
 import { AI_PROVIDER_PRESETS, aiPromptDefaultsOf, aiPromptTemplatesOf, copyAiPromptTemplate, providerPresetFor } from "@/lib/domain/ai-config";
 import { keywordRuleSetsOf, normalizeKeywordGroups } from "@/lib/domain/keyword-config";
-import type { AiPromptDefaults, AiPromptScenario, AiPromptTemplate, AiProviderPresetId, BoothRecord, ChatIdentity, Conversation, InboundMessageRecord, KeywordGroup, KeywordRuleSet, KeywordTerm, OutboundMessage, PendingWorkOrderSession, Person } from "@/lib/domain/types";
+import type { AiPromptDefaults, AiPromptScenario, AiPromptTemplate, AiProviderPresetId, BoothRecord, ChatIdentity, Conversation, InboundMessageRecord, KeywordGroup, KeywordRuleSet, KeywordTerm, OutboundMessage, PendingWorkOrderSession, Person, WxautoMcpConfig } from "@/lib/domain/types";
 import type { TicketSummary } from "@/lib/domain/ticket-summary";
 import { messageIntegrationsOf, userGroupsOf, type AppConfig } from "@/lib/seed";
+import { normalizeWxautoMcpConfig, WXAUTO_MCP_ENDPOINT } from "@/lib/integrations/wxauto/config";
 import {
   AUTO_ACCEPTANCE_MAX_MINUTES,
   AUTO_ACCEPTANCE_MIN_MINUTES,
@@ -127,6 +128,18 @@ type AdminFeedback = {
   id: number;
   message: string;
 };
+
+type WxautoMcpAdminState = WxautoMcpConfig & {
+  tokenPreview?: string;
+};
+
+function wxautoMcpStateFromConfig(config: AppConfig): WxautoMcpAdminState {
+  const normalized = normalizeWxautoMcpConfig(config.wxautoMcp, config.messageIntegrations);
+  if (normalized.accessToken === "已设置") {
+    return { ...normalized, accessToken: undefined, tokenPreview: "已设置" };
+  }
+  return normalized;
+}
 
 type AiModelListState = {
   models: string[];
@@ -556,8 +569,10 @@ export function AdminConfigCenter({
   const [aiProviderPresetDrafts, setAiProviderPresetDrafts] = useState<Partial<Record<"fast" | "smart", AiProviderPresetId>>>({});
   const [aiModelNameDrafts, setAiModelNameDrafts] = useState<Partial<Record<"fast" | "smart", string>>>({});
   const [aiModelLists, setAiModelLists] = useState<Partial<Record<"fast" | "smart", AiModelListState>>>({});
+  const [wxautoMcpState, setWxautoMcpState] = useState<WxautoMcpAdminState>(() => wxautoMcpStateFromConfig(config));
   const groups = config.userGroups?.length ? config.userGroups : userGroupsOf(config);
   const messageIntegrations = messageIntegrationsOf(config);
+  const wxautoMcp = wxautoMcpState;
   const autoAcceptance = normalizeAutoAcceptanceConfig(config.autoAcceptance);
   const activeGroups = groups.filter((group) => !deletedGroupIds.has(group.id));
   const usedGroupNames = new Set(tickets.map((ticket) => ticket.assignmentGroup).filter(Boolean));
@@ -592,6 +607,25 @@ export function AdminConfigCenter({
     }, 1500);
     return () => window.clearTimeout(timeout);
   }, [activeStatusId]);
+
+  useEffect(() => {
+    if (view !== "system") return;
+    let cancelled = false;
+    async function ensureWxautoMcp() {
+      try {
+        const response = await fetch("/api/admin/wxauto-mcp", { cache: "no-store" });
+        if (!response.ok) throw new Error("wxauto 服务启动失败");
+        const payload = await response.json() as { wxautoMcp?: WxautoMcpAdminState };
+        if (!cancelled && payload.wxautoMcp) setWxautoMcpState(payload.wxautoMcp);
+      } catch (error) {
+        if (!cancelled) setStatus(error instanceof Error ? error.message : "wxauto 服务启动失败");
+      }
+    }
+    void ensureWxautoMcp();
+    return () => {
+      cancelled = true;
+    };
+  }, [showAll, view]);
 
   function setStatus(message: string | null) {
     if (!message) return;
@@ -672,22 +706,50 @@ export function AdminConfigCenter({
     }
   }
 
-  function saveMessageIntegrations(event: React.FormEvent<HTMLFormElement>) {
+  async function saveWxautoMcp(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const formData = new FormData(event.currentTarget);
-    const nextIntegrations = messageIntegrations.map((item) => ({
-      ...item,
-      mcpServerName: textValue(formData, `message-${item.id}-mcpServerName`),
-      endpoint: textValue(formData, `message-${item.id}-endpoint`) || undefined,
-      secretEnv: textValue(formData, `message-${item.id}-secretEnv`) || undefined,
-      enabled: isChecked(formData, `message-${item.id}-enabled`),
-      autoCreateTickets: isChecked(formData, `message-${item.id}-autoCreateTickets`)
-    }));
-    if (nextIntegrations.some((item) => item.enabled && !item.mcpServerName)) {
-      setStatus("启用微信/企微接入时需要填写 MCP 服务名称");
-      return;
+    setSavingConfigId("wxauto-mcp");
+    try {
+      const response = await fetch("/api/admin/wxauto-mcp", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          enabled: isChecked(formData, "wxautoMcp-enabled"),
+          autoCreateTickets: isChecked(formData, "wxautoMcp-autoCreateTickets"),
+          accessToken: textValue(formData, "wxautoMcp-accessToken")
+        })
+      });
+      if (!response.ok) throw new Error("wxauto 服务配置保存失败");
+      const payload = await response.json() as { wxautoMcp: WxautoMcpAdminState };
+      setWxautoMcpState(payload.wxautoMcp);
+      setStatus("wxauto 桌面服务已保存");
+      onRefresh();
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "wxauto 服务配置保存失败");
+    } finally {
+      setSavingConfigId(null);
     }
-    void saveConfig({ ...config, messageIntegrations: nextIntegrations }, "微信/企微MCP配置已保存", "messages");
+  }
+
+  async function rotateWxautoToken() {
+    setSavingConfigId("wxauto-mcp");
+    try {
+      const response = await fetch("/api/admin/wxauto-mcp", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ rotateToken: true })
+      });
+      if (!response.ok) throw new Error("访问令牌重置失败");
+      const payload = await response.json() as { wxautoMcp: WxautoMcpAdminState };
+      setWxautoMcpState(payload.wxautoMcp);
+      setStatus("访问令牌已重置");
+      onRefresh();
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "访问令牌重置失败");
+    } finally {
+      setSavingConfigId(null);
+    }
   }
 
   function saveAutoAcceptance(event: React.FormEvent<HTMLFormElement>) {
@@ -1513,33 +1575,31 @@ export function AdminConfigCenter({
         </form>
       </div>}
       {(showAll || view === "system") && <div className="admin-card config-list" id="admin-message">
-        <h3>微信/企微 MCP</h3>
-        <form className="config-list-form" onSubmit={saveMessageIntegrations}>
-          {messageIntegrations.map((item) => (
-            <article key={item.id} className="config-edit-card">
-              <strong className="config-edit-title">{item.label}</strong>
-              <div className="config-edit-grid">
-                <label>
-                  <span>{item.label}服务名称</span>
-                  <input name={`message-${item.id}-mcpServerName`} defaultValue={item.mcpServerName} aria-label={`${item.label}服务名称`} placeholder="例如 wecom-mcp" />
-                </label>
-                <label>
-                  <span>{item.label}接收地址</span>
-                  <input name={`message-${item.id}-endpoint`} defaultValue={item.endpoint ?? ""} aria-label={`${item.label}接收地址`} placeholder="/api/integrations/wechat/messages" />
-                </label>
-                <label>
-                  <span>{item.label}密钥环境变量</span>
-                  <input name={`message-${item.id}-secretEnv`} defaultValue={item.secretEnv ?? ""} aria-label={`${item.label}密钥环境变量`} placeholder="WECOM_MCP_SECRET" />
-                </label>
-              </div>
-              <div className="config-check-grid">
-                <label className="check-row"><input name={`message-${item.id}-enabled`} type="checkbox" defaultChecked={item.enabled} />{item.label}启用</label>
-                <label className="check-row"><input name={`message-${item.id}-autoCreateTickets`} type="checkbox" defaultChecked={item.autoCreateTickets} />{item.label}自动建单</label>
-              </div>
-            </article>
-          ))}
-          <p className="config-lock-note">接入方式：让微信或企业微信 MCP 将消息 POST 到 /api/integrations/wechat/messages，并携带 channel、senderName、text、imageUrls 等字段。</p>
-          <button className="secondary-button" type="submit" disabled={savingConfigId === "messages"}>保存微信企微配置</button>
+        <h3>wxauto 桌面服务</h3>
+        <form className="config-list-form" onSubmit={saveWxautoMcp}>
+          <article className="config-edit-card" key={`${wxautoMcp.enabled}-${wxautoMcp.autoCreateTickets}-${wxautoMcp.accessToken ?? wxautoMcp.tokenPreview ?? ""}`}>
+            <strong className="config-edit-title">内置标准 MCP 服务</strong>
+            <p className="config-lock-note">打开后台后，看板会自动准备 wxauto MCP 服务。桌面 App 只需要填写服务地址和访问令牌，不再需要配置微信 MCP 服务器名、接收地址或密钥环境变量。</p>
+            <div className="config-edit-grid">
+              <label>
+                <span>MCP 服务地址</span>
+                <input name="wxautoMcp-endpoint" value={wxautoMcp.endpoint || WXAUTO_MCP_ENDPOINT} aria-label="MCP 服务地址" readOnly />
+              </label>
+              <label>
+                <span>访问令牌</span>
+                <input name="wxautoMcp-accessToken" defaultValue={wxautoMcp.accessToken ?? ""} aria-label="wxauto访问令牌" placeholder="保存后自动生成，也可手动粘贴" />
+              </label>
+            </div>
+            <div className="config-check-grid">
+              <label className="check-row"><input name="wxautoMcp-enabled" type="checkbox" defaultChecked={wxautoMcp.enabled} />启用 wxauto 桌面服务</label>
+              <label className="check-row"><input name="wxautoMcp-autoCreateTickets" type="checkbox" defaultChecked={wxautoMcp.autoCreateTickets} />自动建单</label>
+            </div>
+            <p className="config-lock-note">当前令牌：{wxautoMcp.tokenPreview ?? (wxautoMcp.accessToken ? "已设置" : "未设置")}。桌面 App 填写看板地址加 <code>/api/mcp</code>，访问令牌填写上方令牌。</p>
+          </article>
+          <div className="config-action-row">
+            <button className="secondary-button" type="submit" disabled={savingConfigId === "wxauto-mcp"}>保存 wxauto 设置</button>
+            <button className="secondary-button" type="button" onClick={() => void rotateWxautoToken()} disabled={savingConfigId === "wxauto-mcp"}>重置访问令牌</button>
+          </div>
         </form>
       </div>}
       {(showAll || view === "system") && <div className="admin-card config-list" id="admin-keywords">

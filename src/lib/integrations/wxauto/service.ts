@@ -16,11 +16,12 @@ import {
   type SubmitEventsInput,
   type WechatEventInput
 } from "./contracts";
+import { normalizeWxautoMcpConfig } from "./config";
 
 const DEFAULT_LEASE_MS = 120000;
 
 function isWechatIntegrationEnabled(config: Awaited<ReturnType<AppRepository["getConfig"]>>) {
-  return Boolean(config.messageIntegrations?.find((item) => item.channel === "wechat")?.enabled);
+  return normalizeWxautoMcpConfig(config.wxautoMcp, config.messageIntegrations).enabled;
 }
 
 function eventToIntakeInput(event: WechatEventInput): IntakeMessageInput {

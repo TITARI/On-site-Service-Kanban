@@ -20,6 +20,7 @@ import { normalizeAiPromptConfig } from "../domain/ai-config";
 import { keywordRuleSetsOf, normalizeKeywordGroups } from "../domain/keyword-config";
 import type { TicketSummary } from "../domain/ticket-summary";
 import { defaultConfig, type AppConfig } from "../seed";
+import { normalizeWxautoMcpConfig, syncWxautoMcpMessageIntegration } from "../integrations/wxauto/config";
 import type { AppState } from "../domain/app-state";
 import { createTicketService, type SubmitTicketInput } from "../services/ticket-service";
 import { processWechatWatchtowerMessage, type WatchtowerResult } from "../services/wechat-watchtower-service";
@@ -90,12 +91,18 @@ function mergedConfig(config?: Partial<AppConfig>): AppConfig {
   const defaults = defaultConfig();
   const incoming = config ?? {};
   const promptConfig = normalizeAiPromptConfig(incoming);
+  const wxautoMcp = normalizeWxautoMcpConfig(incoming.wxautoMcp, incoming.messageIntegrations);
+  const messageIntegrations = syncWxautoMcpMessageIntegration(
+    incoming.messageIntegrations?.length ? incoming.messageIntegrations : defaults.messageIntegrations,
+    wxautoMcp
+  );
   return {
     ...defaults,
     ...incoming,
     issueTypes: incoming.issueTypes?.length ? incoming.issueTypes : defaults.issueTypes,
     aiModels: incoming.aiModels?.length ? incoming.aiModels : defaults.aiModels,
-    messageIntegrations: incoming.messageIntegrations?.length ? incoming.messageIntegrations : defaults.messageIntegrations,
+    messageIntegrations,
+    wxautoMcp,
     userGroups: incoming.userGroups?.length ? incoming.userGroups : defaults.userGroups,
     keywordGroups: normalizeKeywordGroups(incoming.keywordGroups?.length ? incoming.keywordGroups : defaults.keywordGroups),
     aiPromptTemplates: promptConfig.aiPromptTemplates,

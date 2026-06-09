@@ -2,8 +2,13 @@ import { timingSafeEqual } from "node:crypto";
 
 export type WxautoPrincipal = { tokenId: "wxauto-fixed-token" };
 
-function configuredToken(env: NodeJS.ProcessEnv) {
-  return env.WXAUTO_MCP_TOKEN?.trim() || env.WECHAT_MCP_SECRET?.trim();
+type AuthOptions = {
+  configuredToken?: string;
+  env?: NodeJS.ProcessEnv;
+};
+
+function configuredToken({ configuredToken: token, env = process.env }: AuthOptions = {}) {
+  return token?.trim() || env.WXAUTO_MCP_TOKEN?.trim() || env.WECHAT_MCP_SECRET?.trim();
 }
 
 function requestToken(request: Request) {
@@ -20,11 +25,16 @@ function equalSecret(actual: string, expected: string) {
   return left.length === right.length && timingSafeEqual(left, right);
 }
 
+function isAuthOptions(value: AuthOptions | NodeJS.ProcessEnv): value is AuthOptions {
+  return "env" in value || "configuredToken" in value;
+}
+
 export function authenticateWxautoRequest(
   request: Request,
-  env: NodeJS.ProcessEnv = process.env
+  options: AuthOptions | NodeJS.ProcessEnv = {}
 ): WxautoPrincipal | null {
-  const expected = configuredToken(env);
+  const authOptions: AuthOptions = isAuthOptions(options) ? options : { env: options };
+  const expected = configuredToken(authOptions);
   if (!expected) return null;
 
   const actual = requestToken(request);
