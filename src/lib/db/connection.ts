@@ -16,6 +16,7 @@ export function createDatabasePool(url = databaseUrl()) {
     connectionLimit: 10,
     waitForConnections: true,
     namedPlaceholders: false,
+    charset: "utf8mb4_unicode_ci",
     timezone: "Z",
     dateStrings: false
   });
