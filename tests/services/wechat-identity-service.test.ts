@@ -93,6 +93,37 @@ describe("wechat identity service", () => {
     })).toThrow("缺少稳定微信用户标识，无法绑定");
   });
 
+  it("keeps short temporary identity ids compatible with the legacy format", () => {
+    const appState = state();
+
+    const { identity } = ensureConversationAndIdentity(appState, {
+      channel: "wechat",
+      senderName: "张三微信",
+      senderGroup: "搭建群",
+      sourceConversationId: "conv-builder"
+    });
+
+    expect(identity.externalUserId).toBe("temporary-wechat-conv-builder-张三微信");
+  });
+
+  it("keeps temporary external user ids within the database column limit", () => {
+    const appState = state();
+    const longName = "超长微信昵称".repeat(30);
+    const longConversation = "超长微信会话".repeat(30);
+
+    const { conversation, identity } = ensureConversationAndIdentity(appState, {
+      channel: "wechat",
+      senderName: longName,
+      sourceConversationId: longConversation
+    });
+
+    expect(identity.isTemporary).toBe(true);
+    expect(identity.externalUserId).toMatch(/^temporary-wechat-/);
+    expect(identity.externalUserId.length).toBeLessThanOrEqual(160);
+    expect(identity.displayName.length).toBeLessThanOrEqual(160);
+    expect(conversation.externalConversationId.length).toBeLessThanOrEqual(160);
+  });
+
   it("auto-registers and immediately binds a wechat identity", () => {
     const appState = state();
     const { identity } = ensureConversationAndIdentity(appState, {

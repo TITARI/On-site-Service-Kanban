@@ -1,6 +1,7 @@
 ﻿import type { ChatIdentity, Conversation, MessageChannel, PendingWorkOrderField, Person, PersonRole, UserGroup } from "../domain/types";
 import { userGroupsOf } from "../seed";
 import type { AppState } from "../domain/app-state";
+import { createHash } from "node:crypto";
 
 export type IdentitySource = {
   channel: MessageChannel;
@@ -26,6 +27,28 @@ function id(prefix: string) {
 
 function normalizeText(value?: string) {
   return String(value ?? "").replace(/\s+/g, " ").trim();
+}
+
+function boundedText(value: string | undefined, maxLength: number) {
+  const normalized = normalizeText(value);
+  return boundedStableId(normalized, maxLength);
+}
+
+function boundedStableId(value: string, maxLength: number) {
+  if (value.length <= maxLength) return value;
+  const hash = createHash("sha256").update(value).digest("base64url").slice(0, 22);
+  return `${value.slice(0, maxLength - hash.length - 1)}-${hash}`;
+}
+
+function temporaryExternalUserId(channel: MessageChannel, externalConversationId: string, displayName: string) {
+  const legacyId = `temporary-${channel}-${externalConversationId}-${displayName}`;
+  if (legacyId.length <= 160) {
+    return legacyId;
+  }
+  const hash = createHash("sha256")
+    .update(`${channel}:${externalConversationId}:${displayName}`)
+    .digest("base64url");
+  return `temporary-${channel}-${hash}`;
 }
 
 export function parseRegistrationCommand(text: string): RegistrationDraft | undefined {
@@ -59,15 +82,15 @@ export function ensureConversationAndIdentity(state: AppState, source: IdentityS
 
   const timestamp = now();
   const externalConversationId =
-    normalizeText(source.sourceConversationId) ||
-    normalizeText(source.senderGroup) ||
-    normalizeText(source.senderId) ||
-    normalizeText(source.senderName) ||
+    boundedText(source.sourceConversationId, 160) ||
+    boundedText(source.senderGroup, 160) ||
+    boundedText(source.senderId, 160) ||
+    boundedText(source.senderName, 160) ||
     "unknown-conversation";
-  const stableUserId = normalizeText(source.senderId);
-  const displayName = normalizeText(source.senderName) || "微信用户";
+  const stableUserId = boundedText(source.senderId, 160);
+  const displayName = boundedText(source.senderName, 160) || "微信用户";
   const isTemporary = !stableUserId;
-  const externalUserId = stableUserId || `temporary-${source.channel}-${externalConversationId}-${displayName}`;
+  const externalUserId = stableUserId || temporaryExternalUserId(source.channel, externalConversationId, displayName);
 
   let conversation = state.conversations.find((item) => item.platform === source.channel && item.externalConversationId === externalConversationId);
   if (!conversation) {
