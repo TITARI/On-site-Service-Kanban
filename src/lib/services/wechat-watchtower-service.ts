@@ -430,11 +430,16 @@ async function continueSession(
       return { action: "prompted", record };
     }
 
-    const person = bindWechatIdentityFromRegistration(state, chatIdentityId, {
-      identityGroup: session.identityGroup ?? "",
-      name: session.contactName ?? "",
-      phone: session.contactPhone ?? ""
-    });
+    let person;
+    try {
+      person = bindWechatIdentityFromRegistration(state, chatIdentityId, {
+        identityGroup: session.identityGroup ?? "",
+        name: session.contactName ?? "",
+        phone: session.contactPhone ?? ""
+      });
+    } catch (error) {
+      return promptRegistrationError(state, input, session, conversationExternalId, chatIdentityId, error);
+    }
     session.personId = person.id;
     queuePrompt(state, input, conversationExternalId, chatIdentityId, `${person.name}已注册并绑定：${person.groupName} ${person.phone}`, session.id);
     return continueSessionAfterRegistration(state, input, session, person.id, chatIdentityId, conversationId, conversationExternalId);
@@ -529,18 +534,8 @@ export async function processWechatWatchtowerMessage(state: AppState, input: Int
       const record = await recordRawMessage(state, input);
       return { action: "registered", record };
     } catch (error) {
-      const message = error instanceof Error ? error.message : "注册信息有误";
       const promptSession = session ?? createPromptSession(state, input, conversation.id, identity.id, ["identityGroup", "name", "phone"]);
-      queuePrompt(
-        state,
-        input,
-        conversation.externalConversationId,
-        identity.id,
-        `${message}。${identityPromptText(["identityGroup", "name", "phone"], enabledIdentityGroups(state))}`,
-        promptSession.id
-      );
-      const record = await recordRawMessage(state, input);
-      return { action: "prompted", record };
+      return promptRegistrationError(state, input, promptSession, conversation.externalConversationId, identity.id, error);
     }
   }
 
@@ -605,5 +600,28 @@ export async function processWechatWatchtowerMessage(state: AppState, input: Int
 
   const record = await processCompleteRequest(state, input, identityPerson?.id, identity.id, conversation.externalConversationId);
   return { action: "processed", record };
+}
+
+async function promptRegistrationError(
+  state: AppState,
+  input: IntakeMessageInput,
+  session: PendingWorkOrderSession,
+  conversationExternalId: string,
+  chatIdentityId: string,
+  error: unknown
+): Promise<WatchtowerResult> {
+  const message = error instanceof Error ? error.message : "注册信息有误";
+  session.missingFields = ["identityGroup", "name", "phone"];
+  session.lastPromptAt = now();
+  queuePrompt(
+    state,
+    input,
+    conversationExternalId,
+    chatIdentityId,
+    `${message}。${identityPromptText(["identityGroup", "name", "phone"], enabledIdentityGroups(state))}`,
+    session.id
+  );
+  const record = await recordRawMessage(state, input);
+  return { action: "prompted", record };
 }
 

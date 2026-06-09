@@ -172,6 +172,33 @@ describe("wechat watchtower service", () => {
     expect(appState.outboundMessages?.some((message) => message.text.includes("现场工单已创建成功"))).toBe(true);
   });
 
+  it("prompts instead of throwing when a wxauto group sender has no stable sender id", async () => {
+    const appState = state();
+    await processWechatWatchtowerMessage(appState, {
+      channel: "wechat",
+      externalMessageId: "msg-temp-identity-request",
+      senderName: "张三微信",
+      senderGroup: "conv-site",
+      sourceConversationId: "conv-site",
+      text: "A01 网络断了，扫码收款失败"
+    });
+
+    const result = await processWechatWatchtowerMessage(appState, {
+      channel: "wechat",
+      externalMessageId: "msg-temp-identity-register",
+      senderName: "张三微信",
+      senderGroup: "conv-site",
+      sourceConversationId: "conv-site",
+      text: "注册 搭建组 张三 13800138000"
+    });
+
+    expect(result.action).toBe("prompted");
+    expect(appState.people).toEqual([]);
+    expect(appState.tickets).toEqual([]);
+    expect(appState.pendingWorkOrderSessions).toHaveLength(1);
+    expect(appState.outboundMessages?.at(-1)?.text).toContain("缺少稳定微信用户标识，无法绑定");
+  });
+
   it("queues a short ticket detail link in the creation receipt", async () => {
     process.env.APP_PUBLIC_BASE_URL = "https://board.example.com";
     const appState = state();

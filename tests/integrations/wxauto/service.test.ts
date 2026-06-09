@@ -86,6 +86,33 @@ describe("wxauto integration service", () => {
     }));
   });
 
+  it("returns JSON receipts for wxauto events without stable sender ids", async () => {
+    repository.processWechatMessage.mockResolvedValueOnce({
+      action: "prompted",
+      record: { id: "message-temp-1" }
+    });
+
+    const result = await createWxautoIntegrationService(repository).submitEvents({
+      deviceId: "device-a",
+      events: [{
+        messageId: "wx-temp-1",
+        sequence: 1,
+        conversationId: "conv-site",
+        conversationType: "group",
+        senderName: "张三",
+        text: "注册 搭建组 张三 13800138000",
+        receivedAt: "2026-06-05T08:00:00.000Z"
+      }]
+    });
+
+    expect(result.receipts).toEqual([{ messageId: "wx-temp-1", action: "prompted", inboundMessageId: "message-temp-1" }]);
+    expect(repository.processWechatMessage).toHaveBeenCalledWith(expect.objectContaining({
+      senderId: undefined,
+      senderName: "张三",
+      senderGroup: "conv-site"
+    }));
+  });
+
   it("leases outbound messages and completes safety-blocked attempts as failed", async () => {
     const service = createWxautoIntegrationService(repository);
 

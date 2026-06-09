@@ -139,6 +139,40 @@ describe("POST /api/mcp", () => {
     }
   });
 
+  it("returns JSON receipts for wxauto events without stable sender ids", async () => {
+    store.processWechatMessage.mockResolvedValueOnce({
+      action: "prompted",
+      record: { id: "message-temp-1" }
+    });
+    const client = await connectClient();
+    try {
+      const submit = contentResult<{ receipts: Array<{ messageId: string; action: string; inboundMessageId?: string }> }>(await client.callTool({
+        name: "submit_wechat_events",
+        arguments: {
+          deviceId: "device-a",
+          events: [{
+            messageId: "wx-temp-1",
+            sequence: 1,
+            conversationId: "conv-site",
+            conversationType: "group",
+            senderName: "张三",
+            text: "注册 搭建组 张三 13800138000",
+            receivedAt: "2026-06-05T08:00:00.000Z"
+          }]
+        }
+      }));
+
+      expect(submit.receipts).toEqual([{ messageId: "wx-temp-1", action: "prompted", inboundMessageId: "message-temp-1" }]);
+      expect(store.processWechatMessage).toHaveBeenCalledWith(expect.objectContaining({
+        senderId: undefined,
+        senderName: "张三",
+        senderGroup: "conv-site"
+      }));
+    } finally {
+      await client.close();
+    }
+  });
+
   it("claims and completes outbound messages through MCP", async () => {
     const client = await connectClient();
     try {
