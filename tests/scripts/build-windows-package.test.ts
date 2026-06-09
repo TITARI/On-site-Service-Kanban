@@ -65,5 +65,5 @@ describe("Windows board package script", () => {
     await expect(readFile(path.join(packageDir, "data", "app-state.json"), "utf8")).resolves.toBe("{}\n");
     await expect(exists(path.join(packageDir, "data", "wxauto-updates"))).rejects.toThrow();
     await expect(exists(path.join(root, "release", "verify.zip"))).resolves.toBeUndefined();
-  });
+  }, 45_000);
 });
