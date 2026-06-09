@@ -31,7 +31,8 @@ export const wechatEventSchema = z.object({
   senderName: z.string().min(1).max(160),
   text: z.string().default(""),
   imageUrls: z.array(z.string()).default([]),
-  receivedAt: isoDateTime
+  receivedAt: isoDateTime,
+  operatorInitiated: z.boolean().optional()
 }).passthrough();
 
 export const submitEventsInputSchema = z.object({

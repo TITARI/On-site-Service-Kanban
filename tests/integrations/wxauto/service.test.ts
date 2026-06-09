@@ -113,6 +113,29 @@ describe("wxauto integration service", () => {
     }));
   });
 
+  it("passes operator-initiated desktop self events into the watchtower intake", async () => {
+    await createWxautoIntegrationService(repository).submitEvents({
+      deviceId: "device-a",
+      events: [{
+        messageId: "wx-self-1",
+        sequence: 1,
+        conversationId: "现场保障群",
+        conversationType: "direct",
+        senderName: "Self",
+        text: "2A06缺个桌子",
+        receivedAt: "2026-06-05T08:00:00.000Z",
+        operatorInitiated: true
+      }]
+    });
+
+    expect(repository.processWechatMessage).toHaveBeenCalledWith(expect.objectContaining({
+      senderName: "Self",
+      sourceConversationId: "现场保障群",
+      operatorInitiated: true,
+      raw: expect.objectContaining({ operatorInitiated: true })
+    }));
+  });
+
   it("leases outbound messages and completes safety-blocked attempts as failed", async () => {
     const service = createWxautoIntegrationService(repository);
 

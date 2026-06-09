@@ -35,7 +35,8 @@ function eventToIntakeInput(event: WechatEventInput): IntakeMessageInput {
     text: event.text,
     imageUrls: event.imageUrls,
     receivedAt: event.receivedAt,
-    raw: event
+    raw: event,
+    operatorInitiated: event.operatorInitiated
   };
 }
 

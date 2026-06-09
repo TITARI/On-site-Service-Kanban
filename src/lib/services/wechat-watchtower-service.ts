@@ -109,6 +109,14 @@ function activeSessionFor(state: AppState, chatIdentityId: string) {
   return state.pendingWorkOrderSessions?.find((session) => session.chatIdentityId === chatIdentityId);
 }
 
+function isIdentityRegistrationSession(session: PendingWorkOrderSession) {
+  return session.missingFields.some((field) => ["identityGroup", "name", "phone"].includes(field));
+}
+
+function isOperatorInitiatedInput(input: IntakeMessageInput) {
+  return input.operatorInitiated === true || input.raw?.operatorInitiated === true;
+}
+
 function isConfiguredOperationalText(state: AppState, text: string, imageUrls: string[] = []) {
   return hasKeywordOperationalIntent(normalizeText(text), imageUrls, keywordGroupsForConfig(state.config));
 }
@@ -514,6 +522,7 @@ export async function processWechatWatchtowerMessage(state: AppState, input: Int
   });
   const session = activeSessionFor(state, identity.id);
   const registration = parseRegistrationCommand(input.text ?? "");
+  const operatorInitiated = isOperatorInitiatedInput(input);
 
   if (registration) {
     try {
@@ -540,11 +549,15 @@ export async function processWechatWatchtowerMessage(state: AppState, input: Int
   }
 
   const identityPerson = identity.personId ? state.people?.find((person) => person.id === identity.personId) : undefined;
-  if (session) {
+  const activeSession = operatorInitiated && session && isIdentityRegistrationSession(session) ? undefined : session;
+  if (session && !activeSession) {
+    removeSession(state, session.id);
+  }
+  if (activeSession) {
     return continueSession(
       state,
       input,
-      session,
+      activeSession,
       identityPerson?.id,
       identity.id,
       conversation.id,
@@ -556,7 +569,7 @@ export async function processWechatWatchtowerMessage(state: AppState, input: Int
   const analysis = await analyzeIntakeMessage(state, input);
   const operational = isConfiguredOperationalText(state, input.text ?? "", imageUrls) || analysis.suggestedAction !== "ignore";
 
-  if (!identityPerson && operational) {
+  if (!identityPerson && operational && !operatorInitiated) {
     const record = await recordRawMessage(state, input);
     const promptSession = createPromptSession(state, input, conversation.id, identity.id, ["identityGroup", "name", "phone"], record.id);
     queuePrompt(

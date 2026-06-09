@@ -199,6 +199,61 @@ describe("wechat watchtower service", () => {
     expect(appState.outboundMessages?.at(-1)?.text).toContain("缺少稳定微信用户标识，无法绑定");
   });
 
+  it("processes operator-initiated self messages without identity registration", async () => {
+    const appState = state();
+
+    const result = await processWechatWatchtowerMessage(appState, {
+      channel: "wechat",
+      externalMessageId: "msg-self-operator",
+      senderName: "Self",
+      sourceConversationId: "现场保障群",
+      text: "2A06缺个桌子",
+      operatorInitiated: true
+    });
+
+    expect(result.action).toBe("processed");
+    expect(appState.pendingWorkOrderSessions).toEqual([]);
+    expect(appState.tickets).toHaveLength(1);
+    expect(appState.tickets[0]).toMatchObject({
+      boothNumber: "2A06",
+      issueType: "综合服务",
+      submitterName: "Self",
+      sourceConversationId: "现场保障群"
+    });
+    expect(appState.outboundMessages?.some((message) => message.text.includes("现场工单已创建成功"))).toBe(true);
+    expect(appState.outboundMessages?.some((message) => message.text.includes("请补充身份组"))).toBe(false);
+  });
+
+  it("does not let an old identity registration session consume operator-initiated self work orders", async () => {
+    const appState = state();
+    await processWechatWatchtowerMessage(appState, {
+      channel: "wechat",
+      externalMessageId: "msg-self-registration-session",
+      senderName: "Self",
+      sourceConversationId: "现场保障群",
+      text: "A01 网络断了"
+    });
+
+    expect(appState.pendingWorkOrderSessions).toHaveLength(1);
+
+    const result = await processWechatWatchtowerMessage(appState, {
+      channel: "wechat",
+      externalMessageId: "msg-self-operator-after-session",
+      senderName: "Self",
+      sourceConversationId: "现场保障群",
+      text: "2A06缺个桌子",
+      raw: { operatorInitiated: true }
+    });
+
+    expect(result.action).toBe("processed");
+    expect(appState.pendingWorkOrderSessions).toEqual([]);
+    expect(appState.tickets.at(-1)).toMatchObject({
+      boothNumber: "2A06",
+      issueType: "综合服务",
+      submitterName: "Self"
+    });
+  });
+
   it("queues a short ticket detail link in the creation receipt", async () => {
     process.env.APP_PUBLIC_BASE_URL = "https://board.example.com";
     const appState = state();

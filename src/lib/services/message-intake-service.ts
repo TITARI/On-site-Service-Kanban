@@ -20,6 +20,7 @@ export type IntakeMessageInput = {
   sourceConversationId?: string;
   raw?: Record<string, unknown>;
   skipAutoCreate?: boolean;
+  operatorInitiated?: boolean;
 };
 
 const CLOSED_STATUS = "已关闭";
