@@ -93,17 +93,47 @@ describe("initial MariaDB schema", () => {
 
   it("adds every column required for import preview and conflict decisions", () => {
     const importJobs = accessStatement("ALTER TABLE import_jobs");
-    expect(importJobs).toContain("ADD COLUMN owner_account_id varchar(128) NULL");
-    expect(importJobs).toContain("ADD COLUMN source_hash char(64) NULL");
-    expect(importJobs).toContain("ADD COLUMN preview_version varchar(64) NULL");
-    expect(importJobs).toContain("ADD COLUMN updated_at datetime(3) NULL");
+    expect(importJobs).toContain("ADD COLUMN IF NOT EXISTS owner_account_id varchar(128) NULL");
+    expect(importJobs).toContain("ADD COLUMN IF NOT EXISTS source_hash char(64) NULL");
+    expect(importJobs).toContain("ADD COLUMN IF NOT EXISTS preview_version varchar(64) NULL");
+    expect(importJobs).toContain("ADD COLUMN IF NOT EXISTS updated_at datetime(3) NULL");
 
     const importJobRows = accessStatement("ALTER TABLE import_job_rows");
-    expect(importJobRows).toContain("ADD COLUMN normalized_payload json NULL");
-    expect(importJobRows).toContain("ADD COLUMN conflict_json json NULL");
-    expect(importJobRows).toContain("ADD COLUMN decision_json json NULL");
-    expect(importJobRows).toContain("ADD COLUMN result_action varchar(32) NULL");
-    expect(importJobRows).toContain("ADD COLUMN updated_at datetime(3) NULL");
+    expect(importJobRows).toContain("ADD COLUMN IF NOT EXISTS normalized_payload json NULL");
+    expect(importJobRows).toContain("ADD COLUMN IF NOT EXISTS conflict_json json NULL");
+    expect(importJobRows).toContain("ADD COLUMN IF NOT EXISTS decision_json json NULL");
+    expect(importJobRows).toContain("ADD COLUMN IF NOT EXISTS result_action varchar(32) NULL");
+    expect(importJobRows).toContain("ADD COLUMN IF NOT EXISTS updated_at datetime(3) NULL");
+  });
+
+  it("guards every additive ALTER operation for safe migration retries", () => {
+    const alterStatements = accessStatements.filter((statement) => statement.startsWith("ALTER TABLE"));
+    const addedColumns = alterStatements.flatMap((statement) => (
+      [...statement.matchAll(/ADD COLUMN(?: IF NOT EXISTS)? ([a-z_]+)/g)]
+        .map((match) => ({ statement, column: match[1], guarded: match[0].includes("IF NOT EXISTS") }))
+    ));
+    const addedUniqueKeys = alterStatements.flatMap((statement) => (
+      [...statement.matchAll(/ADD UNIQUE KEY(?: IF NOT EXISTS)? ([a-z_]+)/g)]
+        .map((match) => ({ statement, key: match[1], guarded: match[0].includes("IF NOT EXISTS") }))
+    ));
+
+    expect(addedColumns.map(({ column }) => column)).toEqual([
+      "group_locked",
+      "owner_account_id",
+      "source_hash",
+      "preview_version",
+      "updated_at",
+      "normalized_payload",
+      "conflict_json",
+      "decision_json",
+      "result_action",
+      "updated_at"
+    ]);
+    expect(addedColumns.every(({ guarded }) => guarded)).toBe(true);
+    expect(addedUniqueKeys).toEqual([expect.objectContaining({
+      key: "uniq_chat_identity_person_platform",
+      guarded: true
+    })]);
   });
 
   it("keeps RBAC identifiers and opaque hashes at their required widths", () => {
@@ -124,7 +154,7 @@ describe("initial MariaDB schema", () => {
 
   it("adds a non-null unlocked group flag to people", () => {
     const alterPeople = accessStatement("ALTER TABLE people");
-    expect(alterPeople).toBe("ALTER TABLE people ADD COLUMN group_locked boolean NOT NULL DEFAULT false AFTER group_name_snapshot");
+    expect(alterPeople).toBe("ALTER TABLE people ADD COLUMN IF NOT EXISTS group_locked boolean NOT NULL DEFAULT false AFTER group_name_snapshot");
   });
 
   it("backfills groups, accounts, and one group-derived role per account", () => {
@@ -185,11 +215,24 @@ describe("initial MariaDB schema", () => {
     expect(bootstrapSeed).toContain("VALUES ('admin', NULL, NULL)");
   });
 
-  it("clears later duplicate identity bindings before adding the person-platform constraint", () => {
+  it("keeps the best verified identity regardless of UUID ordering before adding the constraint", () => {
     const dedupeStatement = accessStatement("UPDATE chat_identities duplicate_identity");
     expect(dedupeStatement).toContain("duplicate_identity.person_id = keeper.person_id");
     expect(dedupeStatement).toContain("duplicate_identity.platform = keeper.platform");
-    expect(dedupeStatement).toContain("duplicate_identity.id > keeper.id");
+    expect(dedupeStatement).toContain("keeper.verified_at IS NOT NULL AND duplicate_identity.verified_at IS NULL");
+    expect(dedupeStatement).toContain("keeper.verified_at > duplicate_identity.verified_at");
+    expect(dedupeStatement).toContain("keeper.verified_at <=> duplicate_identity.verified_at");
+    expect(dedupeStatement).toContain("keeper.last_seen_at > duplicate_identity.last_seen_at");
+    expect(dedupeStatement).toContain(
+      "keeper.verified_at <=> duplicate_identity.verified_at AND keeper.last_seen_at = duplicate_identity.last_seen_at AND keeper.id < duplicate_identity.id"
+    );
+    expect(dedupeStatement.indexOf("keeper.verified_at IS NOT NULL AND duplicate_identity.verified_at IS NULL"))
+      .toBeLessThan(dedupeStatement.indexOf("keeper.verified_at > duplicate_identity.verified_at"));
+    expect(dedupeStatement.indexOf("keeper.verified_at > duplicate_identity.verified_at"))
+      .toBeLessThan(dedupeStatement.indexOf("keeper.last_seen_at > duplicate_identity.last_seen_at"));
+    expect(dedupeStatement.indexOf("keeper.last_seen_at > duplicate_identity.last_seen_at"))
+      .toBeLessThan(dedupeStatement.indexOf("keeper.id < duplicate_identity.id"));
+    expect(dedupeStatement).not.toContain("AND duplicate_identity.id > keeper.id");
     expect(dedupeStatement).toContain("SET duplicate_identity.person_id = NULL, duplicate_identity.verified_by = NULL, duplicate_identity.verified_at = NULL");
     expect(dedupeStatement).toContain("WHERE duplicate_identity.person_id IS NOT NULL");
 
@@ -197,6 +240,6 @@ describe("initial MariaDB schema", () => {
     const dedupeIndex = accessStatements.indexOf(dedupeStatement);
     expect(dedupeIndex).toBeGreaterThanOrEqual(0);
     expect(uniqueConstraintIndex).toBeGreaterThan(dedupeIndex);
-    expect(accessStatements[uniqueConstraintIndex]).toContain("ADD UNIQUE KEY uniq_chat_identity_person_platform (person_id, platform)");
+    expect(accessStatements[uniqueConstraintIndex]).toContain("ADD UNIQUE KEY IF NOT EXISTS uniq_chat_identity_person_platform (person_id, platform)");
   });
 });

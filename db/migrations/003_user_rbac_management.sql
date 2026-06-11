@@ -1,5 +1,5 @@
 ALTER TABLE people
-  ADD COLUMN group_locked boolean NOT NULL DEFAULT false AFTER group_name_snapshot;
+  ADD COLUMN IF NOT EXISTS group_locked boolean NOT NULL DEFAULT false AFTER group_name_snapshot;
 
 CREATE TABLE IF NOT EXISTS accounts (
   id varchar(128) NOT NULL PRIMARY KEY,
@@ -126,24 +126,40 @@ UPDATE chat_identities duplicate_identity
 JOIN chat_identities keeper
   ON duplicate_identity.person_id = keeper.person_id
  AND duplicate_identity.platform = keeper.platform
- AND duplicate_identity.id > keeper.id
+ AND (
+   (keeper.verified_at IS NOT NULL AND duplicate_identity.verified_at IS NULL)
+   OR (
+     keeper.verified_at IS NOT NULL
+     AND duplicate_identity.verified_at IS NOT NULL
+     AND keeper.verified_at > duplicate_identity.verified_at
+   )
+   OR (
+     keeper.verified_at <=> duplicate_identity.verified_at
+     AND keeper.last_seen_at > duplicate_identity.last_seen_at
+   )
+   OR (
+     keeper.verified_at <=> duplicate_identity.verified_at
+     AND keeper.last_seen_at = duplicate_identity.last_seen_at
+     AND keeper.id < duplicate_identity.id
+   )
+ )
 SET duplicate_identity.person_id = NULL,
     duplicate_identity.verified_by = NULL,
     duplicate_identity.verified_at = NULL
 WHERE duplicate_identity.person_id IS NOT NULL;
 
 ALTER TABLE chat_identities
-  ADD UNIQUE KEY uniq_chat_identity_person_platform (person_id, platform);
+  ADD UNIQUE KEY IF NOT EXISTS uniq_chat_identity_person_platform (person_id, platform);
 
 ALTER TABLE import_jobs
-  ADD COLUMN owner_account_id varchar(128) NULL,
-  ADD COLUMN source_hash char(64) NULL,
-  ADD COLUMN preview_version varchar(64) NULL,
-  ADD COLUMN updated_at datetime(3) NULL;
+  ADD COLUMN IF NOT EXISTS owner_account_id varchar(128) NULL,
+  ADD COLUMN IF NOT EXISTS source_hash char(64) NULL,
+  ADD COLUMN IF NOT EXISTS preview_version varchar(64) NULL,
+  ADD COLUMN IF NOT EXISTS updated_at datetime(3) NULL;
 
 ALTER TABLE import_job_rows
-  ADD COLUMN normalized_payload json NULL,
-  ADD COLUMN conflict_json json NULL,
-  ADD COLUMN decision_json json NULL,
-  ADD COLUMN result_action varchar(32) NULL,
-  ADD COLUMN updated_at datetime(3) NULL;
+  ADD COLUMN IF NOT EXISTS normalized_payload json NULL,
+  ADD COLUMN IF NOT EXISTS conflict_json json NULL,
+  ADD COLUMN IF NOT EXISTS decision_json json NULL,
+  ADD COLUMN IF NOT EXISTS result_action varchar(32) NULL,
+  ADD COLUMN IF NOT EXISTS updated_at datetime(3) NULL;
