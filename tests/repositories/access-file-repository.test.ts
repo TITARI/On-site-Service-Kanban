@@ -4,6 +4,7 @@ import type { AppState } from "@/lib/domain/app-state";
 import type { UserGroup } from "@/lib/domain/types";
 import { defaultConfig } from "@/lib/seed";
 import { verifyPassword } from "@/lib/services/password-service";
+import { recordAdminLoginFailureInState } from "@/lib/services/access-state-service";
 
 const groups: UserGroup[] = [
   {
@@ -121,10 +122,7 @@ describe("file access repository", () => {
     ]);
 
     if (!person) throw new Error("person was not created");
-    person.groupLocked = true;
-    await store.updateState?.((state) => {
-      state.people = [person];
-    });
+    await repository.updateUser(person.id, { groupLocked: true }, first.actor);
 
     const second = await repository.upsertMobileAccount({
       name: "Alice Updated",
@@ -144,7 +142,7 @@ describe("file access repository", () => {
     const store = memoryStore();
     const repository = createFileAppRepository(store);
     const { actor } = await createMobile(repository);
-    const expiresAt = new Date(Date.now() + 60_000);
+    const expiresAt = new Date(Date.now() + 60_000).toISOString();
     await repository.createAccountSession(actor.accountId, "mobile", "hash-only", expiresAt);
 
     await store.updateState?.((state) => {
@@ -162,7 +160,7 @@ describe("file access repository", () => {
     const store = memoryStore();
     const repository = createFileAppRepository(store);
     const { actor } = await createMobile(repository);
-    const future = new Date(Date.now() + 60_000);
+    const future = new Date(Date.now() + 60_000).toISOString();
 
     const active = await repository.createAccountSession(actor.accountId, "mobile", "active-hash", future);
     expect(active.tokenHash).toBe("active-hash");
@@ -172,16 +170,57 @@ describe("file access repository", () => {
     });
     await expect(repository.resolveAccountSession("active-hash", "admin")).resolves.toBeUndefined();
 
-    await repository.createAccountSession(actor.accountId, "mobile", "expired-hash", new Date(Date.now() - 1));
-    await expect(repository.resolveAccountSession("expired-hash", "mobile")).resolves.toBeUndefined();
+    await expect(repository.createAccountSession(
+      actor.accountId,
+      "mobile",
+      "expired-hash",
+      new Date(Date.now() - 1).toISOString()
+    )).rejects.toThrow(/future|expired|未来|过期/i);
+    await expect(repository.createAccountSession(
+      actor.accountId,
+      "mobile",
+      "invalid-date-hash",
+      "not-a-date"
+    )).rejects.toThrow(/date|ISO|日期/i);
 
+    const auditCountBeforeSingleRevoke = store.snapshot().auditLogs?.length ?? 0;
     await repository.revokeAccountSession("active-hash");
     await expect(repository.resolveAccountSession("active-hash", "mobile")).resolves.toBeUndefined();
     expect(store.snapshot().accountSessions?.find((session) => session.id === active.id)?.revokedAt).toBeTruthy();
+    expect(store.snapshot().auditLogs).toHaveLength(auditCountBeforeSingleRevoke + 1);
+    expect(store.snapshot().auditLogs?.at(-1)).toMatchObject({
+      actorName: "system",
+      action: "session.revoke",
+      targetType: "session",
+      targetId: active.id,
+      detail: {
+        accountId: actor.accountId,
+        sessionId: active.id,
+        sessionType: "mobile"
+      }
+    });
+    const auditCountBeforeNoop = store.snapshot().auditLogs?.length ?? 0;
+    await repository.revokeAccountSession("missing-token-hash");
+    expect(store.snapshot().auditLogs).toHaveLength(auditCountBeforeNoop);
 
     await repository.createAccountSession(actor.accountId, "mobile", "version-hash", future);
+    const authVersionBeforeRevokeAll = store.snapshot().accounts?.[0]?.authVersion;
     await repository.revokeAccountSessions(actor.accountId);
     await expect(repository.resolveAccountSession("version-hash", "mobile")).resolves.toBeUndefined();
+    expect(store.snapshot().accounts?.[0]?.authVersion).toBe((authVersionBeforeRevokeAll ?? 0) + 1);
+    expect(store.snapshot().auditLogs?.at(-1)).toMatchObject({
+      actorName: "system",
+      action: "sessions.revoke",
+      targetType: "account",
+      targetId: actor.accountId,
+      detail: {
+        accountId: actor.accountId,
+        revokedCount: 1
+      }
+    });
+    expect(JSON.stringify(store.snapshot().auditLogs)).not.toContain("active-hash");
+    expect(JSON.stringify(store.snapshot().auditLogs)).not.toContain("missing-token-hash");
+    expect(JSON.stringify(store.snapshot().auditLogs)).not.toContain("version-hash");
 
     const next = await repository.createAccountSession(actor.accountId, "mobile", "disabled-hash", future);
     await store.updateState?.((state) => {
@@ -195,7 +234,7 @@ describe("file access repository", () => {
     const store = memoryStore();
     const repository = createFileAppRepository(store);
     const { actor } = await createMobile(repository);
-    const future = new Date(Date.now() + 60_000);
+    const future = new Date(Date.now() + 60_000).toISOString();
 
     await repository.createAccountSession(actor.accountId, "mobile", "name-hash", future);
     await repository.updateUser(actor.personId, { name: "Alice Renamed" }, actor);
@@ -232,7 +271,7 @@ describe("file access repository", () => {
       actor.accountId,
       "mobile",
       "permission-hash",
-      new Date(Date.now() + 60_000)
+      new Date(Date.now() + 60_000).toISOString()
     );
 
     await repository.syncAccessRoles(groups.map((group) => (
@@ -248,6 +287,74 @@ describe("file access repository", () => {
     expect(refreshed.actor.permissions).toEqual([]);
   });
 
+  it("syncs access roles atomically when saveConfig changes user groups", async () => {
+    const store = memoryStore();
+    const repository = createFileAppRepository(store);
+    const { actor } = await createMobile(repository);
+    const expiresAt = new Date(Date.now() + 60_000).toISOString();
+    await repository.createAccountSession(actor.accountId, "mobile", "config-permission-hash", expiresAt);
+    const authVersionBeforePermissionChange = store.snapshot().accounts?.[0]?.authVersion;
+
+    await repository.saveConfig({
+      ...store.snapshot().config,
+      userGroups: groups.map((group) => (
+        group.id === "ops" ? { ...group, canClaim: false, canProcess: false } : group
+      ))
+    });
+
+    await expect(repository.resolveAccountSession("config-permission-hash", "mobile")).resolves.toBeUndefined();
+    expect(store.snapshot().accounts?.[0]?.authVersion).toBe((authVersionBeforePermissionChange ?? 0) + 1);
+    const refreshed = await createMobile(repository);
+    expect(refreshed.actor.permissions).toEqual([]);
+
+    await repository.createAccountSession(actor.accountId, "mobile", "keyword-only-hash", expiresAt);
+    const authVersionBeforeKeywordChange = store.snapshot().accounts?.[0]?.authVersion;
+    await repository.saveConfig({
+      ...store.snapshot().config,
+      keywordGroups: [{
+        id: "test-keywords",
+        name: "Test keywords",
+        description: "",
+        enabled: true,
+        rules: []
+      }]
+    });
+
+    await expect(repository.resolveAccountSession("keyword-only-hash", "mobile")).resolves.toBeDefined();
+    expect(store.snapshot().accounts?.[0]?.authVersion).toBe(authVersionBeforeKeywordChange);
+  });
+
+  it("keeps immutable ids when a phone changes and permits the old phone to be reused", async () => {
+    const store = memoryStore();
+    const repository = createFileAppRepository(store);
+    const first = await createMobile(repository);
+    const originalPersonId = first.actor.personId;
+    const originalAccountId = first.actor.accountId;
+
+    const updated = await repository.updateUser(originalPersonId, {
+      phone: "13900139000"
+    }, first.actor);
+    const replacement = await repository.createUser({
+      name: "Replacement",
+      phone: "13800138000",
+      groupId: "review",
+      groupLocked: false,
+      enabled: true
+    }, first.actor);
+
+    expect(updated).toMatchObject({
+      personId: originalPersonId,
+      accountId: originalAccountId,
+      phone: "13900139000"
+    });
+    expect(replacement.personId).not.toBe(originalPersonId);
+    expect(replacement.accountId).not.toBe(originalAccountId);
+    expect(store.snapshot().accountRoles).toEqual(expect.arrayContaining([
+      expect.objectContaining({ accountId: originalAccountId, roleId: "role-ops" }),
+      expect.objectContaining({ accountId: replacement.accountId, roleId: "role-review" })
+    ]));
+  });
+
   it("serializes fallback mutations for the same account", async () => {
     const store = memoryStore(accessState(), false);
     const repository = createFileAppRepository(store);
@@ -261,6 +368,22 @@ describe("file access repository", () => {
     ]);
 
     expect(store.snapshot().accountCredentials?.find((item) => item.accountId === actor.accountId)?.failedAttempts).toBe(2);
+  });
+
+  it("validates lock timestamps before mutating credentials", async () => {
+    const store = memoryStore();
+    const repository = createFileAppRepository(store);
+    const admin = await repository.bootstrapAdmin({
+      legacyPassword: "legacy-secret",
+      name: "Root Admin",
+      phone: "13700137000",
+      password: "StrongPass123!",
+      group: { mode: "existing", groupId: "admin" }
+    });
+    const state = store.snapshot();
+
+    expect(() => recordAdminLoginFailureInState(state, admin.accountId, "not-a-date")).toThrow(/date|ISO/i);
+    expect(state.accountCredentials?.find((item) => item.accountId === admin.accountId)?.failedAttempts).toBe(0);
   });
 
   it("supports bootstrap, user queries, CRUD, credentials, bindings, and secret-safe audit logs", async () => {
@@ -333,12 +456,12 @@ describe("file access repository", () => {
     await repository.setUserEnabled(created.personId, false, admin);
     await repository.setUserEnabled(created.personId, true, admin);
     await repository.setUserPassword(created.personId, "scrypt$stored-hash", admin);
-    const lockedUntil = new Date(Date.now() + 60_000);
+    const lockedUntil = new Date(Date.now() + 60_000).toISOString();
     await repository.recordAdminLoginFailure(admin.accountId, lockedUntil);
     await repository.recordAdminLoginFailure(admin.accountId);
     expect((await repository.adminLoginRecord(admin.phone))?.credential).toMatchObject({
       failedAttempts: 2,
-      lockedUntil: lockedUntil.toISOString()
+      lockedUntil
     });
     await repository.recordAdminLoginSuccess(admin.accountId);
     expect((await repository.adminLoginRecord(admin.phone))?.credential).toMatchObject({

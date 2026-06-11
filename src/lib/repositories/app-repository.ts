@@ -88,12 +88,12 @@ export type AppRepository = {
   markOutboundMessage(messageId: string, status: "sent" | "failed", error?: string): Promise<NonNullable<AppState["outboundMessages"]>[number] | undefined>;
   listWechatOrderLogs(limit?: number): Promise<WechatOrderLog[]>;
   upsertMobileAccount(input: MobileAccountInput): Promise<{ actor: AuthenticatedActor }>;
-  createAccountSession(accountId: string, type: SessionType, tokenHash: string, expiresAt: Date): Promise<AccountSession>;
+  createAccountSession(accountId: string, type: SessionType, tokenHash: string, expiresAt: string): Promise<AccountSession>;
   resolveAccountSession(tokenHash: string, type: SessionType): Promise<SessionResolution | undefined>;
   revokeAccountSession(tokenHash: string): Promise<void>;
   revokeAccountSessions(accountId: string): Promise<void>;
   adminLoginRecord(phone: string): Promise<AdminLoginRecord | undefined>;
-  recordAdminLoginFailure(accountId: string, lockedUntil?: Date): Promise<void>;
+  recordAdminLoginFailure(accountId: string, lockedUntil?: string): Promise<void>;
   recordAdminLoginSuccess(accountId: string): Promise<void>;
   bootstrapStatus(): Promise<{ required: boolean }>;
   bootstrapAdmin(input: BootstrapAdminInput): Promise<AuthenticatedActor>;
@@ -222,8 +222,10 @@ export function createFileAppRepository(store: StateFileRepository = {
     },
     getConfig: async () => (await store.readState()).config,
     saveConfig: async (config) => updateState((state) => {
+      const userGroups = config.userGroups ?? state.config.userGroups ?? [];
       state.config = config;
-      return config;
+      syncAccessRolesInState(state, userGroups);
+      return state.config;
     }),
     saveKeywordGroups: async (keywordGroups) => updateState((state) => {
       state.config = {

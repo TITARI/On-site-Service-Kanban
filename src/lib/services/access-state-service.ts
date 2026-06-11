@@ -36,13 +36,43 @@ function nowIso() {
   return new Date().toISOString();
 }
 
-function stableIdentityId(prefix: "person" | "account", phone: string) {
-  const digest = createHash("sha256").update(phone).digest("base64url");
-  return `${prefix}-${digest}`;
+function createIdentityId(prefix: "person" | "account") {
+  return `${prefix}-${randomUUID()}`;
 }
 
 function roleId(groupId: string) {
   return `role-${groupId}`;
+}
+
+const ISO_DATE_PATTERN = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?(Z|[+-]\d{2}:\d{2})$/;
+
+function normalizedIsoDate(value: string, field: string) {
+  const match = ISO_DATE_PATTERN.exec(value);
+  if (!match) throw new Error(`${field} must be a valid ISO date string`);
+
+  const [, yearText, monthText, dayText, hourText, minuteText, secondText] = match;
+  const year = Number(yearText);
+  const month = Number(monthText);
+  const day = Number(dayText);
+  const hour = Number(hourText);
+  const minute = Number(minuteText);
+  const second = Number(secondText);
+  const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  if (
+    month < 1
+    || month > 12
+    || day < 1
+    || day > daysInMonth
+    || hour > 23
+    || minute > 59
+    || second > 59
+  ) {
+    throw new Error(`${field} must be a valid ISO date string`);
+  }
+
+  const timestamp = Date.parse(value);
+  if (!Number.isFinite(timestamp)) throw new Error(`${field} must be a valid ISO date string`);
+  return new Date(timestamp).toISOString();
 }
 
 export function normalizeMobilePhone(phone: string) {
@@ -310,11 +340,11 @@ function createPersonAndAccount(
   at = nowIso()
 ) {
   const phone = normalizeMobilePhone(input.phone);
-  const personId = stableIdentityId("person", phone);
-  const accountId = stableIdentityId("account", phone);
+  const personId = createIdentityId("person");
+  const accountId = createIdentityId("account");
   if (
-    state.people.some((person) => person.id === personId || person.phone === phone)
-    || state.accounts.some((account) => account.id === accountId || account.loginName === phone)
+    state.people.some((person) => person.phone === phone)
+    || state.accounts.some((account) => account.loginName === phone)
   ) {
     throw new Error("Mobile phone is already assigned to another user");
   }
@@ -403,9 +433,13 @@ export function createAccountSessionInState(
   accountId: string,
   type: SessionType,
   tokenHash: string,
-  expiresAt: Date
+  expiresAt: string
 ) {
   const state = normalizeAccessState(stateInput);
+  const normalizedExpiresAt = normalizedIsoDate(expiresAt, "Session expiry");
+  if (Date.parse(normalizedExpiresAt) <= Date.now()) {
+    throw new Error("Session expiry must be in the future");
+  }
   const account = state.accounts.find((item) => item.id === accountId);
   if (!account || !actorForAccount(state, account, type)) {
     throw new Error("Account is not allowed to create this session");
@@ -421,7 +455,7 @@ export function createAccountSessionInState(
     sessionType: type,
     tokenHash,
     authVersion: account.authVersion,
-    expiresAt: expiresAt.toISOString(),
+    expiresAt: normalizedExpiresAt,
     lastSeenAt: at,
     createdAt: at
   };
@@ -453,13 +487,28 @@ export function resolveAccountSessionInState(
 export function revokeAccountSessionInState(stateInput: AppState, tokenHash: string) {
   const state = normalizeAccessState(stateInput);
   const session = state.accountSessions.find((item) => item.tokenHash === tokenHash);
-  if (session && !session.revokedAt) session.revokedAt = nowIso();
+  if (!session || session.revokedAt) return;
+  session.revokedAt = nowIso();
+  audit(state, "session.revoke", "session", session.id, {
+    accountId: session.accountId,
+    sessionId: session.id,
+    sessionType: session.sessionType
+  });
 }
 
 export function revokeAccountSessionsInState(stateInput: AppState, accountId: string) {
   const state = normalizeAccessState(stateInput);
   const account = state.accounts.find((item) => item.id === accountId);
-  if (account) invalidateAccount(state, account);
+  if (!account) return;
+  const revokedCount = state.accountSessions.filter((session) => (
+    session.accountId === accountId && !session.revokedAt
+  )).length;
+  invalidateAccount(state, account);
+  audit(state, "sessions.revoke", "account", accountId, {
+    accountId,
+    revokedCount,
+    authVersion: account.authVersion
+  });
 }
 
 export function adminLoginRecordFromState(
@@ -483,13 +532,16 @@ export function adminLoginRecordFromState(
 export function recordAdminLoginFailureInState(
   stateInput: AppState,
   accountId: string,
-  lockedUntil?: Date
+  lockedUntil?: string
 ) {
   const state = normalizeAccessState(stateInput);
+  const normalizedLockedUntil = lockedUntil
+    ? normalizedIsoDate(lockedUntil, "Account lock expiry")
+    : undefined;
   const credential = state.accountCredentials.find((item) => item.accountId === accountId);
   if (!credential) throw new Error("Admin credential was not found");
   credential.failedAttempts += 1;
-  if (lockedUntil) credential.lockedUntil = lockedUntil.toISOString();
+  if (normalizedLockedUntil) credential.lockedUntil = normalizedLockedUntil;
   const account = state.accounts.find((item) => item.id === accountId);
   const person = account ? personForAccount(state, account) : undefined;
   audit(state, "admin.login.failure", "account", accountId, {
