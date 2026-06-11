@@ -21,9 +21,9 @@ function state(): AppState {
     config: {
       ...defaultConfig(),
       userGroups: [
-        { id: "builder", name: "搭建组", description: "搭建", canClaim: true, canProcess: true, canAccept: false, enabled: true },
-        { id: "business", name: "业务组", description: "业务", canClaim: false, canProcess: false, canAccept: true, enabled: true },
-        { id: "organizer", name: "主场组", description: "主场", canClaim: false, canProcess: false, canAccept: true, enabled: true }
+        { id: "builder", name: "搭建组", description: "搭建", canClaim: true, canProcess: true, canAccept: false, canAdmin: false, enabled: true },
+        { id: "business", name: "业务组", description: "业务", canClaim: false, canProcess: false, canAccept: true, canAdmin: false, enabled: true },
+        { id: "organizer", name: "主场组", description: "主场", canClaim: false, canProcess: false, canAccept: true, canAdmin: false, enabled: true }
       ]
     }
   };
@@ -241,7 +241,7 @@ describe("wechat identity service", () => {
   it("rejects disabled groups, invalid phones and blank names", () => {
     const appState = state();
     appState.config.userGroups = [
-      { id: "disabled", name: "停用组", description: "停用", canClaim: false, canProcess: false, canAccept: false, enabled: false }
+      { id: "disabled", name: "停用组", description: "停用", canClaim: false, canProcess: false, canAccept: false, canAdmin: false, enabled: false }
     ];
     const { identity } = ensureConversationAndIdentity(appState, {
       channel: "wechat",

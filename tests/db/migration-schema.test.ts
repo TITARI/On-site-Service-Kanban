@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 describe("initial MariaDB schema", () => {
   const schema = readFileSync(path.join(process.cwd(), "db", "migrations", "001_initial_schema.sql"), "utf-8");
   const keywordRuleSetSchema = readFileSync(path.join(process.cwd(), "db", "migrations", "002_keyword_rule_sets.sql"), "utf-8");
+  const accessSchema = readFileSync(path.join(process.cwd(), "db", "migrations", "003_user_rbac_management.sql"), "utf-8");
 
   it("creates the core tables required by the database design", () => {
     [
@@ -55,5 +56,26 @@ describe("initial MariaDB schema", () => {
     expect(keywordRuleSetSchema).toContain("INSERT IGNORE INTO keyword_terms");
     expect(keywordRuleSetSchema).toContain("uniq_keyword_term_per_rule_set");
     expect(keywordRuleSetSchema).toContain("idx_keyword_match_logs_message");
+  });
+
+  it("adds account, RBAC, credential, and session tables", () => {
+    [
+      "accounts",
+      "account_credentials",
+      "roles",
+      "account_roles",
+      "permissions",
+      "role_permissions",
+      "account_sessions",
+      "auth_bootstrap_state"
+    ].forEach((table) => {
+      expect(accessSchema).toContain(`CREATE TABLE IF NOT EXISTS ${table}`);
+    });
+    expect(accessSchema).toContain("uniq_chat_identity_person_platform");
+    expect(accessSchema).toContain("'ticket.claim'");
+    expect(accessSchema).toContain("'ticket.process'");
+    expect(accessSchema).toContain("'ticket.accept'");
+    expect(accessSchema).toContain("'admin.access'");
+    expect(accessSchema).toContain("idx_account_sessions_lookup (token_hash, session_type, auth_version, revoked_at, expires_at)");
   });
 });

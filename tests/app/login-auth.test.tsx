@@ -14,9 +14,9 @@ const config: AppConfig = {
     { id: "smart", label: "高智商AI", provider: "mock", modelName: "smart-local", timeoutMs: 3000, enabled: true }
   ],
   userGroups: [
-    { id: "business", name: "业务组", description: "业务人员验收", canClaim: false, canProcess: false, canAccept: true, enabled: true },
-    { id: "organizer", name: "主场组", description: "主场运营验收", canClaim: false, canProcess: false, canAccept: true, enabled: true },
-    { id: "builder", name: "搭建组", description: "认领并处理现场搭建问题", canClaim: true, canProcess: true, canAccept: false, enabled: true }
+    { id: "business", name: "业务组", description: "业务人员验收", canClaim: false, canProcess: false, canAccept: true, canAdmin: false, enabled: true },
+    { id: "organizer", name: "主场组", description: "主场运营验收", canClaim: false, canProcess: false, canAccept: true, canAdmin: false, enabled: true },
+    { id: "builder", name: "搭建组", description: "认领并处理现场搭建问题", canClaim: true, canProcess: true, canAccept: false, canAdmin: false, enabled: true }
   ],
   assignmentRules: []
 };
@@ -76,6 +76,7 @@ describe("login and role access", () => {
           canClaim: true,
           canProcess: true,
           canAccept: true,
+          canAdmin: false,
           enabled: true
         }
       ]
