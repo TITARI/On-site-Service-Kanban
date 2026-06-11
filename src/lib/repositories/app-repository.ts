@@ -1,5 +1,17 @@
 import type { AppState } from "../domain/app-state";
-import type { KeywordGroup, Ticket } from "../domain/types";
+import type { KeywordGroup, Ticket, UserGroup } from "../domain/types";
+import type {
+  AccountSession,
+  AdminLoginRecord,
+  AuthenticatedActor,
+  BootstrapAdminInput,
+  MobileAccountInput,
+  SessionResolution,
+  SessionType,
+  UserListItem,
+  UserMutation,
+  UserQuery
+} from "../domain/access-control";
 import { toTicketSummary, type TicketSummary } from "../domain/ticket-summary";
 import { MariaDbStateStore, type WechatOrderLog } from "../db/mariadb-state-store";
 import { resolveStorageMode, type StorageMode } from "../db/storage-mode";
@@ -13,7 +25,33 @@ import { processWechatWatchtowerMessage } from "../services/wechat-watchtower-se
 import { claimPendingOutboundMessages, markOutboundMessageFailed, markOutboundMessageSent, queueTicketFeedbackMessage } from "../services/outbound-message-service";
 import { runAutoAcceptanceForState } from "../services/auto-acceptance-service";
 import { normalizeKeywordGroups } from "../domain/keyword-config";
-import { readState as readJsonState, writeState as writeJsonState } from "../storage/file-store";
+import {
+  readState as readJsonState,
+  updateState as updateJsonState,
+  writeState as writeJsonState
+} from "../storage/file-store";
+import { hashPassword } from "../services/password-service";
+import {
+  adminLoginRecordFromState,
+  bootstrapAdminInState,
+  bootstrapStatusFromState,
+  createAccountSessionInState,
+  createUserInState,
+  deleteUserInState,
+  getUserFromState,
+  listUsersFromState,
+  normalizeAccessState,
+  recordAdminLoginFailureInState,
+  recordAdminLoginSuccessInState,
+  resolveAccountSessionInState,
+  revokeAccountSessionInState,
+  revokeAccountSessionsInState,
+  setUserEnabledInState,
+  setUserPasswordInState,
+  syncAccessRolesInState,
+  updateUserInState,
+  upsertMobileAccountInState
+} from "../services/access-state-service";
 
 export type MobileBootstrapData = {
   tickets: TicketSummary[];
@@ -49,14 +87,59 @@ export type AppRepository = {
   claimOutboundMessages(limit?: number): Promise<NonNullable<AppState["outboundMessages"]>>;
   markOutboundMessage(messageId: string, status: "sent" | "failed", error?: string): Promise<NonNullable<AppState["outboundMessages"]>[number] | undefined>;
   listWechatOrderLogs(limit?: number): Promise<WechatOrderLog[]>;
+  upsertMobileAccount(input: MobileAccountInput): Promise<{ actor: AuthenticatedActor }>;
+  createAccountSession(accountId: string, type: SessionType, tokenHash: string, expiresAt: Date): Promise<AccountSession>;
+  resolveAccountSession(tokenHash: string, type: SessionType): Promise<SessionResolution | undefined>;
+  revokeAccountSession(tokenHash: string): Promise<void>;
+  revokeAccountSessions(accountId: string): Promise<void>;
+  adminLoginRecord(phone: string): Promise<AdminLoginRecord | undefined>;
+  recordAdminLoginFailure(accountId: string, lockedUntil?: Date): Promise<void>;
+  recordAdminLoginSuccess(accountId: string): Promise<void>;
+  bootstrapStatus(): Promise<{ required: boolean }>;
+  bootstrapAdmin(input: BootstrapAdminInput): Promise<AuthenticatedActor>;
+  listUsers(query: UserQuery): Promise<{ users: UserListItem[]; total: number }>;
+  getUser(userId: string): Promise<UserListItem | undefined>;
+  createUser(input: UserMutation, actor: AuthenticatedActor): Promise<UserListItem>;
+  updateUser(userId: string, input: Partial<UserMutation>, actor: AuthenticatedActor): Promise<UserListItem>;
+  setUserEnabled(userId: string, enabled: boolean, actor: AuthenticatedActor): Promise<UserListItem>;
+  deleteUser(userId: string, actor: AuthenticatedActor): Promise<void>;
+  setUserPassword(userId: string, passwordHash: string, actor: AuthenticatedActor): Promise<void>;
+  syncAccessRoles(userGroups: UserGroup[], actor?: AuthenticatedActor): Promise<void>;
 };
 
 type StateFileRepository = {
   readState(): Promise<AppState>;
   writeState(state: AppState): Promise<void>;
+  updateState?<T>(operation: (state: AppState) => Promise<T> | T): Promise<T>;
 };
 
-type AutoAcceptanceStore = MariaDbStateStore & {
+type BootstrapAdminStoreInput = Pick<BootstrapAdminInput, "name" | "phone" | "group"> & {
+  passwordHash: string;
+};
+
+type AccessRepositoryStore = Omit<Pick<AppRepository,
+  | "upsertMobileAccount"
+  | "createAccountSession"
+  | "resolveAccountSession"
+  | "revokeAccountSession"
+  | "revokeAccountSessions"
+  | "adminLoginRecord"
+  | "recordAdminLoginFailure"
+  | "recordAdminLoginSuccess"
+  | "bootstrapStatus"
+  | "listUsers"
+  | "getUser"
+  | "createUser"
+  | "updateUser"
+  | "setUserEnabled"
+  | "deleteUser"
+  | "setUserPassword"
+  | "syncAccessRoles"
+>, "bootstrapAdmin"> & {
+  bootstrapAdmin(input: BootstrapAdminStoreInput): Promise<AuthenticatedActor>;
+};
+
+type AutoAcceptanceStore = MariaDbStateStore & AccessRepositoryStore & {
   runAutoAcceptance?: (now?: Date) => Promise<void>;
 };
 
@@ -75,17 +158,38 @@ function stateCollections(state: AppState): NormalizedAppState {
   state.conversations ??= [];
   state.pendingWorkOrderSessions ??= [];
   state.outboundMessages ??= [];
+  normalizeAccessState(state);
   return state as NormalizedAppState;
 }
 
-async function updateState<T>(store: StateFileRepository, operation: (state: AppState) => Promise<T> | T) {
-  const state = stateCollections(await store.readState());
-  const result = await operation(state);
-  await store.writeState(state);
-  return result;
+const fallbackUpdateQueues = new WeakMap<StateFileRepository, Promise<void>>();
+
+function createStateUpdater(store: StateFileRepository) {
+  if (store.updateState) {
+    return <T>(operation: (state: AppState) => Promise<T> | T) => (
+      store.updateState?.((state) => operation(stateCollections(state))) as Promise<T>
+    );
+  }
+
+  return <T>(operation: (state: AppState) => Promise<T> | T) => {
+    const previous = fallbackUpdateQueues.get(store) ?? Promise.resolve();
+    const queued = previous.catch(() => undefined).then(async () => {
+      const state = stateCollections(await store.readState());
+      const result = await operation(state);
+      await store.writeState(state);
+      return result;
+    });
+    fallbackUpdateQueues.set(store, queued.then(() => undefined, () => undefined));
+    return queued;
+  };
 }
 
-export function createFileAppRepository(store: StateFileRepository = { readState: readJsonState, writeState: writeJsonState }): AppRepository {
+export function createFileAppRepository(store: StateFileRepository = {
+  readState: readJsonState,
+  writeState: writeJsonState,
+  updateState: updateJsonState
+}): AppRepository {
+  const updateState = createStateUpdater(store);
   return {
     kind: "file",
     runAutoAcceptance: async (now = new Date()) => {
@@ -117,18 +221,18 @@ export function createFileAppRepository(store: StateFileRepository = { readState
       };
     },
     getConfig: async () => (await store.readState()).config,
-    saveConfig: async (config) => updateState(store, (state) => {
+    saveConfig: async (config) => updateState((state) => {
       state.config = config;
       return config;
     }),
-    saveKeywordGroups: async (keywordGroups) => updateState(store, (state) => {
+    saveKeywordGroups: async (keywordGroups) => updateState((state) => {
       state.config = {
         ...state.config,
         keywordGroups: normalizeKeywordGroups(keywordGroups)
       };
       return state.config.keywordGroups ?? [];
     }),
-    importBooths: async (booths) => updateState(store, (state) => {
+    importBooths: async (booths) => updateState((state) => {
       state.booths = booths;
       return state.booths;
     }),
@@ -140,7 +244,7 @@ export function createFileAppRepository(store: StateFileRepository = { readState
       const state = await store.readState();
       return state.tickets.find((ticket) => ticket.id === ticketId);
     },
-    saveTicket: async (ticket, options = {}) => updateState(store, (state) => {
+    saveTicket: async (ticket, options = {}) => updateState((state) => {
       const existingIndex = state.tickets.findIndex((item) => item.id === ticket.id);
       if (existingIndex >= 0) {
         state.tickets[existingIndex] = ticket;
@@ -152,27 +256,70 @@ export function createFileAppRepository(store: StateFileRepository = { readState
       }
       return ticket;
     }),
-    submitTicket: async (input) => updateState(store, async (state) => {
+    submitTicket: async (input) => updateState(async (state) => {
       return await createTicketService({ state }).submitTicket(input);
     }),
-    processWechatMessage: async (input) => updateState(store, async (state) => {
+    processWechatMessage: async (input) => updateState(async (state) => {
       return await processWechatWatchtowerMessage(state, input);
     }),
-    claimOutboundMessages: async (limit) => updateState(store, (state) => {
+    claimOutboundMessages: async (limit) => updateState((state) => {
       return claimPendingOutboundMessages(state, { limit });
     }),
-    markOutboundMessage: async (messageId, status, error) => updateState(store, (state) => {
+    markOutboundMessage: async (messageId, status, error) => updateState((state) => {
       const existing = state.outboundMessages?.find((message) => message.id === messageId);
       if (!existing) return undefined;
       return status === "sent"
         ? markOutboundMessageSent(state, messageId)
         : markOutboundMessageFailed(state, messageId, error ?? "发送失败");
     }),
-    listWechatOrderLogs: async () => []
+    listWechatOrderLogs: async () => [],
+    upsertMobileAccount: (input) => updateState((state) => upsertMobileAccountInState(state, input)),
+    createAccountSession: (accountId, type, tokenHash, expiresAt) => updateState((state) => (
+      createAccountSessionInState(state, accountId, type, tokenHash, expiresAt)
+    )),
+    resolveAccountSession: async (tokenHash, type) => (
+      resolveAccountSessionInState(await store.readState(), tokenHash, type)
+    ),
+    revokeAccountSession: (tokenHash) => updateState((state) => {
+      revokeAccountSessionInState(state, tokenHash);
+    }),
+    revokeAccountSessions: (accountId) => updateState((state) => {
+      revokeAccountSessionsInState(state, accountId);
+    }),
+    adminLoginRecord: async (phone) => adminLoginRecordFromState(await store.readState(), phone),
+    recordAdminLoginFailure: (accountId, lockedUntil) => updateState((state) => {
+      recordAdminLoginFailureInState(state, accountId, lockedUntil);
+    }),
+    recordAdminLoginSuccess: (accountId) => updateState((state) => {
+      recordAdminLoginSuccessInState(state, accountId);
+    }),
+    bootstrapStatus: async () => bootstrapStatusFromState(await store.readState()),
+    bootstrapAdmin: async (input) => {
+      const passwordHash = await hashPassword(input.password);
+      return updateState((state) => bootstrapAdminInState(state, input, passwordHash));
+    },
+    listUsers: async (query) => listUsersFromState(await store.readState(), query),
+    getUser: async (userId) => getUserFromState(await store.readState(), userId),
+    createUser: (input, actor) => updateState((state) => createUserInState(state, input, actor)),
+    updateUser: (userId, input, actor) => updateState((state) => updateUserInState(state, userId, input, actor)),
+    setUserEnabled: (userId, enabled, actor) => updateState((state) => (
+      setUserEnabledInState(state, userId, enabled, actor)
+    )),
+    deleteUser: (userId, actor) => updateState((state) => {
+      deleteUserInState(state, userId, actor);
+    }),
+    setUserPassword: (userId, passwordHash, actor) => updateState((state) => {
+      setUserPasswordInState(state, userId, passwordHash, actor);
+    }),
+    syncAccessRoles: (userGroups, actor) => updateState((state) => {
+      syncAccessRolesInState(state, userGroups, actor);
+    })
   };
 }
 
-export function createMariaDbAppRepository(store: AutoAcceptanceStore = new MariaDbStateStore()): AppRepository {
+export function createMariaDbAppRepository(
+  store: AutoAcceptanceStore = new MariaDbStateStore() as AutoAcceptanceStore
+): AppRepository {
   return {
     kind: "mariadb",
     runAutoAcceptance: (now) => store.runAutoAcceptance?.(now) ?? Promise.resolve(),
@@ -189,7 +336,33 @@ export function createMariaDbAppRepository(store: AutoAcceptanceStore = new Mari
     processWechatMessage: (input) => store.processWechatMessage(input),
     claimOutboundMessages: (limit) => store.claimOutboundMessages(limit),
     markOutboundMessage: (messageId, status, error) => store.markOutboundMessage(messageId, status, error),
-    listWechatOrderLogs: (limit = 100) => store.listWechatOrderLogs(limit)
+    listWechatOrderLogs: (limit = 100) => store.listWechatOrderLogs(limit),
+    upsertMobileAccount: (input) => store.upsertMobileAccount(input),
+    createAccountSession: (accountId, type, tokenHash, expiresAt) => store.createAccountSession(accountId, type, tokenHash, expiresAt),
+    resolveAccountSession: (tokenHash, type) => store.resolveAccountSession(tokenHash, type),
+    revokeAccountSession: (tokenHash) => store.revokeAccountSession(tokenHash),
+    revokeAccountSessions: (accountId) => store.revokeAccountSessions(accountId),
+    adminLoginRecord: (phone) => store.adminLoginRecord(phone),
+    recordAdminLoginFailure: (accountId, lockedUntil) => store.recordAdminLoginFailure(accountId, lockedUntil),
+    recordAdminLoginSuccess: (accountId) => store.recordAdminLoginSuccess(accountId),
+    bootstrapStatus: () => store.bootstrapStatus(),
+    bootstrapAdmin: async (input) => {
+      const passwordHash = await hashPassword(input.password);
+      return store.bootstrapAdmin({
+        name: input.name,
+        phone: input.phone,
+        group: input.group,
+        passwordHash
+      });
+    },
+    listUsers: (query) => store.listUsers(query),
+    getUser: (userId) => store.getUser(userId),
+    createUser: (input, actor) => store.createUser(input, actor),
+    updateUser: (userId, input, actor) => store.updateUser(userId, input, actor),
+    setUserEnabled: (userId, enabled, actor) => store.setUserEnabled(userId, enabled, actor),
+    deleteUser: (userId, actor) => store.deleteUser(userId, actor),
+    setUserPassword: (userId, passwordHash, actor) => store.setUserPassword(userId, passwordHash, actor),
+    syncAccessRoles: (userGroups, actor) => store.syncAccessRoles(userGroups, actor)
   };
 }
 

@@ -13,6 +13,7 @@ import type {
   AccountCredential,
   AccountRole,
   AccountSession,
+  AuditLogEntry,
   AuthBootstrapState,
   Role,
   RolePermission
@@ -34,6 +35,7 @@ export type AppState = {
   accountRoles?: AccountRole[];
   rolePermissions?: RolePermission[];
   accountSessions?: AccountSession[];
+  auditLogs?: AuditLogEntry[];
   authBootstrap?: AuthBootstrapState;
   config: AppConfig;
 };

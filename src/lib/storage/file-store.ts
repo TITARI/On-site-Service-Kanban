@@ -16,6 +16,7 @@ import type {
   AccountCredential,
   AccountRole,
   AccountSession,
+  AuditLogEntry,
   AuthBootstrapState,
   Role,
   RolePermission
@@ -40,6 +41,7 @@ export type AppState = {
   accountRoles?: AccountRole[];
   rolePermissions?: RolePermission[];
   accountSessions?: AccountSession[];
+  auditLogs?: AuditLogEntry[];
   authBootstrap?: AuthBootstrapState;
   config: AppConfig;
 };
@@ -89,6 +91,7 @@ export function initialState(): AppState {
     accountRoles: [],
     rolePermissions: [],
     accountSessions: [],
+    auditLogs: [],
     authBootstrap: {},
     config: defaultConfig()
   };
@@ -118,6 +121,7 @@ export function parseStoredState(raw: string): AppState {
       accountRoles: parsed.accountRoles ?? [],
       rolePermissions: parsed.rolePermissions ?? [],
       accountSessions: parsed.accountSessions ?? [],
+      auditLogs: parsed.auditLogs ?? [],
       authBootstrap: parsed.authBootstrap ?? {},
       config: {
         ...defaults,
@@ -134,28 +138,46 @@ export function parseStoredState(raw: string): AppState {
   }
 }
 
-export async function readState(): Promise<AppState> {
+async function readStateUnlocked(): Promise<AppState> {
   let raw: string;
   try {
     raw = await readFile(dataFile, "utf-8");
   } catch (error) {
     if (!isNotFoundError(error)) throw error;
     const state = initialState();
-    await writeState(state);
+    await writeStateUnlocked(state);
     return state;
   }
 
   return parseStoredState(raw);
 }
 
-export async function writeState(state: AppState) {
-  const operation = writeQueue.catch(() => undefined).then(async () => {
-    await mkdir(dataDir, { recursive: true });
-    const tempFile = path.join(dataDir, `app-state.${crypto.randomUUID()}.tmp`);
-    await writeFile(tempFile, JSON.stringify(state, null, 2), "utf-8");
-    await replaceStateFile(tempFile);
-  });
-  writeQueue = operation.catch(() => undefined);
+async function writeStateUnlocked(state: AppState) {
+  await mkdir(dataDir, { recursive: true });
+  const tempFile = path.join(dataDir, `app-state.${crypto.randomUUID()}.tmp`);
+  await writeFile(tempFile, JSON.stringify(state, null, 2), "utf-8");
+  await replaceStateFile(tempFile);
+}
 
-  return operation;
+function enqueue<T>(operation: () => Promise<T>) {
+  const queued = writeQueue.catch(() => undefined).then(operation);
+  writeQueue = queued.then(() => undefined, () => undefined);
+  return queued;
+}
+
+export async function readState(): Promise<AppState> {
+  return enqueue(() => readStateUnlocked());
+}
+
+export async function writeState(state: AppState) {
+  return enqueue(() => writeStateUnlocked(state));
+}
+
+export async function updateState<T>(operation: (state: AppState) => Promise<T> | T) {
+  return enqueue(async () => {
+    const state = await readStateUnlocked();
+    const result = await operation(state);
+    await writeStateUnlocked(state);
+    return result;
+  });
 }

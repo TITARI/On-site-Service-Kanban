@@ -118,6 +118,17 @@ export type AuthBootstrapState = {
   completedByAccountId?: string;
 };
 
+export type AuditLogEntry = {
+  id: string;
+  actorId?: string;
+  actorName: string;
+  action: string;
+  targetType: string;
+  targetId?: string;
+  detail: Record<string, unknown>;
+  createdAt: string;
+};
+
 export type UserListItem = {
   personId: string;
   accountId: string;

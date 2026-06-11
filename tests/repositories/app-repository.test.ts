@@ -3,6 +3,7 @@ import { defaultConfig } from "@/lib/seed";
 import { createAppRepository, createFileAppRepository, createMariaDbAppRepository } from "@/lib/repositories/app-repository";
 import type { MariaDbStateStore } from "@/lib/db/mariadb-state-store";
 import type { AppState } from "@/lib/domain/app-state";
+import { verifyPassword } from "@/lib/services/password-service";
 
 function state(): AppState {
   return {
@@ -57,17 +58,55 @@ describe("app repository", () => {
 
   it("delegates repository methods to the MariaDB state store", async () => {
     const config = defaultConfig();
+    const actor = {
+      accountId: "account-1",
+      personId: "person-1",
+      name: "Alice",
+      phone: "13800138000",
+      groupId: "ops",
+      groupName: "Operations",
+      permissions: [],
+      sessionType: "mobile" as const
+    };
     const store = {
       getConfig: vi.fn(async () => config),
       saveTicket: vi.fn(async (ticket) => ticket),
-      listWechatOrderLogs: vi.fn(async () => [])
+      listWechatOrderLogs: vi.fn(async () => []),
+      bootstrapStatus: vi.fn(async () => ({ required: true })),
+      bootstrapAdmin: vi.fn(async () => ({ ...actor, sessionType: "admin" as const })),
+      upsertMobileAccount: vi.fn(async () => ({ actor }))
     } as unknown as MariaDbStateStore;
-    const repository = createMariaDbAppRepository(store);
+    const repository = createMariaDbAppRepository(
+      store as Parameters<typeof createMariaDbAppRepository>[0]
+    );
 
     await expect(repository.getConfig()).resolves.toBe(config);
     await expect(repository.listWechatOrderLogs(20)).resolves.toEqual([]);
+    await expect(repository.bootstrapStatus()).resolves.toEqual({ required: true });
+    await repository.upsertMobileAccount({ name: "Alice", phone: "13800138000", groupId: "ops" });
+    await repository.bootstrapAdmin({
+      legacyPassword: "legacy-secret",
+      name: "Root",
+      phone: "13700137000",
+      password: "StrongPass123!",
+      group: { mode: "existing", groupId: "admin" }
+    });
 
     expect(store.getConfig).toHaveBeenCalledOnce();
     expect(store.listWechatOrderLogs).toHaveBeenCalledWith(20);
+    expect(store.bootstrapStatus).toHaveBeenCalledOnce();
+    expect(store.upsertMobileAccount).toHaveBeenCalledWith({
+      name: "Alice",
+      phone: "13800138000",
+      groupId: "ops"
+    });
+    expect(store.bootstrapAdmin).toHaveBeenCalledWith({
+      name: "Root",
+      phone: "13700137000",
+      group: { mode: "existing", groupId: "admin" },
+      passwordHash: expect.any(String)
+    });
+    const persistedInput = store.bootstrapAdmin.mock.calls[0][0] as { passwordHash: string };
+    await expect(verifyPassword("StrongPass123!", persistedInput.passwordHash)).resolves.toBe(true);
   });
 });

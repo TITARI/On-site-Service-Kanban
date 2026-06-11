@@ -12,6 +12,7 @@ describe("file store", () => {
       accountRoles: [],
       rolePermissions: [],
       accountSessions: [],
+      auditLogs: [],
       authBootstrap: {}
     });
   });
@@ -35,8 +36,73 @@ describe("file store", () => {
       accountRoles: [],
       rolePermissions: [],
       accountSessions: [],
+      auditLogs: [],
       authBootstrap: {}
     });
+  });
+
+  it("serializes concurrent state updates without losing changes", async () => {
+    vi.resetModules();
+    let stored = JSON.stringify({
+      booths: [],
+      tickets: [],
+      messageRecords: [],
+      config: {
+        issueTypes: [],
+        aiModels: [],
+        assignmentRules: []
+      }
+    });
+    const temporaryFiles = new Map<string, string>();
+    const mkdir = vi.fn().mockResolvedValue(undefined);
+    const readFile = vi.fn(async () => {
+      await Promise.resolve();
+      return stored;
+    });
+    const writeFile = vi.fn(async (file: string, value: string) => {
+      temporaryFiles.set(file, value);
+    });
+    const rename = vi.fn(async (file: string) => {
+      stored = temporaryFiles.get(file) ?? stored;
+    });
+
+    vi.doMock("node:fs/promises", () => ({
+      default: { mkdir, readFile, rename, writeFile },
+      mkdir,
+      readFile,
+      rename,
+      writeFile
+    }));
+
+    const { readState, updateState } = await import("@/lib/storage/file-store");
+    await Promise.all([
+      updateState((state) => {
+        state.booths.push({
+          boothNumber: "A01",
+          companyName: "Alpha",
+          companyShortName: "A",
+          salesOwner: "Owner",
+          builder: "Builder"
+        });
+      }),
+      updateState((state) => {
+        state.booths.push({
+          boothNumber: "B01",
+          companyName: "Beta",
+          companyShortName: "B",
+          salesOwner: "Owner",
+          builder: "Builder"
+        });
+      })
+    ]);
+
+    await expect(readState()).resolves.toMatchObject({
+      booths: [
+        { boothNumber: "A01" },
+        { boothNumber: "B01" }
+      ]
+    });
+    vi.doUnmock("node:fs/promises");
   });
 
   it("throws on malformed state json instead of silently resetting data", () => {
