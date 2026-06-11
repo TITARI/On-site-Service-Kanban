@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   SESSION_COOKIE_NAMES,
   createSessionToken,
@@ -9,10 +9,11 @@ import {
   sessionTokenHash
 } from "@/lib/services/session-service";
 
-const originalNodeEnv = process.env.NODE_ENV;
+const mobileToken = "A".repeat(43);
+const adminToken = `${"b".repeat(42)}A`;
 
 afterEach(() => {
-  process.env.NODE_ENV = originalNodeEnv;
+  vi.unstubAllEnvs();
 });
 
 describe("session service", () => {
@@ -42,15 +43,15 @@ describe("session service", () => {
   it("reads the exact requested cookie among whitespace and multiple cookies", () => {
     const request = new Request("https://board.example", {
       headers: {
-        cookie: " theme=dark ; board_mobile_session=mobile-token ; board_admin_session=admin-token "
+        cookie: ` theme=dark ; board_mobile_session=${mobileToken} ; board_admin_session=${adminToken} `
       }
     });
 
-    expect(requestSessionToken(request, "mobile")).toBe("mobile-token");
-    expect(requestSessionToken(request, "admin")).toBe("admin-token");
+    expect(requestSessionToken(request, "mobile")).toBe(mobileToken);
+    expect(requestSessionToken(request, "admin")).toBe(adminToken);
   });
 
-  it("does not match similar cookie names or return blank tokens", () => {
+  it("does not match similar cookie names or return invalid, injected, or blank tokens", () => {
     const similarOnly = new Request("https://board.example", {
       headers: {
         cookie: "board_mobile_session_backup=wrong; xboard_mobile_session=also-wrong"
@@ -59,38 +60,64 @@ describe("session service", () => {
     const blank = new Request("https://board.example", {
       headers: { cookie: "board_mobile_session=   ; theme=dark" }
     });
+    const invalid = new Request("https://board.example", {
+      headers: { cookie: "board_mobile_session=short-token" }
+    });
+    const injected = new Request("https://board.example", {
+      headers: { cookie: `board_mobile_session=${"A".repeat(42)}%3BSecure` }
+    });
 
     expect(requestSessionToken(similarOnly, "mobile")).toBeUndefined();
     expect(requestSessionToken(blank, "mobile")).toBeUndefined();
+    expect(requestSessionToken(invalid, "mobile")).toBeUndefined();
+    expect(requestSessionToken(injected, "mobile")).toBeUndefined();
     expect(requestSessionToken(new Request("https://board.example"), "admin")).toBeUndefined();
+  });
+
+  it("rejects duplicate cookies with the requested name", () => {
+    const request = new Request("https://board.example", {
+      headers: {
+        cookie: `board_mobile_session=${mobileToken}; board_mobile_session=${`${"C".repeat(42)}A`}`
+      }
+    });
+
+    expect(requestSessionToken(request, "mobile")).toBeUndefined();
   });
 
   it("serializes mobile and admin cookies with an explicit secure switch", () => {
     const expiresAt = new Date("2026-06-12T00:00:00Z");
-    const secureCookie = sessionCookie("mobile", "mobile-token", expiresAt, true);
-    const insecureCookie = sessionCookie("admin", "admin-token", expiresAt, false);
+    const secureCookie = sessionCookie("mobile", mobileToken, expiresAt, true);
+    const insecureCookie = sessionCookie("admin", adminToken, expiresAt, false);
 
     expect(secureCookie).toBe(
-      "board_mobile_session=mobile-token; Path=/; HttpOnly; SameSite=Lax; Secure; Expires=Fri, 12 Jun 2026 00:00:00 GMT"
+      `board_mobile_session=${mobileToken}; Path=/; HttpOnly; SameSite=Lax; Secure; Expires=Fri, 12 Jun 2026 00:00:00 GMT`
     );
     expect(insecureCookie).toBe(
-      "board_admin_session=admin-token; Path=/; HttpOnly; SameSite=Lax; Expires=Fri, 12 Jun 2026 00:00:00 GMT"
+      `board_admin_session=${adminToken}; Path=/; HttpOnly; SameSite=Lax; Expires=Fri, 12 Jun 2026 00:00:00 GMT`
     );
   });
 
-  it("defaults cookie security to the production environment", () => {
-    process.env.NODE_ENV = "production";
-    const productionCookie = sessionCookie("admin", "token", new Date("2026-06-12T00:00:00Z"));
+  it("rejects invalid or injected tokens when serializing cookies", () => {
+    const expiresAt = new Date("2026-06-12T00:00:00Z");
 
-    process.env.NODE_ENV = "test";
-    const testCookie = sessionCookie("admin", "token", new Date("2026-06-12T00:00:00Z"));
+    expect(() => sessionCookie("mobile", "", expiresAt)).toThrow("会话令牌格式无效");
+    expect(() => sessionCookie("mobile", "short-token", expiresAt)).toThrow("会话令牌格式无效");
+    expect(() => sessionCookie("mobile", `${"A".repeat(42)}; Secure`, expiresAt)).toThrow("会话令牌格式无效");
+  });
+
+  it("defaults cookie security to the production environment", () => {
+    vi.stubEnv("NODE_ENV", "production");
+    const productionCookie = sessionCookie("admin", adminToken, new Date("2026-06-12T00:00:00Z"));
+
+    vi.stubEnv("NODE_ENV", "test");
+    const testCookie = sessionCookie("admin", adminToken, new Date("2026-06-12T00:00:00Z"));
 
     expect(productionCookie).toContain("; Secure;");
     expect(testCookie).not.toContain("; Secure;");
   });
 
   it("expires both session cookie types with matching security attributes", () => {
-    process.env.NODE_ENV = "production";
+    vi.stubEnv("NODE_ENV", "production");
 
     for (const type of ["mobile", "admin"] as const) {
       const cookie = expiredSessionCookie(type);

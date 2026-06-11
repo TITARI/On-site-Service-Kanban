@@ -2,10 +2,14 @@ import { randomBytes, scrypt, timingSafeEqual, type ScryptOptions } from "node:c
 
 const KEY_LENGTH = 64;
 const SALT_LENGTH = 16;
+const KEY_TEXT_LENGTH = 86;
+const SALT_TEXT_LENGTH = 22;
 const COST = 16384;
 const BLOCK_SIZE = 8;
 const PARALLELIZATION = 1;
 const MAX_MEMORY = 32 * 1024 * 1024;
+const MAX_PASSWORD_BYTES = 1024;
+const MAX_ENCODED_LENGTH = "scrypt$16384$8$1$".length + SALT_TEXT_LENGTH + 1 + KEY_TEXT_LENGTH;
 const BASE64URL_PATTERN = /^[A-Za-z0-9_-]+$/;
 
 const SCRYPT_OPTIONS: ScryptOptions = {
@@ -34,6 +38,9 @@ function decodeBase64url(value: string, expectedLength: number) {
 
 export async function hashPassword(password: string) {
   if (password.length < 10) throw new Error("后台密码至少需要10位");
+  if (Buffer.byteLength(password, "utf8") > MAX_PASSWORD_BYTES) {
+    throw new Error("后台密码不能超过1024字节");
+  }
 
   const salt = randomBytes(SALT_LENGTH);
   const key = await deriveKey(password, salt);
@@ -48,6 +55,13 @@ export async function hashPassword(password: string) {
 }
 
 export async function verifyPassword(password: string, encoded: string) {
+  if (
+    Buffer.byteLength(password, "utf8") > MAX_PASSWORD_BYTES
+    || encoded.length > MAX_ENCODED_LENGTH
+  ) {
+    return false;
+  }
+
   try {
     const parts = encoded.split("$");
     if (parts.length !== 6) return false;
@@ -61,6 +75,8 @@ export async function verifyPassword(password: string, encoded: string) {
     ) {
       return false;
     }
+
+    if (saltText.length !== SALT_TEXT_LENGTH || keyText.length !== KEY_TEXT_LENGTH) return false;
 
     const salt = decodeBase64url(saltText, SALT_LENGTH);
     const expected = decodeBase64url(keyText, KEY_LENGTH);
