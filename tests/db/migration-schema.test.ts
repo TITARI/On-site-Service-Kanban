@@ -115,10 +115,16 @@ describe("initial MariaDB schema", () => {
     expect(accessStatement("CREATE TABLE IF NOT EXISTS roles")).toContain("source_group_id varchar(64) NOT NULL");
     expect(accessStatement("CREATE TABLE IF NOT EXISTS account_roles")).toContain("account_id varchar(128) NOT NULL");
     expect(accessStatement("CREATE TABLE IF NOT EXISTS account_roles")).toContain("role_id varchar(128) NOT NULL");
+    expect(accessStatement("CREATE TABLE IF NOT EXISTS role_permissions")).toContain("role_id varchar(128) NOT NULL");
     expect(accessStatement("CREATE TABLE IF NOT EXISTS role_permissions")).toContain("permission_code varchar(64) NOT NULL");
     expect(accessStatement("CREATE TABLE IF NOT EXISTS account_sessions")).toContain("account_id varchar(128) NOT NULL");
     expect(accessStatement("CREATE TABLE IF NOT EXISTS account_sessions")).toContain("token_hash char(64) NOT NULL");
     expect(accessStatement("CREATE TABLE IF NOT EXISTS auth_bootstrap_state")).toContain("completed_by_account_id varchar(128) NULL");
+  });
+
+  it("adds a non-null unlocked group flag to people", () => {
+    const alterPeople = accessStatement("ALTER TABLE people");
+    expect(alterPeople).toBe("ALTER TABLE people ADD COLUMN group_locked boolean NOT NULL DEFAULT false AFTER group_name_snapshot");
   });
 
   it("backfills groups, accounts, and one group-derived role per account", () => {
@@ -139,6 +145,28 @@ describe("initial MariaDB schema", () => {
     expect(accountRoleBackfill).toContain("WHERE p.group_id IS NOT NULL");
   });
 
+  it("seeds one role from every user group with stable ids and source fields", () => {
+    const roleSeed = accessStatement("INSERT IGNORE INTO roles");
+    expect(roleSeed).toContain("(id, name, source_group_id, enabled, created_at, updated_at)");
+    expect(roleSeed).toContain("SELECT CONCAT('role-', id), name, id, enabled, created_at, updated_at FROM user_groups");
+  });
+
+  it("maps all four user-group flags to their fixed role permissions", () => {
+    const rolePermissionSeed = accessStatement("INSERT IGNORE INTO role_permissions");
+    expect(rolePermissionSeed).toContain("(role_id, permission_code, created_at)");
+    [
+      ["can_claim", "ticket.claim"],
+      ["can_process", "ticket.process"],
+      ["can_accept", "ticket.accept"],
+      ["can_admin", "admin.access"]
+    ].forEach(([flag, permissionCode]) => {
+      expect(rolePermissionSeed).toContain(
+        `SELECT CONCAT('role-', id), '${permissionCode}', updated_at FROM user_groups WHERE ${flag} = true`
+      );
+    });
+    expect(rolePermissionSeed.match(/UNION ALL/g)).toHaveLength(3);
+  });
+
   it("seeds the complete fixed permission catalog in stable order", () => {
     const permissionSeed = accessStatement("INSERT IGNORE INTO permissions");
     const seededCodes = [...permissionSeed.matchAll(/\('([^']+)',\s*'[^']+'\)/g)].map((match) => match[1]);
@@ -149,6 +177,12 @@ describe("initial MariaDB schema", () => {
       "ticket.accept",
       "admin.access"
     ]);
+  });
+
+  it("creates an incomplete admin bootstrap state", () => {
+    const bootstrapSeed = accessStatement("INSERT IGNORE INTO auth_bootstrap_state");
+    expect(bootstrapSeed).toContain("(id, completed_at, completed_by_account_id)");
+    expect(bootstrapSeed).toContain("VALUES ('admin', NULL, NULL)");
   });
 
   it("clears later duplicate identity bindings before adding the person-platform constraint", () => {
