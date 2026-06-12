@@ -97,6 +97,31 @@ export function normalizeAccessState(state: AppState): AccessState {
   return state as AccessState;
 }
 
+export function assertUsableAdminAfterGroupChange(
+  stateInput: AppState,
+  userGroups: UserGroup[]
+) {
+  const state = normalizeAccessState(stateInput);
+  if (!state.authBootstrap.completedAt) return;
+
+  const adminGroupIds = new Set(
+    userGroups
+      .filter((group) => group.enabled && group.canAdmin)
+      .map((group) => group.id)
+  );
+  const usableAdminExists = state.accounts.some((account) => {
+    if (!account.enabled) return false;
+    const person = personForAccount(state, account);
+    return Boolean(
+      person?.enabled
+      && person.groupId
+      && adminGroupIds.has(person.groupId)
+      && state.accountCredentials.some((credential) => credential.accountId === account.id)
+    );
+  });
+  if (!usableAdminExists) throw new Error("必须保留至少一位可用后台管理员");
+}
+
 function groupsOf(state: AppState) {
   return state.config.userGroups ?? [];
 }

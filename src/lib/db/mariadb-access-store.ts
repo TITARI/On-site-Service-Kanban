@@ -761,6 +761,35 @@ export async function bootstrapStatus(connection: DatabaseConnection) {
   return { required: !state?.completed_at };
 }
 
+export async function assertUsableAdminAfterGroupChange(
+  connection: DatabaseConnection,
+  userGroups: UserGroup[]
+) {
+  const status = await bootstrapStatus(connection);
+  if (status.required) return;
+
+  const adminGroupIds = userGroups
+    .filter((group) => group.enabled && group.canAdmin)
+    .map((group) => group.id);
+  if (adminGroupIds.length === 0) throw new Error("必须保留至少一位可用后台管理员");
+
+  const placeholders = adminGroupIds.map(() => "?").join(", ");
+  const [result] = await rows<Row>(
+    connection,
+    `SELECT COUNT(*) AS usable_admin_count
+     FROM accounts a
+     JOIN people p ON p.id = a.person_id
+     JOIN account_credentials c ON c.account_id = a.id
+     WHERE a.enabled = true
+       AND p.enabled = true
+       AND p.group_id IN (${placeholders})`,
+    adminGroupIds
+  );
+  if (Number(result?.usable_admin_count ?? 0) < 1) {
+    throw new Error("必须保留至少一位可用后台管理员");
+  }
+}
+
 function createdAdminGroupId(name: string) {
   return `admin-${Buffer.from(name.trim()).toString("base64url").slice(0, 32) || randomUUID()}`;
 }

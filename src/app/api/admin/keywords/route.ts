@@ -3,6 +3,7 @@ import { z } from "zod";
 import { badRequest, errorMessage, parseJson } from "@/lib/api/errors";
 import { normalizeKeywordGroups } from "@/lib/domain/keyword-config";
 import { getAppRepository } from "@/lib/repositories/app-repository";
+import { requireRequestActor } from "@/lib/services/auth-service";
 
 const keywordRuleSchema = z.object({
   id: z.string().min(1),
@@ -49,12 +50,16 @@ const payloadSchema = z.object({
   keywordGroups: z.array(keywordGroupSchema)
 });
 
-export async function GET() {
+export async function GET(request: Request) {
+  const auth = await requireRequestActor(request, "admin", "admin.access");
+  if (!auth.ok) return auth.response;
   const config = await getAppRepository().getConfig();
   return NextResponse.json({ keywordGroups: normalizeKeywordGroups(config.keywordGroups ?? []) });
 }
 
 export async function PUT(request: Request) {
+  const auth = await requireRequestActor(request, "admin", "admin.access");
+  if (!auth.ok) return auth.response;
   let input: z.infer<typeof payloadSchema>;
   try {
     input = payloadSchema.parse(await parseJson(request));

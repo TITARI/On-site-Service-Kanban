@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createFileAppRepository, getAppRepository, type AppRepository } from "@/lib/repositories/app-repository";
 import { stripConfigSecrets } from "@/lib/services/config-service";
+import { requireRequestActor } from "@/lib/services/auth-service";
 import type { StorageMode } from "@/lib/db/storage-mode";
 
 export const dynamic = "force-dynamic";
@@ -118,6 +119,9 @@ export async function GET(request: Request) {
       ...storagePayload(result.storage)
     });
   }
+
+  const auth = await requireRequestActor(request, "admin", "admin.access");
+  if (!auth.ok) return auth.response;
 
   const result = await loadWithJsonFallback(
     async (repository) => {

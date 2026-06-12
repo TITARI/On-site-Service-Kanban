@@ -1,6 +1,6 @@
 import { normalizeKeywordGroups } from "../domain/keyword-config";
 import { normalizeAiPromptConfig } from "../domain/ai-config";
-import type { AppConfig } from "../seed";
+import { normalizeUserGroups, type AppConfig } from "../seed";
 import { normalizeAutoAcceptanceConfig, validateAutoAcceptanceConfig } from "./auto-acceptance-service";
 import { normalizeWxautoMcpConfig, syncWxautoMcpMessageIntegration } from "../integrations/wxauto/config";
 
@@ -46,6 +46,7 @@ export function mergeConfigSecrets(incoming: AppConfig, existing: AppConfig): Ap
 export function validateConfig(config: AppConfig) {
   const baseConfig = {
     ...normalizeAiPromptConfig(config),
+    userGroups: normalizeUserGroups(config.userGroups),
     keywordGroups: normalizeKeywordGroups(config.keywordGroups),
     autoAcceptance: validateAutoAcceptanceConfig(config.autoAcceptance)
   };

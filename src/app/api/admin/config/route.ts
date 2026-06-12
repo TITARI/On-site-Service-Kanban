@@ -1,14 +1,19 @@
 import { NextResponse } from "next/server";
 import { badRequest, errorMessage, parseJson } from "@/lib/api/errors";
 import { getAppRepository } from "@/lib/repositories/app-repository";
+import { requireRequestActor } from "@/lib/services/auth-service";
 import { mergeConfigSecrets, stripConfigSecrets, validateConfig } from "@/lib/services/config-service";
 
-export async function GET() {
+export async function GET(request: Request) {
+  const auth = await requireRequestActor(request, "admin", "admin.access");
+  if (!auth.ok) return auth.response;
   const config = await getAppRepository().getConfig();
   return NextResponse.json({ config: stripConfigSecrets(config) });
 }
 
 export async function PUT(request: Request) {
+  const auth = await requireRequestActor(request, "admin", "admin.access");
+  if (!auth.ok) return auth.response;
   const repository = getAppRepository();
   let config: ReturnType<typeof validateConfig>;
   try {

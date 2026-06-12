@@ -6,7 +6,8 @@ const store = vi.hoisted(() => ({
   config: undefined as AppConfig | undefined,
   getConfig: vi.fn(),
   saveKeywordGroups: vi.fn(),
-  listWechatOrderLogs: vi.fn()
+  listWechatOrderLogs: vi.fn(),
+  resolveAccountSession: vi.fn()
 }));
 
 vi.mock("@/lib/repositories/app-repository", () => ({
@@ -14,9 +15,31 @@ vi.mock("@/lib/repositories/app-repository", () => ({
     kind: "mariadb",
     getConfig: store.getConfig,
     saveKeywordGroups: store.saveKeywordGroups,
-    listWechatOrderLogs: store.listWechatOrderLogs
+    listWechatOrderLogs: store.listWechatOrderLogs,
+    resolveAccountSession: store.resolveAccountSession
   } as unknown as AppRepository)
 }));
+
+const actor = {
+  accountId: "account-admin",
+  personId: "person-admin",
+  name: "Admin",
+  phone: "13800138000",
+  groupId: "admin",
+  groupName: "Administrators",
+  permissions: ["admin.access"] as const,
+  sessionType: "admin" as const
+};
+
+function adminRequest(url: string, init?: RequestInit) {
+  return new Request(url, {
+    ...init,
+    headers: {
+      cookie: `board_admin_session=${"A".repeat(43)}`,
+      ...init?.headers
+    }
+  });
+}
 
 function freshConfig() {
   return defaultConfig();
@@ -28,6 +51,19 @@ describe("admin database-backed routes", () => {
     store.getConfig.mockReset();
     store.saveKeywordGroups.mockReset();
     store.listWechatOrderLogs.mockReset();
+    store.resolveAccountSession.mockReset().mockResolvedValue({
+      actor,
+      session: {
+        id: "session-admin",
+        accountId: actor.accountId,
+        sessionType: "admin",
+        tokenHash: "stored-hash",
+        authVersion: 1,
+        expiresAt: "2099-01-01T00:00:00.000Z",
+        lastSeenAt: "2026-06-12T00:00:00.000Z",
+        createdAt: "2026-06-12T00:00:00.000Z"
+      }
+    });
     store.getConfig.mockImplementation(async () => store.config!);
     store.saveKeywordGroups.mockImplementation(async (keywordGroups) => {
       store.config = { ...store.config!, keywordGroups };
@@ -37,7 +73,7 @@ describe("admin database-backed routes", () => {
 
   it("reads and saves keyword groups through the repository", async () => {
     const route = await import("@/app/api/admin/keywords/route");
-    const getResponse = await route.GET();
+    const getResponse = await route.GET(adminRequest("http://localhost/api/admin/keywords"));
     await expect(getResponse.json()).resolves.toEqual({ keywordGroups: store.config!.keywordGroups });
 
     const nextKeywordGroups = [
@@ -59,7 +95,7 @@ describe("admin database-backed routes", () => {
       }
     ];
 
-    const putResponse = await route.PUT(new Request("http://localhost/api/admin/keywords", {
+    const putResponse = await route.PUT(adminRequest("http://localhost/api/admin/keywords", {
       method: "PUT",
       body: JSON.stringify({ keywordGroups: nextKeywordGroups })
     }));
@@ -110,7 +146,7 @@ describe("admin database-backed routes", () => {
       }
     ];
 
-    const putResponse = await route.PUT(new Request("http://localhost/api/admin/keywords", {
+    const putResponse = await route.PUT(adminRequest("http://localhost/api/admin/keywords", {
       method: "PUT",
       body: JSON.stringify({ keywordGroups: nextKeywordGroups })
     }));
@@ -135,7 +171,7 @@ describe("admin database-backed routes", () => {
     ]);
 
     const route = await import("@/app/api/admin/wechat-order-logs/route");
-    const response = await route.GET(new Request("http://localhost/api/admin/wechat-order-logs?limit=20"));
+    const response = await route.GET(adminRequest("http://localhost/api/admin/wechat-order-logs?limit=20"));
 
     await expect(response.json()).resolves.toEqual({
       logs: [
@@ -152,5 +188,12 @@ describe("admin database-backed routes", () => {
       ]
     });
     expect(store.listWechatOrderLogs).toHaveBeenCalledWith(20);
+  });
+
+  it("rejects admin data reads without an admin session", async () => {
+    const route = await import("@/app/api/admin/keywords/route");
+    const response = await route.GET(new Request("http://localhost/api/admin/keywords"));
+
+    expect(response.status).toBe(401);
   });
 });

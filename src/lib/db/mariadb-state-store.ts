@@ -19,7 +19,7 @@ import type {
 import { normalizeAiPromptConfig } from "../domain/ai-config";
 import { keywordRuleSetsOf, normalizeKeywordGroups } from "../domain/keyword-config";
 import type { TicketSummary } from "../domain/ticket-summary";
-import { defaultConfig, type AppConfig } from "../seed";
+import { defaultConfig, normalizeUserGroups, type AppConfig } from "../seed";
 import { normalizeWxautoMcpConfig, syncWxautoMcpMessageIntegration } from "../integrations/wxauto/config";
 import type { AppState } from "../domain/app-state";
 import { createTicketService, type SubmitTicketInput } from "../services/ticket-service";
@@ -43,6 +43,7 @@ import type {
 } from "../domain/access-control";
 import {
   adminLoginRecord as readAdminLoginRecord,
+  assertUsableAdminAfterGroupChange,
   bootstrapAdmin as bootstrapAdminAccess,
   bootstrapStatus as readBootstrapStatus,
   createAccountSession as createAccessSession,
@@ -132,7 +133,9 @@ function mergedConfig(config?: Partial<AppConfig>): AppConfig {
     aiModels: incoming.aiModels?.length ? incoming.aiModels : defaults.aiModels,
     messageIntegrations,
     wxautoMcp,
-    userGroups: incoming.userGroups?.length ? incoming.userGroups : defaults.userGroups,
+    userGroups: normalizeUserGroups(
+      incoming.userGroups?.length ? incoming.userGroups : defaults.userGroups
+    ),
     keywordGroups: normalizeKeywordGroups(incoming.keywordGroups?.length ? incoming.keywordGroups : defaults.keywordGroups),
     aiPromptTemplates: promptConfig.aiPromptTemplates,
     aiPromptDefaults: promptConfig.aiPromptDefaults,
@@ -752,7 +755,7 @@ async function writeConfig(connection: DatabaseConnection, config: AppConfig, no
       `INSERT INTO user_groups (
         id, name, description, can_claim, can_process, can_accept, can_admin, enabled, created_at, updated_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [group.id, group.name, group.description, group.canClaim, group.canProcess, group.canAccept, false, group.enabled, now, now]
+      [group.id, group.name, group.description, group.canClaim, group.canProcess, group.canAccept, group.canAdmin, group.enabled, now, now]
     );
   }
 
@@ -1535,6 +1538,7 @@ export class MariaDbStateStore {
 
   async saveConfig(config: AppConfig) {
     await withDatabaseTransaction(async (connection) => {
+      await assertUsableAdminAfterGroupChange(connection, config.userGroups ?? []);
       await replaceConfigTables(connection, config);
       await syncAccessRoles(connection, config.userGroups ?? []);
     });

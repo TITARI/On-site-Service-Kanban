@@ -24,8 +24,15 @@ export function defaultUserGroups(): UserGroup[] {
   ];
 }
 
+export function normalizeUserGroups(groups?: UserGroup[]): UserGroup[] {
+  return (groups ?? []).map((group) => ({
+    ...group,
+    canAdmin: group.canAdmin === true
+  }));
+}
+
 export function userGroupsOf(config: AppConfig): UserGroup[] {
-  const groups = config.userGroups?.filter((group) => group.enabled) ?? [];
+  const groups = normalizeUserGroups(config.userGroups).filter((group) => group.enabled);
   return groups.length > 0 ? groups : defaultUserGroups();
 }
 

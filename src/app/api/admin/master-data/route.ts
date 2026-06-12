@@ -2,12 +2,15 @@ import { NextResponse } from "next/server";
 import { badRequest, errorMessage, parseJson } from "@/lib/api/errors";
 import { parseMasterDataRows } from "@/lib/domain/master-data";
 import { getAppRepository } from "@/lib/repositories/app-repository";
+import { requireRequestActor } from "@/lib/services/auth-service";
 
 function requestBody(value: unknown) {
   return typeof value === "object" && value !== null ? value as { rows?: unknown; dryRun?: unknown } : {};
 }
 
 export async function POST(request: Request) {
+  const auth = await requireRequestActor(request, "admin", "admin.access");
+  if (!auth.ok) return auth.response;
   let body: unknown;
   try {
     body = await parseJson(request);

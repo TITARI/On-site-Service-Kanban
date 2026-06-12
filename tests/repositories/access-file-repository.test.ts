@@ -504,6 +504,25 @@ describe("file access repository", () => {
     expect(store.snapshot().accountCredentials?.some((item) => item.accountId === created.accountId)).toBe(false);
   });
 
+  it("rejects group changes that remove the final usable administrator", async () => {
+    const store = memoryStore();
+    const repository = createFileAppRepository(store);
+    await repository.bootstrapAdmin({
+      legacyPassword: "legacy-secret",
+      name: "Root Admin",
+      phone: "13700137000",
+      password: "StrongPass123!",
+      group: { mode: "existing", groupId: "admin" }
+    });
+
+    await expect(repository.saveConfig({
+      ...store.snapshot().config,
+      userGroups: groups.map((group) => ({ ...group, canAdmin: false }))
+    })).rejects.toThrow("必须保留至少一位可用后台管理员");
+
+    expect(store.snapshot().config.userGroups?.find((group) => group.id === "admin")?.canAdmin).toBe(true);
+  });
+
   it("rejects invalid Chinese mobile numbers, disabled users, and disabled groups", async () => {
     const store = memoryStore();
     const repository = createFileAppRepository(store);

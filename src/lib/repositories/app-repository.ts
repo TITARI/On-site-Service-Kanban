@@ -34,6 +34,7 @@ import {
 import { hashPassword } from "../services/password-service";
 import {
   adminLoginRecordFromState,
+  assertUsableAdminAfterGroupChange,
   bootstrapAdminInState,
   bootstrapStatusFromState,
   createAccountSessionInState,
@@ -230,6 +231,7 @@ export function createFileAppRepository(store: StateFileRepository = {
     getConfig: async () => (await store.readState()).config,
     saveConfig: async (config) => updateState((state) => {
       const userGroups = config.userGroups ?? state.config.userGroups ?? [];
+      assertUsableAdminAfterGroupChange(state, userGroups);
       state.config = config;
       syncAccessRolesInState(state, userGroups);
       return state.config;

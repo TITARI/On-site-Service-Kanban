@@ -9,7 +9,8 @@ const store = vi.hoisted(() => ({
   runAutoAcceptance: vi.fn(),
   adminBootstrap: vi.fn(),
   mobileBootstrap: vi.fn(),
-  getConfig: vi.fn()
+  getConfig: vi.fn(),
+  resolveAccountSession: vi.fn()
 }));
 
 const fallbackStore = vi.hoisted(() => ({
@@ -17,7 +18,8 @@ const fallbackStore = vi.hoisted(() => ({
   runAutoAcceptance: vi.fn(),
   adminBootstrap: vi.fn(),
   mobileBootstrap: vi.fn(),
-  getConfig: vi.fn()
+  getConfig: vi.fn(),
+  resolveAccountSession: vi.fn()
 }));
 
 vi.mock("@/lib/repositories/app-repository", () => ({
@@ -26,14 +28,16 @@ vi.mock("@/lib/repositories/app-repository", () => ({
     runAutoAcceptance: fallbackStore.runAutoAcceptance,
     adminBootstrap: fallbackStore.adminBootstrap,
     mobileBootstrap: fallbackStore.mobileBootstrap,
-    getConfig: fallbackStore.getConfig
+    getConfig: fallbackStore.getConfig,
+    resolveAccountSession: fallbackStore.resolveAccountSession
   } as unknown as AppRepository),
   getAppRepository: (): AppRepository => ({
     kind: "mariadb",
     runAutoAcceptance: store.runAutoAcceptance,
     adminBootstrap: store.adminBootstrap,
     mobileBootstrap: store.mobileBootstrap,
-    getConfig: store.getConfig
+    getConfig: store.getConfig,
+    resolveAccountSession: store.resolveAccountSession
   } as unknown as AppRepository)
 }));
 
@@ -88,6 +92,23 @@ function state(): AppState {
   };
 }
 
+const adminActor = {
+  accountId: "account-admin",
+  personId: "person-admin",
+  name: "Admin",
+  phone: "13800138000",
+  groupId: "admin",
+  groupName: "Administrators",
+  permissions: ["admin.access"] as const,
+  sessionType: "admin" as const
+};
+
+function adminRequest(url = "http://localhost/api/bootstrap") {
+  return new Request(url, {
+    headers: { cookie: `board_admin_session=${"A".repeat(43)}` }
+  });
+}
+
 describe("bootstrap route", () => {
   beforeEach(() => {
     store.state = state();
@@ -95,11 +116,13 @@ describe("bootstrap route", () => {
     store.adminBootstrap.mockReset();
     store.mobileBootstrap.mockReset();
     store.getConfig.mockReset();
+    store.resolveAccountSession.mockReset();
     fallbackStore.state = state();
     fallbackStore.runAutoAcceptance.mockReset();
     fallbackStore.adminBootstrap.mockReset();
     fallbackStore.mobileBootstrap.mockReset();
     fallbackStore.getConfig.mockReset();
+    fallbackStore.resolveAccountSession.mockReset();
     store.runAutoAcceptance.mockResolvedValue(undefined);
     store.adminBootstrap.mockResolvedValue(store.state);
     store.mobileBootstrap.mockResolvedValue({
@@ -107,6 +130,19 @@ describe("bootstrap route", () => {
       config: defaultConfig()
     });
     store.getConfig.mockResolvedValue(defaultConfig());
+    store.resolveAccountSession.mockResolvedValue({
+      actor: adminActor,
+      session: {
+        id: "session-admin",
+        accountId: adminActor.accountId,
+        sessionType: "admin",
+        tokenHash: "stored-hash",
+        authVersion: 1,
+        expiresAt: "2099-01-01T00:00:00.000Z",
+        lastSeenAt: "2026-06-12T00:00:00.000Z",
+        createdAt: "2026-06-12T00:00:00.000Z"
+      }
+    });
     fallbackStore.runAutoAcceptance.mockResolvedValue(undefined);
     fallbackStore.adminBootstrap.mockResolvedValue(fallbackStore.state);
     fallbackStore.mobileBootstrap.mockResolvedValue({
@@ -117,6 +153,7 @@ describe("bootstrap route", () => {
       config: defaultConfig()
     });
     fallbackStore.getConfig.mockResolvedValue(defaultConfig());
+    fallbackStore.resolveAccountSession.mockResolvedValue(undefined);
   });
 
   it("opts out of route caching so query scoped responses stay separate", async () => {
@@ -197,7 +234,7 @@ describe("bootstrap route", () => {
     store.adminBootstrap.mockRejectedValue(Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:3306"), { code: "ECONNREFUSED" }));
     fallbackStore.adminBootstrap.mockRejectedValue(new Error("state file is broken"));
 
-    const response = await route.GET(new Request("http://localhost/api/bootstrap"));
+    const response = await route.GET(adminRequest());
     const payload = await response.json();
 
     expect(response.status).toBe(503);
@@ -205,5 +242,14 @@ describe("bootstrap route", () => {
       message: "数据源暂不可用",
       storage: expect.objectContaining({ mode: "file", fallback: false })
     }));
+  });
+
+  it("rejects the unscoped admin bootstrap payload without an admin session", async () => {
+    const route = await import("@/app/api/bootstrap/route");
+
+    const response = await route.GET(new Request("http://localhost/api/bootstrap"));
+
+    expect(response.status).toBe(401);
+    expect(store.adminBootstrap).not.toHaveBeenCalled();
   });
 });

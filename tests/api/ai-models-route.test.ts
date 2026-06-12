@@ -1,13 +1,15 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { defaultConfig, type AppConfig } from "@/lib/seed";
 
 const repositoryMock = vi.hoisted(() => ({
-  getConfig: vi.fn()
+  getConfig: vi.fn(),
+  resolveAccountSession: vi.fn()
 }));
 
 vi.mock("@/lib/repositories/app-repository", () => ({
   getAppRepository: () => ({
-    getConfig: repositoryMock.getConfig
+    getConfig: repositoryMock.getConfig,
+    resolveAccountSession: repositoryMock.resolveAccountSession
   })
 }));
 
@@ -16,10 +18,38 @@ import { POST } from "@/app/api/admin/ai-models/route";
 function request(body: unknown) {
   return new Request("http://localhost/api/admin/ai-models", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      cookie: `board_admin_session=${"A".repeat(43)}`
+    },
     body: JSON.stringify(body)
   });
 }
+
+beforeEach(() => {
+  repositoryMock.resolveAccountSession.mockReset().mockResolvedValue({
+    actor: {
+      accountId: "account-admin",
+      personId: "person-admin",
+      name: "Admin",
+      phone: "13800138000",
+      groupId: "admin",
+      groupName: "Administrators",
+      permissions: ["admin.access"],
+      sessionType: "admin"
+    },
+    session: {
+      id: "session-admin",
+      accountId: "account-admin",
+      sessionType: "admin",
+      tokenHash: "stored-hash",
+      authVersion: 1,
+      expiresAt: "2099-01-01T00:00:00.000Z",
+      lastSeenAt: "2026-06-12T00:00:00.000Z",
+      createdAt: "2026-06-12T00:00:00.000Z"
+    }
+  });
+});
 
 afterEach(() => {
   vi.unstubAllGlobals();

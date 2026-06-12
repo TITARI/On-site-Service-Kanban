@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { DatabaseConnection } from "@/lib/db/connection";
 import { defaultConfig } from "@/lib/seed";
 import {
+  assertUsableAdminAfterGroupChange,
   createAccountSession,
   resolveAccountSession,
   syncAccessRoles,
@@ -205,5 +206,38 @@ describe("MariaDB access store", () => {
       "ticket.claim",
       "ticket.accept"
     ]));
+  });
+
+  it("checks for a credentialed enabled admin before applying group changes", async () => {
+    const adminGroup = {
+      id: "admin",
+      name: "Administrators",
+      description: "",
+      canClaim: false,
+      canProcess: false,
+      canAccept: false,
+      canAdmin: true,
+      enabled: true
+    };
+    const recorder = recordingConnection([
+      [{ completed_at: rowDate() }],
+      [{ usable_admin_count: 1 }]
+    ]);
+
+    await expect(assertUsableAdminAfterGroupChange(
+      recorder.connection,
+      [adminGroup]
+    )).resolves.toBeUndefined();
+    expect(recorder.sql()).toContain("JOIN account_credentials");
+    expect(recorder.calls.at(-1)?.params).toEqual(["admin"]);
+
+    const missing = recordingConnection([
+      [{ completed_at: rowDate() }],
+      [{ usable_admin_count: 0 }]
+    ]);
+    await expect(assertUsableAdminAfterGroupChange(
+      missing.connection,
+      [adminGroup]
+    )).rejects.toThrow("必须保留至少一位可用后台管理员");
   });
 });

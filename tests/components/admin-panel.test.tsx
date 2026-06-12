@@ -295,6 +295,7 @@ describe("AdminConfigCenter user groups", () => {
     await user.clear(screen.getByLabelText("业务组名称"));
     await user.type(screen.getByLabelText("业务组名称"), "业务团队");
     await user.click(screen.getByLabelText("业务组可认领"));
+    await user.click(screen.getByLabelText("业务组可管理后台"));
     await user.click(screen.getByLabelText("搭建组启用"));
     await user.type(screen.getByLabelText("新增分组名称"), "客服组");
     await user.type(screen.getByLabelText("新增分组说明"), "负责现场答疑和回访");
@@ -303,7 +304,13 @@ describe("AdminConfigCenter user groups", () => {
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/admin/config", expect.objectContaining({ method: "PUT" })));
     const body = JSON.parse(String(fetchMock.mock.calls.at(-1)?.[1]?.body));
-    expect(body.userGroups).toContainEqual(expect.objectContaining({ id: "business", name: "业务团队", canClaim: true, enabled: true }));
+    expect(body.userGroups).toContainEqual(expect.objectContaining({
+      id: "business",
+      name: "业务团队",
+      canClaim: true,
+      canAdmin: true,
+      enabled: true
+    }));
     expect(body.userGroups).toContainEqual(expect.objectContaining({ id: "builder", name: "搭建组", enabled: false }));
     expect(body.userGroups).toContainEqual(expect.objectContaining({ name: "客服组", description: "负责现场答疑和回访", canAccept: true, enabled: true }));
     await waitFor(() => expect((screen.getByLabelText("新增分组名称") as HTMLInputElement).value).toBe(""));

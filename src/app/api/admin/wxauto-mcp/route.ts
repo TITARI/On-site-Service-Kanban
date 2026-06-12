@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { badRequest, errorMessage, parseJson } from "@/lib/api/errors";
 import { getAppRepository } from "@/lib/repositories/app-repository";
 import { normalizeWxautoMcpConfig, syncWxautoMcpMessageIntegration, WXAUTO_MCP_ENDPOINT } from "@/lib/integrations/wxauto/config";
+import { requireRequestActor } from "@/lib/services/auth-service";
 
 function generateAccessToken() {
   return `wxauto_${randomBytes(24).toString("base64url")}`;
@@ -50,12 +51,16 @@ async function saveWxautoMcpConfig({
   };
 }
 
-export async function GET() {
+export async function GET(request: Request) {
+  const auth = await requireRequestActor(request, "admin", "admin.access");
+  if (!auth.ok) return auth.response;
   const result = await saveWxautoMcpConfig({ enabled: true });
   return NextResponse.json(result);
 }
 
 export async function PUT(request: Request) {
+  const auth = await requireRequestActor(request, "admin", "admin.access");
+  if (!auth.ok) return auth.response;
   try {
     const body = await parseJson(request) as {
       enabled?: unknown;

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getAppRepository } from "@/lib/repositories/app-repository";
+import { requireRequestActor } from "@/lib/services/auth-service";
 
 function queryLimit(request: Request) {
   const url = new URL(request.url);
@@ -9,6 +10,8 @@ function queryLimit(request: Request) {
 }
 
 export async function GET(request: Request) {
+  const auth = await requireRequestActor(request, "admin", "admin.access");
+  if (!auth.ok) return auth.response;
   const logs = await getAppRepository().listWechatOrderLogs(queryLimit(request));
   return NextResponse.json({ logs });
 }

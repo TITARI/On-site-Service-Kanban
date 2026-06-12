@@ -33,6 +33,15 @@ describe("config service", () => {
     expect(() => validateConfig(config)).toThrow("至少需要配置1个非自动问题类型");
   });
 
+  it("normalizes missing legacy backend permissions to false", () => {
+    const config = defaultConfig();
+    const legacyGroup = { ...config.userGroups![0] } as Partial<typeof config.userGroups[number]>;
+    delete legacyGroup.canAdmin;
+    config.userGroups = [legacyGroup as typeof config.userGroups[number], ...config.userGroups!.slice(1)];
+
+    expect(validateConfig(config).userGroups?.[0].canAdmin).toBe(false);
+  });
+
   it("keeps direct ai api keys for server-side config and strips them from client responses", () => {
     const config = defaultConfig();
     config.aiModels[0] = { ...config.aiModels[0], provider: "http", endpoint: "https://ai.example/v1/chat/completions", apiKey: "secret-key", apiKeyEnv: "OPENAI_API_KEY" };

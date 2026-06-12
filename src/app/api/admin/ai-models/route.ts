@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { badRequest, errorMessage, parseJson } from "@/lib/api/errors";
 import { getAppRepository } from "@/lib/repositories/app-repository";
+import { requireRequestActor } from "@/lib/services/auth-service";
 
 type ModelListResponse = {
   data?: Array<{ id?: unknown }>;
@@ -50,6 +51,8 @@ async function savedApiKeyFor(modelId?: AiModelId) {
 }
 
 export async function POST(request: Request) {
+  const auth = await requireRequestActor(request, "admin", "admin.access");
+  if (!auth.ok) return auth.response;
   let payload: { endpoint?: unknown; apiKey?: unknown; modelId?: unknown };
   try {
     payload = await parseJson(request) as { endpoint?: unknown; apiKey?: unknown; modelId?: unknown };
