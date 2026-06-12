@@ -48,6 +48,22 @@ function loginAs(user: CurrentUser | { id: string; name: string; phone: string; 
   localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(user));
 }
 
+function mobileSession(user = memberUser) {
+  return new Response(JSON.stringify({
+    authenticated: true,
+    user: {
+      accountId: "account-1",
+      personId: user.id,
+      name: user.name,
+      phone: user.phone,
+      groupId: user.groupId ?? "business",
+      groupName: user.groupName ?? "业务组",
+      permissions: [],
+      sessionType: "mobile"
+    }
+  }), { status: 200 });
+}
+
 afterEach(() => {
   localStorage.clear();
   window.history.pushState({}, "", "/");
@@ -57,7 +73,10 @@ afterEach(() => {
 describe("home page ticket navigation", () => {
   it("keeps ticket detail on a second-level view", async () => {
     loginAs(memberUser);
-    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ tickets: [ticket], config }), { status: 200 })));
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).includes("/api/auth/session")) return mobileSession();
+      return new Response(JSON.stringify({ tickets: [ticket], config }), { status: 200 });
+    }));
 
     render(<HomePage />);
 
@@ -85,6 +104,7 @@ describe("home page ticket navigation", () => {
     const { imageUrls, replies, timeline, aiDecisions, ...summary } = ticket;
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
+      if (url.includes("/api/auth/session")) return mobileSession();
       if (url.includes("/api/tickets/ticket-1")) {
         return new Response(JSON.stringify({ ticket }), { status: 200 });
       }
@@ -106,6 +126,7 @@ describe("home page ticket navigation", () => {
     const { imageUrls, replies, timeline, aiDecisions, ...summary } = ticket;
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
+      if (url.includes("/api/auth/session")) return mobileSession();
       if (url.includes("/api/tickets/ticket-1")) {
         return new Response(JSON.stringify({ ticket }), { status: 200 });
       }
@@ -121,7 +142,10 @@ describe("home page ticket navigation", () => {
 
   it("hides the immersive hero on ticket detail pages", async () => {
     loginAs(memberUser);
-    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ tickets: [ticket], config }), { status: 200 })));
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).includes("/api/auth/session")) return mobileSession();
+      return new Response(JSON.stringify({ tickets: [ticket], config }), { status: 200 });
+    }));
 
     render(<HomePage />);
 
@@ -136,7 +160,12 @@ describe("home page ticket navigation", () => {
 
   it("ignores old mobile admin sessions", async () => {
     loginAs({ id: "admin", name: "管理员", phone: "", role: "admin" });
-    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ config }), { status: 200 })));
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).includes("/api/auth/session")) {
+        return new Response(JSON.stringify({ authenticated: false }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ config }), { status: 200 });
+    }));
 
     render(<HomePage />);
 

@@ -6,7 +6,8 @@ import { MobileShell, type MobileTab } from "@/components/mobile-shell";
 import { TicketDetail } from "@/components/ticket-detail";
 import { TicketList } from "@/components/ticket-list";
 import { TicketSubmitForm } from "@/components/ticket-submit-form";
-import { clearStoredUser, readStoredUser, type CurrentUser } from "@/lib/client/auth";
+import { AUTH_STORAGE_KEY, currentUserFromActor, type CurrentUser } from "@/lib/client/auth";
+import { loadSession, logoutMobile } from "@/lib/client/session-auth";
 import { findTicketByShortCode } from "@/lib/domain/ticket-links";
 import { getPriorityDisplay } from "@/lib/domain/priority-label";
 import type { Ticket } from "@/lib/domain/types";
@@ -139,15 +140,28 @@ export default function HomePage() {
   }, [data, selectedId]);
 
   useEffect(() => {
-    const storedUser = readStoredUser();
-    if (storedUser) {
-      setUser(storedUser);
-      setTab("tickets");
-      setIsLoading(true);
-    } else {
-      void refreshLoginConfig();
-    }
-    setAuthReady(true);
+    let active = true;
+    void loadSession("mobile")
+      .then((session) => {
+        if (!active) return;
+        window.localStorage.removeItem(AUTH_STORAGE_KEY);
+        if (session.authenticated) {
+          setUser(currentUserFromActor(session.user));
+          setTab("tickets");
+          setIsLoading(true);
+        } else {
+          void refreshLoginConfig();
+        }
+      })
+      .catch(() => {
+        if (active) void refreshLoginConfig();
+      })
+      .finally(() => {
+        if (active) setAuthReady(true);
+      });
+    return () => {
+      active = false;
+    };
   }, []);
 
   const selectedTicket = useMemo(() => data?.tickets.find((ticket) => ticket.id === selectedId), [data, selectedId]);
@@ -195,7 +209,7 @@ export default function HomePage() {
   };
 
   const logout = () => {
-    clearStoredUser();
+    void logoutMobile().catch(() => undefined);
     setUser(null);
     setData(null);
     setSelectedId(undefined);

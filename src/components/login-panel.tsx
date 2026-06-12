@@ -2,15 +2,17 @@
 
 import { useState } from "react";
 import { LogIn, UserRound } from "lucide-react";
-import { createMemberUser, storeUser, type CurrentUser } from "@/lib/client/auth";
+import { currentUserFromActor, type CurrentUser } from "@/lib/client/auth";
+import { loginMobile } from "@/lib/client/session-auth";
 import { userGroupsOf, type AppConfig } from "@/lib/seed";
 import { StatusMessage } from "./status-message";
 
 export function LoginPanel({ config, onLogin }: { config: AppConfig; onLogin: (user: CurrentUser) => void }) {
   const [message, setMessage] = useState<string | null>(null);
-  const groups = userGroupsOf(config);
+  const [submitting, setSubmitting] = useState(false);
+  const groups = userGroupsOf(config).filter((group) => group.enabled);
 
-  function loginMember(event: React.FormEvent<HTMLFormElement>) {
+  async function loginMember(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const formData = new FormData(event.currentTarget);
     const name = String(formData.get("name") ?? "").trim();
@@ -21,9 +23,16 @@ export function LoginPanel({ config, onLogin }: { config: AppConfig; onLogin: (u
       setMessage("请填写真实姓名、联系电话和用户分组");
       return;
     }
-    const user = createMemberUser(name, phone, group);
-    storeUser(user);
-    onLogin(user);
+    setSubmitting(true);
+    setMessage(null);
+    try {
+      const result = await loginMobile({ name, phone, groupId: group.id });
+      onLogin(currentUserFromActor(result.user));
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "登录失败");
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   return (
@@ -54,7 +63,10 @@ export function LoginPanel({ config, onLogin }: { config: AppConfig; onLogin: (u
             </select>
           </label>
           {message && <StatusMessage tone="error">{message}</StatusMessage>}
-          <button className="primary-button" type="submit"><LogIn size={18} aria-hidden="true" />进入看板</button>
+          <button className="primary-button" type="submit" disabled={submitting}>
+            <LogIn size={18} aria-hidden="true" />
+            {submitting ? "登录中..." : "进入看板"}
+          </button>
         </form>
       </section>
     </main>

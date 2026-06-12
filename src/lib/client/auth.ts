@@ -1,4 +1,5 @@
 import type { UserGroup } from "@/lib/domain/types";
+import type { AuthenticatedActor } from "@/lib/domain/access-control";
 
 export type CurrentUser = {
   id: string;
@@ -32,6 +33,22 @@ export function createMemberUser(name: string, phone: string, group: UserGroup):
       canClaim: group.canClaim,
       canProcess: group.canProcess,
       canAccept: group.canAccept
+    }
+  };
+}
+
+export function currentUserFromActor(actor: AuthenticatedActor): CurrentUser {
+  return {
+    id: actor.personId,
+    name: actor.name,
+    phone: actor.phone,
+    role: "member",
+    groupId: actor.groupId,
+    groupName: actor.groupName,
+    permissions: {
+      canClaim: actor.permissions.includes("ticket.claim"),
+      canProcess: actor.permissions.includes("ticket.process"),
+      canAccept: actor.permissions.includes("ticket.accept")
     }
   };
 }
