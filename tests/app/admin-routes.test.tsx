@@ -6,7 +6,6 @@ import AdminLogsPage from "@/app/admin/logs/page";
 import AdminWorkOrderSettingsPage from "@/app/admin/work-order-settings/page";
 import AdminExhibitionDataPage from "@/app/admin/exhibition-data/page";
 import AdminSystemPage from "@/app/admin/system/page";
-import { ADMIN_AUTH_STORAGE_KEY } from "@/lib/client/admin-auth";
 import { defaultConfig } from "@/lib/seed";
 
 const bootstrap = {
@@ -72,13 +71,29 @@ const bootstrap = {
 
 afterEach(() => {
   cleanup();
-  localStorage.clear();
   vi.unstubAllGlobals();
 });
+
+const adminActor = {
+  accountId: "account-admin",
+  personId: "person-admin",
+  name: "系统管理员",
+  phone: "13800138000",
+  groupId: "admin",
+  groupName: "系统管理员组",
+  permissions: ["admin.access"],
+  sessionType: "admin"
+};
 
 function mockBootstrapFetch(extra?: { logs?: unknown[] }) {
   return vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
+    if (url.includes("/api/auth/session")) {
+      return new Response(JSON.stringify({
+        authenticated: true,
+        user: adminActor
+      }), { status: 200 });
+    }
     if (url.includes("/api/admin/wxauto-mcp")) {
       return new Response(JSON.stringify({
         wxautoMcp: {
@@ -98,7 +113,6 @@ function mockBootstrapFetch(extra?: { logs?: unknown[] }) {
 }
 
 async function renderWithSession(ui: React.ReactElement, fetchMock = mockBootstrapFetch()) {
-  localStorage.setItem(ADMIN_AUTH_STORAGE_KEY, "active");
   vi.stubGlobal("fetch", fetchMock);
   render(ui);
   await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/bootstrap", { cache: "no-store" }));
@@ -152,14 +166,12 @@ describe("admin subroutes", () => {
     expect(screen.queryByRole("heading", { name: "AI接口" })).toBeNull();
 
     cleanup();
-    localStorage.clear();
     vi.unstubAllGlobals();
     await renderWithSession(<AdminExhibitionDataPage />);
     expect((await screen.findAllByRole("heading", { name: "展览数据" })).length).toBeGreaterThan(0);
     expect(screen.getByLabelText("导入展位数据文件")).not.toBeNull();
 
     cleanup();
-    localStorage.clear();
     vi.unstubAllGlobals();
     await renderWithSession(<AdminSystemPage />);
     expect(await screen.findByRole("heading", { name: "系统配置" })).not.toBeNull();
@@ -200,14 +212,31 @@ describe("admin subroutes", () => {
   });
 
   it("keeps admin login protection on subroutes", async () => {
-    vi.stubGlobal("fetch", vi.fn());
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/api/auth/session")) {
+        return new Response(JSON.stringify({
+          authenticated: false,
+          bootstrapRequired: false
+        }), { status: 200 });
+      }
+      if (url.includes("/api/admin/auth/login")) {
+        return new Response(JSON.stringify({ user: adminActor }), { status: 200 });
+      }
+      if (url.includes("/api/admin/wechat-order-logs")) {
+        return new Response(JSON.stringify({ logs: [] }), { status: 200 });
+      }
+      return new Response(JSON.stringify(bootstrap), { status: 200 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
     const user = userEvent.setup();
 
     render(<AdminLogsPage />);
 
-    expect(await screen.findByText("后台配置登录")).not.toBeNull();
-    await user.type(screen.getByLabelText("后台口令"), "admin123");
+    expect(await screen.findByText("后台账号登录")).not.toBeNull();
+    await user.type(screen.getByLabelText("手机号"), "13800138000");
+    await user.type(screen.getByLabelText("后台密码"), "StrongPass123!");
     await user.click(screen.getByRole("button", { name: "进入后台" }));
-    expect(localStorage.getItem(ADMIN_AUTH_STORAGE_KEY)).toBe("active");
+    expect((await screen.findAllByRole("heading", { name: "微信下单日志" })).length).toBeGreaterThan(0);
   });
 });

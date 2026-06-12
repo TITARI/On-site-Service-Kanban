@@ -1,4 +1,8 @@
-import type { AuthenticatedActor, SessionType } from "../domain/access-control";
+import type {
+  AuthenticatedActor,
+  BootstrapAdminInput,
+  SessionType
+} from "../domain/access-control";
 
 export type SessionPayload =
   | { authenticated: true; user: AuthenticatedActor }
@@ -30,5 +34,30 @@ export async function loginMobile(input: { name: string; phone: string; groupId:
 
 export async function logoutMobile() {
   const response = await fetch("/api/auth/mobile/logout", { method: "POST" });
+  if (!response.ok) throw new Error(await responseMessage(response) ?? "退出登录失败");
+}
+
+export async function loginAdmin(input: { phone: string; password: string }) {
+  const response = await fetch("/api/admin/auth/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input)
+  });
+  if (!response.ok) throw new Error(await responseMessage(response) ?? "登录失败");
+  return await response.json() as { user: AuthenticatedActor };
+}
+
+export async function bootstrapAdmin(input: BootstrapAdminInput) {
+  const response = await fetch("/api/admin/auth/bootstrap", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input)
+  });
+  if (!response.ok) throw new Error(await responseMessage(response) ?? "初始化失败");
+  return await response.json() as { user: AuthenticatedActor };
+}
+
+export async function logoutAdmin() {
+  const response = await fetch("/api/admin/auth/logout", { method: "POST" });
   if (!response.ok) throw new Error(await responseMessage(response) ?? "退出登录失败");
 }

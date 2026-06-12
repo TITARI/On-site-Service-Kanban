@@ -1,7 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 import type { AppRepository } from "@/lib/repositories/app-repository";
 import { defaultConfig } from "@/lib/seed";
-import { mobileLogin, resolveRequestActor } from "@/lib/services/auth-service";
+import {
+  adminLogin,
+  bootstrapFirstAdmin,
+  mobileLogin,
+  resolveRequestActor
+} from "@/lib/services/auth-service";
+import { hashPassword } from "@/lib/services/password-service";
 
 function actor(groupId = "builder") {
   return {
@@ -126,5 +132,130 @@ describe("auth service", () => {
     );
     expect(anonymous.ok).toBe(false);
     if (!anonymous.ok) expect(anonymous.response.status).toBe(401);
+  });
+
+  it("allows the legacy password only while bootstrap is incomplete", async () => {
+    const adminActor = {
+      ...actor(),
+      permissions: ["admin.access" as const],
+      sessionType: "admin" as const
+    };
+    const repo = repository({
+      bootstrapStatus: vi.fn(async () => ({ required: true })),
+      bootstrapAdmin: vi.fn(async () => adminActor)
+    });
+    const input = {
+      legacyPassword: "admin123",
+      name: "系统管理员",
+      phone: "13800138000",
+      password: "StrongPass123!",
+      group: { mode: "create" as const, name: "系统管理员组" }
+    };
+
+    const result = await bootstrapFirstAdmin(
+      repo,
+      input,
+      { ADMIN_BOOTSTRAP_PASSWORD: "admin123" },
+      new Date("2026-06-12T00:00:00.000Z")
+    );
+
+    expect(result.actor.permissions).toContain("admin.access");
+    expect(result.cookie).toContain("board_admin_session=");
+    expect(repo.bootstrapAdmin).toHaveBeenCalledWith(input, {
+      sessionType: "admin",
+      tokenHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+      expiresAt: "2026-06-12T12:00:00.000Z"
+    });
+
+    const completed = repository({
+      bootstrapStatus: vi.fn(async () => ({ required: false }))
+    });
+    await expect(bootstrapFirstAdmin(completed, input, {})).rejects.toThrow("初始化已完成");
+  });
+
+  it("locks password login after five failures for fifteen minutes", async () => {
+    const repo = repository({
+      adminLoginRecord: vi.fn(async () => ({
+        actor: {
+          ...actor(),
+          permissions: ["admin.access"],
+          sessionType: "admin"
+        },
+        credential: {
+          accountId: "account-1",
+          passwordHash: await hashPassword("CorrectPass123!"),
+          passwordChangedAt: "2026-06-11T00:00:00.000Z",
+          mustChangePassword: false,
+          failedAttempts: 4
+        }
+      })),
+      recordAdminLoginFailure: vi.fn(async () => undefined)
+    });
+
+    await expect(adminLogin(
+      repo,
+      "13800138000",
+      "wrong",
+      new Date("2026-06-12T00:00:00.000Z")
+    )).rejects.toThrow("手机号或密码不正确");
+
+    expect(repo.recordAdminLoginFailure).toHaveBeenCalledWith(
+      "account-1",
+      "2026-06-12T00:15:00.000Z"
+    );
+  });
+
+  it("creates an admin session after a valid password and rejects an active lock", async () => {
+    const passwordHash = await hashPassword("CorrectPass123!");
+    const loginRecord = {
+      actor: {
+        ...actor(),
+        permissions: ["admin.access" as const],
+        sessionType: "admin" as const
+      },
+      credential: {
+        accountId: "account-1",
+        passwordHash,
+        passwordChangedAt: "2026-06-11T00:00:00.000Z",
+        mustChangePassword: false,
+        failedAttempts: 0
+      }
+    };
+    const repo = repository({
+      adminLoginRecord: vi.fn(async () => loginRecord),
+      recordAdminLoginSuccess: vi.fn(async () => undefined)
+    });
+
+    const result = await adminLogin(
+      repo,
+      "138 0013 8000",
+      "CorrectPass123!",
+      new Date("2026-06-12T00:00:00.000Z")
+    );
+
+    expect(result.actor.sessionType).toBe("admin");
+    expect(repo.recordAdminLoginSuccess).toHaveBeenCalledWith("account-1");
+    expect(repo.createAccountSession).toHaveBeenCalledWith(
+      "account-1",
+      "admin",
+      expect.stringMatching(/^[a-f0-9]{64}$/),
+      "2026-06-12T12:00:00.000Z"
+    );
+
+    const locked = repository({
+      adminLoginRecord: vi.fn(async () => ({
+        ...loginRecord,
+        credential: {
+          ...loginRecord.credential,
+          lockedUntil: "2026-06-12T00:10:00.000Z"
+        }
+      }))
+    });
+    await expect(adminLogin(
+      locked,
+      "13800138000",
+      "CorrectPass123!",
+      new Date("2026-06-12T00:00:00.000Z")
+    )).rejects.toThrow("登录尝试过多，请稍后再试");
   });
 });

@@ -391,14 +391,28 @@ describe("file access repository", () => {
     const repository = createFileAppRepository(store);
 
     await expect(repository.bootstrapStatus()).resolves.toEqual({ required: true });
-    const admin = await repository.bootstrapAdmin({
-      legacyPassword: "legacy-secret",
-      name: "Root Admin",
-      phone: "13700137000",
-      password: "StrongPass123!",
-      group: { mode: "existing", groupId: "admin" }
-    });
+    const admin = await repository.bootstrapAdmin(
+      {
+        legacyPassword: "legacy-secret",
+        name: "Root Admin",
+        phone: "13700137000",
+        password: "StrongPass123!",
+        group: { mode: "existing", groupId: "admin" }
+      },
+      {
+        sessionType: "admin",
+        tokenHash: "bootstrap-session-hash",
+        expiresAt: "2099-01-01T00:00:00.000Z"
+      }
+    );
     await expect(repository.bootstrapStatus()).resolves.toEqual({ required: false });
+    await expect(repository.resolveAccountSession(
+      "bootstrap-session-hash",
+      "admin"
+    )).resolves.toMatchObject({
+      actor: { accountId: admin.accountId, sessionType: "admin" },
+      session: { accountId: admin.accountId, sessionType: "admin" }
+    });
     await expect(repository.bootstrapAdmin({
       legacyPassword: "legacy-secret",
       name: "Second Root",

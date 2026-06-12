@@ -35,6 +35,7 @@ import type { IntakeMessageInput } from "../services/message-intake-service";
 import { getDatabasePool, type DatabaseConnection, withDatabaseTransaction } from "./connection";
 import type {
   AuthenticatedActor,
+  BootstrapAdminSessionInput,
   MobileAccountInput,
   SessionType,
   UserMutation,
@@ -1811,13 +1812,25 @@ export class MariaDbStateStore {
     return await readBootstrapStatus(getDatabasePool());
   }
 
-  async bootstrapAdmin(input: BootstrapAdminStoreInput) {
+  async bootstrapAdmin(
+    input: BootstrapAdminStoreInput,
+    session?: BootstrapAdminSessionInput
+  ) {
     return await withDatabaseTransaction(async (connection) => {
       const result = await bootstrapAdminAccess(connection, await latestConfig(connection), input);
       await replaceConfigTables(connection, result.config);
       await syncAccessRoles(connection, result.config.userGroups ?? []);
       const actor = await readAdminLoginRecord(connection, input.phone);
       if (!actor) throw new Error("管理员初始化结果不可用");
+      if (session) {
+        await createAccessSession(
+          connection,
+          actor.actor.accountId,
+          session.sessionType,
+          session.tokenHash,
+          session.expiresAt
+        );
+      }
       return actor.actor;
     });
   }

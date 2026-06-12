@@ -172,13 +172,21 @@ describe("app repository", () => {
     await repository.recordAdminLoginFailure("account-1", lockedUntil);
     await repository.recordAdminLoginSuccess("account-1");
     await repository.bootstrapStatus();
-    await repository.bootstrapAdmin({
-      legacyPassword: "legacy-secret",
-      name: "Admin",
-      phone: "13700137000",
-      password: "StrongPass123!",
-      group: { mode: "existing", groupId: "admin" }
-    });
+    const bootstrapSession = {
+      sessionType: "admin" as const,
+      tokenHash: "bootstrap-session-hash",
+      expiresAt
+    };
+    await repository.bootstrapAdmin(
+      {
+        legacyPassword: "legacy-secret",
+        name: "Admin",
+        phone: "13700137000",
+        password: "StrongPass123!",
+        group: { mode: "existing", groupId: "admin" }
+      },
+      bootstrapSession
+    );
     await repository.listUsers(query);
     await repository.getUser("person-1");
     await repository.createUser(userInput, actor);
@@ -216,7 +224,7 @@ describe("app repository", () => {
       phone: "13700137000",
       group: { mode: "existing", groupId: "admin" },
       passwordHash: expect.any(String)
-    });
+    }, bootstrapSession);
     const bootstrapInput = accessStore.bootstrapAdmin.mock.calls[0][0] as { passwordHash: string };
     await expect(verifyPassword("StrongPass123!", bootstrapInput.passwordHash)).resolves.toBe(true);
   });

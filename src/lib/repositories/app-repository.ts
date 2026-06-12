@@ -5,6 +5,7 @@ import type {
   AdminLoginRecord,
   AuthenticatedActor,
   BootstrapAdminInput,
+  BootstrapAdminSessionInput,
   MobileAccountInput,
   SessionResolution,
   SessionType,
@@ -96,7 +97,10 @@ export type AppRepository = {
   recordAdminLoginFailure(accountId: string, lockedUntil?: string): Promise<void>;
   recordAdminLoginSuccess(accountId: string): Promise<void>;
   bootstrapStatus(): Promise<{ required: boolean }>;
-  bootstrapAdmin(input: BootstrapAdminInput): Promise<AuthenticatedActor>;
+  bootstrapAdmin(
+    input: BootstrapAdminInput,
+    session?: BootstrapAdminSessionInput
+  ): Promise<AuthenticatedActor>;
   listUsers(query: UserQuery): Promise<{ users: UserListItem[]; total: number }>;
   getUser(userId: string): Promise<UserListItem | undefined>;
   createUser(input: UserMutation, actor: AuthenticatedActor): Promise<UserListItem>;
@@ -136,7 +140,10 @@ type AccessRepositoryStore = Omit<Pick<AppRepository,
   | "setUserPassword"
   | "syncAccessRoles"
 >, "bootstrapAdmin"> & {
-  bootstrapAdmin(input: BootstrapAdminStoreInput): Promise<AuthenticatedActor>;
+  bootstrapAdmin(
+    input: BootstrapAdminStoreInput,
+    session?: BootstrapAdminSessionInput
+  ): Promise<AuthenticatedActor>;
 };
 
 type AutoAcceptanceStore = MariaDbStateStore & AccessRepositoryStore & {
@@ -296,9 +303,21 @@ export function createFileAppRepository(store: StateFileRepository = {
       recordAdminLoginSuccessInState(state, accountId);
     }),
     bootstrapStatus: async () => bootstrapStatusFromState(await store.readState()),
-    bootstrapAdmin: async (input) => {
+    bootstrapAdmin: async (input, session) => {
       const passwordHash = await hashPassword(input.password);
-      return updateState((state) => bootstrapAdminInState(state, input, passwordHash));
+      return updateState((state) => {
+        const actor = bootstrapAdminInState(state, input, passwordHash);
+        if (session) {
+          createAccountSessionInState(
+            state,
+            actor.accountId,
+            session.sessionType,
+            session.tokenHash,
+            session.expiresAt
+          );
+        }
+        return actor;
+      });
     },
     listUsers: async (query) => listUsersFromState(await store.readState(), query),
     getUser: async (userId) => getUserFromState(await store.readState(), userId),
@@ -348,14 +367,17 @@ export function createMariaDbAppRepository(
     recordAdminLoginFailure: (accountId, lockedUntil) => store.recordAdminLoginFailure(accountId, lockedUntil),
     recordAdminLoginSuccess: (accountId) => store.recordAdminLoginSuccess(accountId),
     bootstrapStatus: () => store.bootstrapStatus(),
-    bootstrapAdmin: async (input) => {
+    bootstrapAdmin: async (input, session) => {
       const passwordHash = await hashPassword(input.password);
-      return store.bootstrapAdmin({
+      const storeInput = {
         name: input.name,
         phone: input.phone,
         group: input.group,
         passwordHash
-      });
+      };
+      return session
+        ? store.bootstrapAdmin(storeInput, session)
+        : store.bootstrapAdmin(storeInput);
     },
     listUsers: (query) => store.listUsers(query),
     getUser: (userId) => store.getUser(userId),

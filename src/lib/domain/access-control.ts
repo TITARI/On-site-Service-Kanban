@@ -93,6 +93,12 @@ export type BootstrapAdminInput = {
     | { mode: "create"; name: string };
 };
 
+export type BootstrapAdminSessionInput = {
+  sessionType: "admin";
+  tokenHash: string;
+  expiresAt: string;
+};
+
 export type UserQuery = {
   search?: string;
   groupId?: string;

@@ -12,7 +12,6 @@ export type CurrentUser = {
 };
 
 export const AUTH_STORAGE_KEY = "internal-board-current-user";
-export const DEFAULT_ADMIN_PASSWORD = "admin123";
 
 const fallbackPermissions = { canClaim: false, canProcess: false, canAccept: true };
 
@@ -51,10 +50,6 @@ export function currentUserFromActor(actor: AuthenticatedActor): CurrentUser {
       canAccept: actor.permissions.includes("ticket.accept")
     }
   };
-}
-
-export function isAdminPassword(value: string) {
-  return value === DEFAULT_ADMIN_PASSWORD;
 }
 
 export function readStoredUser(): CurrentUser | null {
