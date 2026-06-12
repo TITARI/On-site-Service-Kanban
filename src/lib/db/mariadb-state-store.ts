@@ -67,6 +67,7 @@ import {
   setUserEnabled as setAccessUserEnabled,
   setUserPassword as setAccessUserPassword,
   syncAccessRoles,
+  synchronizePersonAccounts,
   saveUserImportPreview as saveAccessUserImportPreview,
   unbindChatIdentity as unbindAccessChatIdentity,
   updateUserImportDecisions as updateAccessUserImportDecisions,
@@ -1713,6 +1714,12 @@ export class MariaDbStateStore {
       await writePendingSessions(target, state.pendingWorkOrderSessions ?? [], now);
       await writeOutboundMessages(target, state.outboundMessages ?? [], now);
       await syncAccessRoles(target, state.config.userGroups ?? [], now);
+      await synchronizePersonAccounts(
+        target,
+        state.people ?? [],
+        state.config.userGroups ?? [],
+        now
+      );
     };
 
     if (connection) {

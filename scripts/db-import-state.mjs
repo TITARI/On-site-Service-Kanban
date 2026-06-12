@@ -83,12 +83,120 @@ function normalizeKeywordGroups(keywordGroups = []) {
   }));
 }
 
+function permissionCodesForGroup(group) {
+  return [
+    group.canClaim ? "ticket.claim" : undefined,
+    group.canProcess ? "ticket.process" : undefined,
+    group.canAccept ? "ticket.accept" : undefined,
+    group.canAdmin ? "admin.access" : undefined
+  ].filter(Boolean);
+}
+
+function sanitizedAuditValue(value, key = "") {
+  if (/(password|token|secret|hash|legacy)/i.test(key)) return undefined;
+  if (Array.isArray(value)) {
+    return value.map((item) => sanitizedAuditValue(item)).filter((item) => item !== undefined);
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value)
+        .map(([childKey, childValue]) => [childKey, sanitizedAuditValue(childValue, childKey)])
+        .filter((entry) => entry[1] !== undefined)
+    );
+  }
+  return value;
+}
+
+export function normalizeAccessStateForImport(input, now = new Date()) {
+  const timestamp = now.toISOString();
+  const groups = (input.config?.userGroups ?? []).map((group) => ({ ...group }));
+  const fallbackGroup = groups.find((group) => group.enabled);
+  const people = (input.people ?? []).map((person) => {
+    const group = groups.find((item) => item.id === person.groupId)
+      ?? groups.find((item) => item.name === person.groupName)
+      ?? fallbackGroup;
+    return {
+      ...person,
+      groupId: group?.id,
+      groupName: group?.name ?? person.groupName,
+      groupLocked: person.groupLocked ?? false,
+      enabled: person.enabled ?? true
+    };
+  });
+  const existingAccounts = input.accounts ?? [];
+  const accounts = people.map((person) => {
+    const existing = existingAccounts.find((account) => account.personId === person.id);
+    return {
+      id: existing?.id ?? `account-${person.id}`,
+      personId: person.id,
+      loginName: person.phone,
+      enabled: existing?.enabled ?? person.enabled ?? true,
+      authVersion: existing?.authVersion ?? 1,
+      lastLoginAt: existing?.lastLoginAt,
+      createdAt: existing?.createdAt ?? person.createdAt ?? timestamp,
+      updatedAt: existing?.updatedAt ?? person.updatedAt ?? timestamp
+    };
+  });
+  const accountIds = new Set(accounts.map((account) => account.id));
+  const roles = groups.map((group) => ({
+    id: `role-${group.id}`,
+    name: group.name,
+    sourceGroupId: group.id,
+    enabled: group.enabled,
+    createdAt: timestamp,
+    updatedAt: timestamp
+  }));
+  const rolePermissions = groups.flatMap((group) => (
+    permissionCodesForGroup(group).map((permissionCode) => ({
+      roleId: `role-${group.id}`,
+      permissionCode,
+      createdAt: timestamp
+    }))
+  ));
+  const accountRoles = people.flatMap((person) => {
+    const account = accounts.find((item) => item.personId === person.id);
+    return account && person.groupId ? [{
+      accountId: account.id,
+      roleId: `role-${person.groupId}`,
+      createdAt: person.updatedAt ?? timestamp
+    }] : [];
+  });
+
+  return {
+    ...input,
+    config: { ...(input.config ?? {}), userGroups: groups },
+    people,
+    chatIdentities: (input.chatIdentities ?? []).map((identity) => ({ ...identity })),
+    accounts,
+    accountCredentials: (input.accountCredentials ?? []).filter((item) => accountIds.has(item.accountId)),
+    roles,
+    accountRoles,
+    rolePermissions,
+    accountSessions: (input.accountSessions ?? []).filter((item) => accountIds.has(item.accountId)),
+    auditLogs: (input.auditLogs ?? []).map((entry) => ({
+      ...entry,
+      detail: sanitizedAuditValue(entry.detail ?? {})
+    })),
+    authBootstrap: input.authBootstrap ?? {}
+  };
+}
+
 async function execute(connection, sql, params = []) {
   await connection.execute(sql, params);
 }
 
 async function clearTables(connection) {
   for (const table of [
+    "account_sessions",
+    "account_credentials",
+    "account_roles",
+    "role_permissions",
+    "auth_bootstrap_state",
+    "accounts",
+    "roles",
+    "audit_logs",
+    "import_job_rows",
+    "import_jobs",
     "ticket_feedback_users",
     "ticket_replies",
     "ticket_timeline",
@@ -127,7 +235,7 @@ async function importConfig(connection, config, now) {
       `INSERT INTO user_groups (
         id, name, description, can_claim, can_process, can_accept, can_admin, enabled, created_at, updated_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [group.id, group.name, group.description, group.canClaim, group.canProcess, group.canAccept, false, group.enabled, now, now]
+      [group.id, group.name, group.description, group.canClaim, group.canProcess, group.canAccept, group.canAdmin ?? false, group.enabled, now, now]
     );
   }
 
@@ -275,8 +383,130 @@ async function importConfig(connection, config, now) {
   );
 }
 
+async function importAccessState(connection, state, now) {
+  for (const role of state.roles ?? []) {
+    await execute(
+      connection,
+      `INSERT INTO roles (
+        id, name, source_group_id, enabled, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?)`,
+      [
+        role.id,
+        role.name,
+        role.sourceGroupId,
+        role.enabled,
+        dateOrNow(role.createdAt, now),
+        dateOrNow(role.updatedAt, now)
+      ]
+    );
+  }
+
+  for (const permission of state.rolePermissions ?? []) {
+    await execute(
+      connection,
+      "INSERT INTO role_permissions (role_id, permission_code, created_at) VALUES (?, ?, ?)",
+      [permission.roleId, permission.permissionCode, dateOrNow(permission.createdAt, now)]
+    );
+  }
+
+  for (const account of state.accounts ?? []) {
+    await execute(
+      connection,
+      `INSERT INTO accounts (
+        id, person_id, login_name, enabled, auth_version, last_login_at, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        account.id,
+        account.personId,
+        account.loginName,
+        account.enabled,
+        account.authVersion,
+        account.lastLoginAt ? dateOrNow(account.lastLoginAt, now) : null,
+        dateOrNow(account.createdAt, now),
+        dateOrNow(account.updatedAt, now)
+      ]
+    );
+  }
+
+  for (const credential of state.accountCredentials ?? []) {
+    await execute(
+      connection,
+      `INSERT INTO account_credentials (
+        account_id, password_hash, password_changed_at, must_change_password, failed_attempts, locked_until
+      ) VALUES (?, ?, ?, ?, ?, ?)`,
+      [
+        credential.accountId,
+        credential.passwordHash,
+        dateOrNow(credential.passwordChangedAt, now),
+        credential.mustChangePassword,
+        credential.failedAttempts,
+        credential.lockedUntil ? dateOrNow(credential.lockedUntil, now) : null
+      ]
+    );
+  }
+
+  for (const assignment of state.accountRoles ?? []) {
+    await execute(
+      connection,
+      "INSERT INTO account_roles (account_id, role_id, created_at) VALUES (?, ?, ?)",
+      [assignment.accountId, assignment.roleId, dateOrNow(assignment.createdAt, now)]
+    );
+  }
+
+  for (const session of state.accountSessions ?? []) {
+    await execute(
+      connection,
+      `INSERT INTO account_sessions (
+        id, account_id, session_type, token_hash, auth_version,
+        expires_at, last_seen_at, revoked_at, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        session.id,
+        session.accountId,
+        session.sessionType,
+        session.tokenHash,
+        session.authVersion,
+        dateOrNow(session.expiresAt, now),
+        dateOrNow(session.lastSeenAt, now),
+        session.revokedAt ? dateOrNow(session.revokedAt, now) : null,
+        dateOrNow(session.createdAt, now)
+      ]
+    );
+  }
+
+  await execute(
+    connection,
+    `INSERT INTO auth_bootstrap_state (id, completed_at, completed_by_account_id)
+     VALUES ('admin', ?, ?)`,
+    [
+      state.authBootstrap?.completedAt ? dateOrNow(state.authBootstrap.completedAt, now) : null,
+      state.authBootstrap?.completedByAccountId ?? null
+    ]
+  );
+
+  for (const entry of state.auditLogs ?? []) {
+    await execute(
+      connection,
+      `INSERT INTO audit_logs (
+        id, actor_id, actor_name, action, target_type, target_id, detail_json, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        entry.id,
+        entry.actorId ?? null,
+        entry.actorName,
+        entry.action,
+        entry.targetType,
+        entry.targetId ?? null,
+        json(entry.detail ?? {}),
+        dateOrNow(entry.createdAt, now)
+      ]
+    );
+  }
+}
+
 async function importState(connection, state, sourceName) {
   const now = new Date();
+  state = normalizeAccessStateForImport(state, now);
   await clearTables(connection);
   await importConfig(connection, state.config ?? {}, now);
 
@@ -315,15 +545,17 @@ async function importState(connection, state, sourceName) {
     await execute(
       connection,
       `INSERT INTO people (
-        id, name, phone, role, group_id, group_name_snapshot, name_conflict, booth_scope, enabled, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        id, name, phone, role, group_id, group_name_snapshot, group_locked,
+        name_conflict, booth_scope, enabled, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         person.id,
         person.name,
         person.phone,
         person.role,
-        null,
+        person.groupId ?? null,
         person.groupName,
+        person.groupLocked ?? false,
         person.nameConflict ? json(person.nameConflict) : null,
         person.boothScope ? json(person.boothScope) : null,
         person.enabled,
@@ -332,6 +564,8 @@ async function importState(connection, state, sourceName) {
       ]
     );
   }
+
+  await importAccessState(connection, state, now);
 
   for (const identity of state.chatIdentities ?? []) {
     await execute(

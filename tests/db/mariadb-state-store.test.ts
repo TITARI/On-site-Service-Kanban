@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { MariaDbStateStore } from "@/lib/db/mariadb-state-store";
 import type { DatabaseConnection } from "@/lib/db/connection";
+import type { AppState } from "@/lib/domain/app-state";
 import { defaultConfig } from "@/lib/seed";
 
 function rowDate() {
@@ -202,5 +203,64 @@ describe("MariaDbStateStore", () => {
     const outboundInserts = calls.filter((call) => call.sql.includes("INSERT INTO outbound_messages"));
     expect(outboundInserts).toHaveLength(2);
     expect(outboundInserts.map((call) => call.params[4])).toEqual(["conv-site", "网络组"]);
+  });
+
+  it("synchronizes a WeChat-registered person into the MariaDB account chain", async () => {
+    const calls: Array<{ sql: string; params: unknown[] }> = [];
+    const connection = {
+      execute: vi.fn(async (sql: string, params: unknown[] = []) => {
+        calls.push({ sql, params });
+        if (sql.trim().startsWith("SELECT")) return [[]];
+        return [{ affectedRows: 1 }];
+      })
+    } as unknown as DatabaseConnection;
+    const state: AppState = {
+      booths: [],
+      tickets: [],
+      messageRecords: [],
+      people: [{
+        id: "person-wechat",
+        name: "张三",
+        phone: "13800138000",
+        role: "handler",
+        groupId: "builder",
+        groupName: "搭建组",
+        groupLocked: false,
+        enabled: true,
+        createdAt: "2026-06-12T00:00:00.000Z",
+        updatedAt: "2026-06-12T00:00:00.000Z"
+      }],
+      chatIdentities: [{
+        id: "chat-wechat",
+        platform: "wechat",
+        externalUserId: "wxid-zhangsan",
+        displayName: "张三微信",
+        personId: "person-wechat",
+        isTemporary: false,
+        firstSeenAt: "2026-06-12T00:00:00.000Z",
+        lastSeenAt: "2026-06-12T00:00:00.000Z"
+      }],
+      conversations: [],
+      pendingWorkOrderSessions: [],
+      outboundMessages: [],
+      config: defaultConfig()
+    };
+
+    await new MariaDbStateStore().writeState(state, connection);
+
+    expect(calls).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        sql: expect.stringContaining("INSERT INTO accounts"),
+        params: expect.arrayContaining(["person-wechat", "13800138000", true])
+      }),
+      expect.objectContaining({
+        sql: expect.stringContaining("INSERT INTO account_roles"),
+        params: expect.arrayContaining(["role-builder"])
+      }),
+      expect.objectContaining({
+        sql: expect.stringContaining("INSERT INTO audit_logs"),
+        params: expect.arrayContaining(["mobile.account.sync", "user", "person-wechat"])
+      })
+    ]));
   });
 });

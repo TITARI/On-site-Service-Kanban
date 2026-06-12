@@ -2,6 +2,7 @@
 import { userGroupsOf } from "../seed";
 import type { AppState } from "../domain/app-state";
 import { createHash } from "node:crypto";
+import { synchronizePersonAccessInState } from "./access-state-service";
 
 export type IdentitySource = {
   channel: MessageChannel;
@@ -138,8 +139,8 @@ export function bindWechatIdentityFromRegistration(state: AppState, chatIdentity
   const phone = normalizeText(draft.phone);
   if (!name) throw new Error("真实姓名不能为空");
   if (!isValidPhone(phone)) throw new Error("手机号格式不正确");
-  const group = enabledIdentityGroup(state, groupName);
-  if (!group) throw new Error(`身份组不存在：${groupName}`);
+  const requestedGroup = enabledIdentityGroup(state, groupName);
+  if (!requestedGroup) throw new Error(`身份组不存在：${groupName}`);
 
   state.people ??= [];
   state.chatIdentities ??= [];
@@ -149,30 +150,36 @@ export function bindWechatIdentityFromRegistration(state: AppState, chatIdentity
   if (!identity) throw new Error("微信身份不存在");
   if (identity.isTemporary) throw new Error("缺少稳定微信用户标识，无法绑定");
 
-  const role = roleForGroup(group);
-
   let person = state.people.find((item) => item.phone === phone);
   if (!person) {
+    const group = requestedGroup;
     person = {
       id: id("person"),
       name,
       phone,
-      role,
-      groupName,
+      role: roleForGroup(group),
+      groupId: group.id,
+      groupName: group.name,
+      groupLocked: false,
       enabled: true,
       createdAt: timestamp,
       updatedAt: timestamp
     };
     state.people.push(person);
   } else {
+    const group = person.groupLocked && person.groupId
+      ? userGroupsOf(state.config).find((item) => item.id === person!.groupId && item.enabled)
+      : requestedGroup;
+    if (!group) throw new Error("用户锁定分组不存在或已停用");
     if (person.name !== name) {
       person.nameConflict = { attemptedName: name, observedAt: timestamp };
     } else {
       delete person.nameConflict;
     }
     person.groupName = groupName;
-    person.role = role;
-    person.enabled = true;
+    person.groupId = group.id;
+    person.groupName = group.name;
+    person.role = roleForGroup(group);
     person.updatedAt = timestamp;
   }
 
@@ -181,6 +188,7 @@ export function bindWechatIdentityFromRegistration(state: AppState, chatIdentity
   identity.verifiedAt = timestamp;
   identity.lastSeenAt = timestamp;
 
+  synchronizePersonAccessInState(state, person.id);
   return person;
 }
 

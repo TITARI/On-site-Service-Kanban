@@ -136,7 +136,7 @@ function groupOf(state: AppState, groupId: string) {
 
 function enabledGroup(state: AppState, groupId: string) {
   const group = groupOf(state, groupId);
-  if (!group?.enabled) throw new Error("User group is disabled or missing");
+  if (!group?.enabled) throw new Error("用户分组不存在或已停用");
   return group;
 }
 
@@ -377,6 +377,67 @@ export function syncAccessRolesInState(
   synchronizeAccessRoles(state, userGroups, actor);
 }
 
+export function synchronizePersonAccessInState(
+  stateInput: AppState,
+  personId: string
+): { account: Account } {
+  const state = normalizeAccessState(stateInput);
+  const person = state.people.find((item) => item.id === personId);
+  if (!person) throw new Error("用户不存在");
+
+  const group = person.groupId
+    ? groupOf(state, person.groupId)
+    : groupsOf(state).find((item) => item.name === person.groupName);
+  if (!group?.enabled) throw new Error("用户分组不存在或已停用");
+
+  const at = nowIso();
+  const phone = normalizeMobilePhone(person.phone);
+  person.phone = phone;
+  person.groupId = group.id;
+  person.groupName = group.name;
+  person.groupLocked ??= false;
+  synchronizeAccessRoles(state, groupsOf(state), undefined, false);
+
+  let account = state.accounts.find((item) => item.personId === person.id);
+  const conflictingAccount = state.accounts.find((item) => (
+    item.loginName === phone && item.personId !== person.id
+  ));
+  if (conflictingAccount) throw new Error("手机号已被其他用户使用");
+
+  if (!account) {
+    const preferredId = `account-${person.id}`;
+    account = {
+      id: state.accounts.some((item) => item.id === preferredId)
+        ? createIdentityId("account")
+        : preferredId,
+      personId: person.id,
+      loginName: phone,
+      enabled: person.enabled,
+      authVersion: 1,
+      createdAt: at,
+      updatedAt: at
+    };
+    state.accounts.push(account);
+  } else {
+    const before = authorizationFingerprint(state, account);
+    const loginChanged = account.loginName !== phone;
+    account.loginName = phone;
+    account.enabled = person.enabled;
+    account.updatedAt = at;
+    ensureSingleAccountRole(state, account, group.id, at);
+    if (loginChanged || before !== authorizationFingerprint(state, account)) {
+      invalidateAccount(state, account, at);
+    }
+  }
+
+  ensureSingleAccountRole(state, account, group.id, at);
+  audit(state, "mobile.account.sync", "user", person.id, {
+    accountId: account.id,
+    groupId: group.id
+  });
+  return { account };
+}
+
 function createPersonAndAccount(
   state: AccessState,
   input: Pick<UserMutation, "name" | "phone" | "groupId" | "groupLocked" | "enabled">,
@@ -389,7 +450,7 @@ function createPersonAndAccount(
     state.people.some((person) => person.phone === phone)
     || state.accounts.some((account) => account.loginName === phone)
   ) {
-    throw new Error("Mobile phone is already assigned to another user");
+    throw new Error("手机号已被其他用户使用");
   }
 
   const group = enabledGroup(state, input.groupId);
@@ -439,11 +500,11 @@ export function upsertMobileAccountInState(
       enabled: true
     }, at));
   } else {
-    if (!person) throw new Error("Mobile account has no linked person");
-    if (!account.enabled || !person.enabled) throw new Error("Mobile account is disabled");
+    if (!person) throw new Error("移动账号缺少关联用户");
+    if (!account.enabled || !person.enabled) throw new Error("该账号已禁用");
 
     const effectiveGroupId = person.groupLocked ? person.groupId : input.groupId;
-    if (!effectiveGroupId) throw new Error("Mobile account has no user group");
+    if (!effectiveGroupId) throw new Error("移动账号未配置用户分组");
     const group = enabledGroup(state, effectiveGroupId);
     const groupChanged = person.groupId !== group.id;
     const phoneChanged = person.phone !== phone || account.loginName !== phone;
@@ -463,7 +524,7 @@ export function upsertMobileAccountInState(
   account.lastLoginAt = at;
   account.updatedAt = at;
   const actor = actorForAccount(state, account, "mobile");
-  if (!actor) throw new Error("Mobile account access chain is disabled");
+  if (!actor) throw new Error("账号权限链不可用");
   audit(state, "mobile.account.upsert", "user", person.id, {
     groupId: actor.groupId,
     created: person.createdAt === at
@@ -701,7 +762,7 @@ export function bootstrapAdminInState(
   };
 
   const actor = actorForAccount(state, account, "admin");
-  if (!actor) throw new Error("Bootstrap admin access chain is invalid");
+  if (!actor) throw new Error("管理员权限链不可用");
   audit(state, "admin.bootstrap", "account", account.id, {
     groupId: group.id
   }, actor);
@@ -968,7 +1029,7 @@ export function updateUserInState(
   if (input.phone !== undefined) {
     const phone = normalizeMobilePhone(input.phone);
     const duplicate = state.accounts.some((item) => item.id !== account.id && item.loginName === phone);
-    if (duplicate) throw new Error("Mobile phone is already assigned to another user");
+    if (duplicate) throw new Error("手机号已被其他用户使用");
     if (phone !== account.loginName || phone !== person.phone) {
       account.loginName = phone;
       person.phone = phone;

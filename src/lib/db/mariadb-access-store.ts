@@ -17,7 +17,7 @@ import type {
   UserQuery
 } from "../domain/access-control";
 import { PERMISSION_CODES, permissionCodesForGroup } from "../domain/access-control";
-import type { MessageChannel, UserGroup } from "../domain/types";
+import type { MessageChannel, Person, UserGroup } from "../domain/types";
 import type {
   UserImportApplyResult,
   UserImportDecision,
@@ -384,6 +384,78 @@ async function revokeAccountSessionsInternal(
        WHERE id = ?`,
       [now, accountId]
     );
+  }
+}
+
+export async function synchronizePersonAccounts(
+  connection: DatabaseConnection,
+  people: Person[],
+  groups: UserGroup[],
+  now = new Date()
+) {
+  const enabledGroups = new Map(
+    groups.filter((group) => group.enabled).map((group) => [group.id, group])
+  );
+
+  for (const person of people) {
+    if (!person.groupId) continue;
+    const group = enabledGroups.get(person.groupId);
+    if (!group) continue;
+    const phone = normalizePhone(person.phone);
+    const accountRows = await rows<Row>(
+      connection,
+      `SELECT a.id, a.person_id, a.login_name, a.enabled, ar.role_id
+       FROM accounts a
+       LEFT JOIN account_roles ar ON ar.account_id = a.id
+       WHERE a.person_id = ? OR a.login_name = ?
+       ORDER BY CASE WHEN a.person_id = ? THEN 0 ELSE 1 END
+       FOR UPDATE`,
+      [person.id, phone, person.id]
+    );
+    const account = accountRows.find((row) => String(row.person_id) === person.id);
+    const conflicting = accountRows.find((row) => String(row.person_id) !== person.id);
+    if (conflicting) throw new Error("手机号已被其他用户使用");
+
+    if (!account) {
+      const accountId = `account-${randomUUID()}`;
+      await execute(
+        connection,
+        `INSERT INTO accounts (
+           id, person_id, login_name, enabled, auth_version, last_login_at, created_at, updated_at
+         ) VALUES (?, ?, ?, ?, 1, NULL, ?, ?)`,
+        [accountId, person.id, phone, person.enabled, now, now]
+      );
+      await assignAccountRole(connection, accountId, group.id, now);
+      await appendAudit(connection, {
+        action: "mobile.account.sync",
+        targetType: "user",
+        targetId: person.id,
+        detail: { accountId, groupId: group.id, created: true },
+        now
+      });
+      continue;
+    }
+
+    const accountId = String(account.id);
+    const changed = String(account.login_name) !== phone
+      || bool(account.enabled) !== person.enabled
+      || String(account.role_id ?? "") !== roleId(group.id);
+    await execute(
+      connection,
+      "UPDATE accounts SET login_name = ?, enabled = ?, updated_at = ? WHERE id = ?",
+      [phone, person.enabled, now, accountId]
+    );
+    await assignAccountRole(connection, accountId, group.id, now);
+    if (changed) {
+      await revokeAccountSessionsInternal(connection, accountId, now, true);
+      await appendAudit(connection, {
+        action: "mobile.account.sync",
+        targetType: "user",
+        targetId: person.id,
+        detail: { accountId, groupId: group.id, created: false },
+        now
+      });
+    }
   }
 }
 

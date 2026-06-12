@@ -147,6 +147,19 @@ describe("wechat identity service", () => {
       enabled: true
     });
     expect(appState.chatIdentities?.[0].personId).toBe(person.id);
+    expect(appState.accounts).toContainEqual(expect.objectContaining({
+      personId: person.id,
+      loginName: "13800138000",
+      enabled: true
+    }));
+    expect(appState.accountRoles).toContainEqual(expect.objectContaining({
+      accountId: expect.any(String),
+      roleId: "role-builder"
+    }));
+    expect(appState.rolePermissions).toEqual(expect.arrayContaining([
+      expect.objectContaining({ roleId: "role-builder", permissionCode: "ticket.claim" }),
+      expect.objectContaining({ roleId: "role-builder", permissionCode: "ticket.process" })
+    ]));
   });
 
   it("does not link the registered person to unrelated conversations", () => {
@@ -236,6 +249,46 @@ describe("wechat identity service", () => {
 
     expect(person.groupName).toBe("主场组");
     expect(person.role).toBe("manager");
+  });
+
+  it("preserves disabled state and a locked group during WeChat re-registration", () => {
+    const appState = state();
+    appState.people = [{
+      id: "person-existing",
+      name: "张三",
+      phone: "13800138000",
+      role: "handler",
+      groupId: "builder",
+      groupName: "搭建组",
+      groupLocked: true,
+      enabled: false,
+      createdAt: "2026-05-27T12:00:00.000Z",
+      updatedAt: "2026-05-27T12:00:00.000Z"
+    }];
+    const { identity } = ensureConversationAndIdentity(appState, {
+      channel: "wechat",
+      senderId: "wxid-zhangsan",
+      senderName: "张三微信",
+      sourceConversationId: "conv-direct"
+    });
+
+    const person = bindWechatIdentityFromRegistration(appState, identity.id, {
+      identityGroup: "主场组",
+      name: "张三",
+      phone: "13800138000"
+    });
+
+    expect(person).toMatchObject({
+      groupId: "builder",
+      groupName: "搭建组",
+      groupLocked: true,
+      enabled: false
+    });
+    expect(appState.accounts?.[0]).toMatchObject({
+      personId: "person-existing",
+      enabled: false
+    });
+    expect(appState.accountRoles?.[0]).toMatchObject({ roleId: "role-builder" });
   });
 
   it("rejects disabled groups, invalid phones and blank names", () => {
