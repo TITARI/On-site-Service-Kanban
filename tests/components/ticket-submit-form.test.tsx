@@ -34,7 +34,7 @@ describe("TicketSubmitForm", () => {
     expect((await screen.findByRole("alert")).textContent).toBe("提交失败，请检查展位号和问题描述后重试");
   });
 
-  it("submits selected images and current user contact with the ticket payload", async () => {
+  it("submits selected images without trusting client-side user identity fields", async () => {
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({ kind: "created" }), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
     const onSubmitted = vi.fn();
@@ -51,11 +51,32 @@ describe("TicketSubmitForm", () => {
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
     const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
-    expect(body.submitterId).toBe("member-13800138000");
-    expect(body.submitterName).toBe("张三");
-    expect(body.submitterPhone).toBe("13800138000");
+    expect(body).not.toHaveProperty("submitterId");
+    expect(body).not.toHaveProperty("submitterName");
+    expect(body).not.toHaveProperty("submitterPhone");
     expect(body.imageUrls).toHaveLength(1);
     expect(body.imageUrls[0]).toMatch(/^data:image\/jpeg;base64,/);
     expect(onSubmitted).toHaveBeenCalled();
+  });
+
+  it("expires the local user when the server rejects the mobile session", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(null, { status: 401 })));
+    const onUnauthorized = vi.fn();
+    const user = userEvent.setup();
+
+    render(
+      <TicketSubmitForm
+        config={config}
+        currentUser={currentUser}
+        onSubmitted={vi.fn()}
+        onUnauthorized={onUnauthorized}
+      />
+    );
+
+    await user.type(screen.getByRole("textbox", { name: "展位号" }), "A01");
+    await user.type(screen.getByRole("textbox", { name: "问题描述" }), "网络断开，现场无法扫码");
+    await user.click(screen.getByRole("button", { name: "提交工单" }));
+
+    await waitFor(() => expect(onUnauthorized).toHaveBeenCalledOnce());
   });
 });

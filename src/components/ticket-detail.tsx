@@ -133,7 +133,17 @@ function GalleryImageGrid({
   );
 }
 
-export function TicketDetail({ ticket, currentUser, onRefresh }: { ticket?: Ticket; currentUser?: CurrentUser; onRefresh: () => void }) {
+export function TicketDetail({
+  ticket,
+  currentUser,
+  onRefresh,
+  onUnauthorized
+}: {
+  ticket?: Ticket;
+  currentUser?: CurrentUser;
+  onRefresh: () => void;
+  onUnauthorized?: () => void;
+}) {
   const [isReplying, setIsReplying] = useState(false);
   const [isActing, setIsActing] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -314,6 +324,10 @@ export function TicketDetail({ ticket, currentUser, onRefresh }: { ticket?: Tick
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
       });
+      if (response.status === 401) {
+        onUnauthorized?.();
+        return;
+      }
       if (!response.ok) throw new Error("ticket action failed");
       setProcessImageUrls([]);
       onRefresh();
@@ -328,14 +342,7 @@ export function TicketDetail({ ticket, currentUser, onRefresh }: { ticket?: Tick
     if (!currentUser) return;
     await patchTicket({
       action: "claim",
-      status: "处理中",
-      actorId: currentUser.id,
-      actorName: currentUser.name,
-      actorPhone: currentUser.phone,
-      actorGroupName: currentUser.groupName,
-      handlerId: currentUser.id,
-      handlerName: currentUser.name,
-      handlerPhone: currentUser.phone
+      status: "处理中"
     });
   }
 
@@ -352,10 +359,6 @@ export function TicketDetail({ ticket, currentUser, onRefresh }: { ticket?: Tick
     await patchTicket({
       action: "progress",
       status: String(formData.get("nextStatus") ?? processOptions[0]),
-      actorId: currentUser.id,
-      actorName: currentUser.name,
-      actorPhone: currentUser.phone,
-      actorGroupName: currentUser.groupName,
       processBody,
       imageUrls: processImageUrls
     });
@@ -366,11 +369,7 @@ export function TicketDetail({ ticket, currentUser, onRefresh }: { ticket?: Tick
     if (!currentUser) return;
     await patchTicket({
       action: "accept",
-      status: "已关闭",
-      actorId: currentUser.id,
-      actorName: currentUser.name,
-      actorPhone: currentUser.phone,
-      actorGroupName: currentUser.groupName
+      status: "已关闭"
     });
   }
 
@@ -387,10 +386,6 @@ export function TicketDetail({ ticket, currentUser, onRefresh }: { ticket?: Tick
     await patchTicket({
       action: "reject",
       status: "待再次处理",
-      actorId: currentUser.id,
-      actorName: currentUser.name,
-      actorPhone: currentUser.phone,
-      actorGroupName: currentUser.groupName,
       reason
     });
     form.reset();
@@ -407,14 +402,14 @@ export function TicketDetail({ ticket, currentUser, onRefresh }: { ticket?: Tick
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          authorId: currentUser?.id ?? "mobile-user",
-          authorName: currentUser?.name ?? "现场成员",
-          authorPhone: currentUser?.phone,
-          role: "member",
           body: String(formData.get("body") ?? ""),
           imageUrls: replyImageUrls
         })
       });
+      if (response.status === 401) {
+        onUnauthorized?.();
+        return;
+      }
       if (!response.ok) throw new Error("reply failed");
       form.reset();
       setReplyImageUrls([]);

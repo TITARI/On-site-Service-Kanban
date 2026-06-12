@@ -75,6 +75,19 @@ export default function HomePage() {
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
+  function expireMobileSession() {
+    window.localStorage.removeItem(AUTH_STORAGE_KEY);
+    setUser(null);
+    setData(null);
+    setSelectedId(undefined);
+    setDetailTicket(null);
+    setDetailError(null);
+    setError(null);
+    setIsLoading(false);
+    setTab("tickets");
+    void refreshLoginConfig();
+  }
+
   async function refreshLoginConfig() {
     setIsLoginConfigLoading(true);
     setLoginConfigError(null);
@@ -95,6 +108,10 @@ export default function HomePage() {
     setError(null);
     try {
       const response = await fetch("/api/bootstrap?scope=mobile", { cache: "no-store" });
+      if (response.status === 401) {
+        expireMobileSession();
+        return;
+      }
       if (!response.ok) throw new Error("数据加载失败");
       const payload = await response.json() as Bootstrap;
       setData(payload);
@@ -112,6 +129,10 @@ export default function HomePage() {
     setDetailError(null);
     try {
       const response = await fetch(`/api/tickets/${ticketId}`, { cache: "no-store" });
+      if (response.status === 401) {
+        expireMobileSession();
+        return;
+      }
       if (!response.ok) throw new Error("ticket detail failed");
       const payload = await response.json() as { ticket?: Ticket };
       if (payload.ticket) {
@@ -251,7 +272,14 @@ export default function HomePage() {
 
   return (
     <MobileShell activeTab={tab} currentUser={user} hideHero={isDetailPage} metrics={metrics} onLogout={logout} onTabChange={changeTab}>
-      {tab === "submit" && <TicketSubmitForm config={data.config} currentUser={user} onSubmitted={() => { changeTab("tickets"); void refresh(); }} />}
+      {tab === "submit" && (
+        <TicketSubmitForm
+          config={data.config}
+          currentUser={user}
+          onSubmitted={() => { changeTab("tickets"); void refresh(); }}
+          onUnauthorized={expireMobileSession}
+        />
+      )}
       {tab === "tickets" && !selectedTicket && <TicketList tickets={data.tickets} onSelect={setSelectedId} />}
       {tab === "tickets" && selectedTicket && (
         <section className="detail-route">
@@ -261,7 +289,12 @@ export default function HomePage() {
           ) : detailError && !activeDetailTicket ? (
             <section className="empty-state">{detailError}</section>
           ) : (
-            <TicketDetail ticket={activeDetailTicket} currentUser={user} onRefresh={refreshCurrentDetail} />
+            <TicketDetail
+              ticket={activeDetailTicket}
+              currentUser={user}
+              onRefresh={refreshCurrentDetail}
+              onUnauthorized={expireMobileSession}
+            />
           )}
         </section>
       )}
@@ -275,7 +308,12 @@ export default function HomePage() {
           ) : detailError && !activeDetailTicket ? (
             <section className="empty-state">{detailError}</section>
           ) : (
-            <TicketDetail ticket={activeDetailTicket} currentUser={user} onRefresh={refreshCurrentDetail} />
+            <TicketDetail
+              ticket={activeDetailTicket}
+              currentUser={user}
+              onRefresh={refreshCurrentDetail}
+              onUnauthorized={expireMobileSession}
+            />
           )}
         </section>
       )}

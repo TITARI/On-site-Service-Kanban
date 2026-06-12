@@ -11,9 +11,10 @@ type Props = {
   config: AppConfig;
   currentUser: CurrentUser;
   onSubmitted: () => void;
+  onUnauthorized?: () => void;
 };
 
-export function TicketSubmitForm({ config, currentUser, onSubmitted }: Props) {
+export function TicketSubmitForm({ config, currentUser, onSubmitted, onUnauthorized }: Props) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [imageUrls, setImageUrls] = useState<string[]>([]);
@@ -39,10 +40,7 @@ export function TicketSubmitForm({ config, currentUser, onSubmitted }: Props) {
       boothNumber: String(formData.get("boothNumber") ?? ""),
       description: String(formData.get("description") ?? ""),
       issueType: String(formData.get("issueType") ?? "自动"),
-      imageUrls,
-      submitterId: currentUser.id,
-      submitterName: currentUser.name,
-      submitterPhone: currentUser.phone
+      imageUrls
     };
 
     try {
@@ -51,6 +49,11 @@ export function TicketSubmitForm({ config, currentUser, onSubmitted }: Props) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
       });
+      if (response.status === 401) {
+        setIsSubmitting(false);
+        onUnauthorized?.();
+        return;
+      }
       if (!response.ok) throw new Error("submit failed");
       form.reset();
       setImageUrls([]);

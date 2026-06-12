@@ -323,8 +323,10 @@ describe("TicketDetail", () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
     const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
     expect(body.action).toBe("claim");
-    expect(body.handlerId).toBe("member-13700137000");
-    expect(body.handlerName).toBe("搭建王工");
+    expect(body).not.toHaveProperty("handlerId");
+    expect(body).not.toHaveProperty("handlerName");
+    expect(body).not.toHaveProperty("actorId");
+    expect(body).not.toHaveProperty("actorName");
     expect(onRefresh).toHaveBeenCalled();
   });
 
@@ -360,7 +362,7 @@ describe("TicketDetail", () => {
     const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
     expect(body.action).toBe("accept");
     expect(body.status).toBe("已关闭");
-    expect(body.actorGroupName).toBe("业务组");
+    expect(body).not.toHaveProperty("actorGroupName");
   });
 
   it("allows business or organizer group users to reject resolved tickets for rework", async () => {
@@ -397,7 +399,7 @@ describe("TicketDetail", () => {
     expect(body.imageUrls[0]).toMatch(/^data:image\/jpeg;base64,/);
   });
 
-  it("binds reply author to the current user without an editable author field", async () => {
+  it("does not send editable or client-derived reply author fields", async () => {
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({ ticket }), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
     const user = userEvent.setup();
@@ -411,8 +413,9 @@ describe("TicketDetail", () => {
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
     const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
-    expect(body.authorId).toBe(builderUser.id);
-    expect(body.authorName).toBe(builderUser.name);
-    expect(body.authorPhone).toBe(builderUser.phone);
+    expect(body).not.toHaveProperty("authorId");
+    expect(body).not.toHaveProperty("authorName");
+    expect(body).not.toHaveProperty("authorPhone");
+    expect(body.body).toBe("现场已补充照片");
   });
 });

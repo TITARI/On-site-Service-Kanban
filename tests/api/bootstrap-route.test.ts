@@ -103,9 +103,26 @@ const adminActor = {
   sessionType: "admin" as const
 };
 
+const mobileActor = {
+  accountId: "account-builder",
+  personId: "member-13700137000",
+  name: "搭建王工",
+  phone: "13700137000",
+  groupId: "builder",
+  groupName: "搭建组",
+  permissions: ["ticket.claim", "ticket.process"] as const,
+  sessionType: "mobile" as const
+};
+
 function adminRequest(url = "http://localhost/api/bootstrap") {
   return new Request(url, {
     headers: { cookie: `board_admin_session=${"A".repeat(43)}` }
+  });
+}
+
+function mobileRequest(url = "http://localhost/api/bootstrap?scope=mobile") {
+  return new Request(url, {
+    headers: { cookie: `board_mobile_session=${"A".repeat(43)}` }
   });
 }
 
@@ -130,18 +147,21 @@ describe("bootstrap route", () => {
       config: defaultConfig()
     });
     store.getConfig.mockResolvedValue(defaultConfig());
-    store.resolveAccountSession.mockResolvedValue({
-      actor: adminActor,
-      session: {
-        id: "session-admin",
-        accountId: adminActor.accountId,
-        sessionType: "admin",
-        tokenHash: "stored-hash",
-        authVersion: 1,
-        expiresAt: "2099-01-01T00:00:00.000Z",
-        lastSeenAt: "2026-06-12T00:00:00.000Z",
-        createdAt: "2026-06-12T00:00:00.000Z"
-      }
+    store.resolveAccountSession.mockImplementation(async (_tokenHash, type) => {
+      const actor = type === "admin" ? adminActor : mobileActor;
+      return {
+        actor,
+        session: {
+          id: `session-${type}`,
+          accountId: actor.accountId,
+          sessionType: type,
+          tokenHash: "stored-hash",
+          authVersion: 1,
+          expiresAt: "2099-01-01T00:00:00.000Z",
+          lastSeenAt: "2026-06-12T00:00:00.000Z",
+          createdAt: "2026-06-12T00:00:00.000Z"
+        }
+      };
     });
     fallbackStore.runAutoAcceptance.mockResolvedValue(undefined);
     fallbackStore.adminBootstrap.mockResolvedValue(fallbackStore.state);
@@ -165,7 +185,7 @@ describe("bootstrap route", () => {
   it("returns only tickets and config for mobile bootstrap requests", async () => {
     const route = await import("@/app/api/bootstrap/route");
 
-    const response = await route.GET(new Request("http://localhost/api/bootstrap?scope=mobile"));
+    const response = await route.GET(mobileRequest());
     const payload = await response.json();
 
     expect(Object.keys(payload).sort()).toEqual(["config", "tickets"]);
@@ -195,7 +215,7 @@ describe("bootstrap route", () => {
     const route = await import("@/app/api/bootstrap/route");
     store.adminBootstrap.mockRejectedValue(new Error("admin bootstrap should not be loaded for mobile"));
 
-    const response = await route.GET(new Request("http://localhost/api/bootstrap?scope=mobile"));
+    const response = await route.GET(mobileRequest());
 
     expect(response.status).toBe(200);
     expect(store.runAutoAcceptance).toHaveBeenCalledOnce();
@@ -207,7 +227,7 @@ describe("bootstrap route", () => {
     const route = await import("@/app/api/bootstrap/route");
     store.mobileBootstrap.mockRejectedValue(Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:3306"), { code: "ECONNREFUSED" }));
 
-    const response = await route.GET(new Request("http://localhost/api/bootstrap?scope=mobile"));
+    const response = await route.GET(mobileRequest());
     const payload = await response.json();
 
     expect(response.status).toBe(200);
@@ -251,5 +271,14 @@ describe("bootstrap route", () => {
 
     expect(response.status).toBe(401);
     expect(store.adminBootstrap).not.toHaveBeenCalled();
+  });
+
+  it("rejects the mobile bootstrap payload without a mobile session", async () => {
+    const route = await import("@/app/api/bootstrap/route");
+
+    const response = await route.GET(new Request("http://localhost/api/bootstrap?scope=mobile"));
+
+    expect(response.status).toBe(401);
+    expect(store.mobileBootstrap).not.toHaveBeenCalled();
   });
 });

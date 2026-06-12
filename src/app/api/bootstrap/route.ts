@@ -101,6 +101,8 @@ export async function GET(request: Request) {
   }
 
   if (scope === "mobile") {
+    const auth = await requireRequestActor(request, "mobile", undefined);
+    if (!auth.ok) return auth.response;
     const result = await loadWithJsonFallback(
       async (repository) => {
         await repository.runAutoAcceptance();
