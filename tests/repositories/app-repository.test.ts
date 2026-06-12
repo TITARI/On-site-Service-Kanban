@@ -157,6 +157,8 @@ describe("app repository", () => {
       setUserEnabled: vi.fn(async () => undefined),
       deleteUser: vi.fn(async () => undefined),
       setUserPassword: vi.fn(async () => undefined),
+      userDeletionHistory: vi.fn(async () => ({ deletable: true, reasons: [] })),
+      usableAdminCount: vi.fn(async () => 1),
       syncAccessRoles: vi.fn(async () => undefined)
     };
     const repository = createMariaDbAppRepository(
@@ -194,6 +196,8 @@ describe("app repository", () => {
     await repository.setUserEnabled("person-1", false, actor);
     await repository.deleteUser("person-1", actor);
     await repository.setUserPassword("person-1", "scrypt$stored-hash", actor);
+    await repository.userDeletionHistory("person-1");
+    await repository.usableAdminCount();
     await repository.syncAccessRoles(groupsForDelegation(), actor);
 
     const expectedCalls: Array<[keyof typeof accessStore, unknown[]]> = [
@@ -213,6 +217,8 @@ describe("app repository", () => {
       ["setUserEnabled", ["person-1", false, actor]],
       ["deleteUser", ["person-1", actor]],
       ["setUserPassword", ["person-1", "scrypt$stored-hash", actor]],
+      ["userDeletionHistory", ["person-1"]],
+      ["usableAdminCount", []],
       ["syncAccessRoles", [groupsForDelegation(), actor]]
     ];
     for (const [method, args] of expectedCalls) {

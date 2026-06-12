@@ -155,6 +155,11 @@ export type UserListItem = {
   updatedAt: string;
 };
 
+export type UserDeletionHistory = {
+  deletable: boolean;
+  reasons: string[];
+};
+
 export function permissionCodesForGroup(group: UserGroup): PermissionCode[] {
   return [
     group.canClaim ? "ticket.claim" : undefined,

@@ -9,6 +9,7 @@ import type {
   PermissionCode,
   SessionResolution,
   SessionType,
+  UserDeletionHistory,
   UserListItem,
   UserMutation,
   UserQuery
@@ -1124,6 +1125,132 @@ export async function getUser(
   return (await userItems(connection, selected))[0];
 }
 
+export async function usableAdminCount(connection: DatabaseConnection) {
+  const [result] = await rows<Row>(
+    connection,
+    `SELECT COUNT(DISTINCT a.id) AS total
+     FROM accounts a
+     JOIN people p ON p.id = a.person_id
+     JOIN account_credentials c ON c.account_id = a.id
+     JOIN account_roles ar ON ar.account_id = a.id
+     JOIN roles r ON r.id = ar.role_id
+       AND r.source_group_id = p.group_id
+       AND r.enabled = true
+     JOIN role_permissions rp ON rp.role_id = r.id
+       AND rp.permission_code = 'admin.access'
+     JOIN user_groups g ON g.id = p.group_id
+       AND g.enabled = true
+     WHERE a.enabled = true
+       AND p.enabled = true`
+  );
+  return Number(result?.total ?? 0);
+}
+
+export async function userDeletionHistory(
+  connection: DatabaseConnection,
+  userId: string
+): Promise<UserDeletionHistory> {
+  const [current] = await rows<Row>(
+    connection,
+    `SELECT a.id AS account_id, p.id AS person_id
+     FROM accounts a
+     JOIN people p ON p.id = a.person_id
+     WHERE p.id = ? OR a.id = ?
+     LIMIT 1`,
+    [userId, userId]
+  );
+  if (!current) throw new Error("用户不存在");
+
+  const accountId = String(current.account_id);
+  const personId = String(current.person_id);
+  const identityRows = await rows<Row>(
+    connection,
+    "SELECT id FROM chat_identities WHERE person_id = ?",
+    [personId]
+  );
+  const identityIds = identityRows.map((row) => String(row.id));
+  const identityPlaceholders = identityIds.map(() => "?").join(", ");
+  const identityCondition = (column: string) => (
+    identityIds.length > 0 ? ` OR ${column} IN (${identityPlaceholders})` : ""
+  );
+  const reasons: string[] = [];
+
+  const hasRows = async (sql: string, params: SqlValue[]) => {
+    const [result] = await rows<Row>(connection, sql, params);
+    return Number(result?.total ?? 0) > 0;
+  };
+
+  if (await hasRows(
+    `SELECT COUNT(*) AS total
+     FROM tickets t
+     WHERE t.reporter_person_id = ?
+       OR t.submitter_id IN (?, ?)
+       OR t.handler_id IN (?, ?)
+       ${identityCondition("t.reporter_chat_identity_id")}
+       OR EXISTS (
+         SELECT 1 FROM ticket_feedback_users f
+         WHERE f.ticket_id = t.id AND f.user_id IN (?, ?)
+       )
+       OR EXISTS (
+         SELECT 1 FROM ticket_replies r
+         WHERE r.ticket_id = t.id AND r.author_id IN (?, ?)
+       )`,
+    [
+      personId,
+      personId,
+      accountId,
+      personId,
+      accountId,
+      ...identityIds,
+      personId,
+      accountId,
+      personId,
+      accountId
+    ]
+  )) reasons.push("tickets");
+
+  if (await hasRows(
+    `SELECT COUNT(*) AS total
+     FROM inbound_messages m
+     WHERE m.reporter_person_id = ?
+       ${identityCondition("m.reporter_chat_identity_id")}`,
+    [personId, ...identityIds]
+  )) reasons.push("inboundMessages");
+
+  if (await hasRows(
+    `SELECT COUNT(*) AS total
+     FROM pending_work_order_sessions s
+     WHERE s.person_id = ?
+       ${identityCondition("s.chat_identity_id")}`,
+    [personId, ...identityIds]
+  )) reasons.push("pendingSessions");
+
+  if (await hasRows(
+    `SELECT COUNT(*) AS total
+     FROM outbound_messages o
+     WHERE 1 = 0
+       ${identityCondition("o.target_chat_identity_id")}
+       OR EXISTS (
+         SELECT 1 FROM pending_work_order_sessions s
+         WHERE s.id = o.related_session_id
+           AND (s.person_id = ? ${identityCondition("s.chat_identity_id")})
+       )`,
+    [...identityIds, personId, ...identityIds]
+  )) reasons.push("outboundMessages");
+
+  if (await hasRows(
+    "SELECT COUNT(*) AS total FROM conversation_people WHERE person_id = ?",
+    [personId]
+  )) reasons.push("conversations");
+
+  if (await hasRows(
+    "SELECT COUNT(*) AS total FROM audit_logs WHERE actor_id IN (?, ?)",
+    [personId, accountId]
+  )) reasons.push("auditLogs");
+
+  return { deletable: reasons.length === 0, reasons };
+}
+
 async function ensureUniquePhone(
   connection: DatabaseConnection,
   phone: string,
@@ -1248,6 +1375,16 @@ export async function updateUser(
   const now = new Date();
   const enabled = input.enabled ?? (bool(current.person_enabled) && bool(current.account_enabled));
   const groupLocked = input.groupLocked ?? bool(current.group_locked);
+  const currentUser = await getUser(connection, personId);
+  const wasUsableAdmin = Boolean(
+    currentUser?.enabled
+    && currentUser.hasPassword
+    && currentUser.permissions.includes("admin.access")
+  );
+  const remainsUsableAdmin = Boolean(enabled && currentUser?.hasPassword && bool(group.can_admin));
+  if (wasUsableAdmin && !remainsUsableAdmin && await usableAdminCount(connection) <= 1) {
+    throw new Error("必须保留至少一位可用后台管理员");
+  }
   const invalidate = phone !== String(current.phone)
     || groupId !== String(current.group_id)
     || enabled !== (bool(current.person_enabled) && bool(current.account_enabled))
@@ -1314,6 +1451,17 @@ export async function deleteUser(
   const current = await lockedUser(connection, userId);
   const accountId = String(current.account_id);
   const personId = String(current.person_id);
+  const currentUser = await getUser(connection, personId);
+  if (
+    currentUser?.enabled
+    && currentUser.hasPassword
+    && currentUser.permissions.includes("admin.access")
+    && await usableAdminCount(connection) <= 1
+  ) {
+    throw new Error("必须保留至少一位可用后台管理员");
+  }
+  const history = await userDeletionHistory(connection, personId);
+  if (!history.deletable) throw new Error("该用户已有历史记录，仅可停用");
   await execute(
     connection,
     `UPDATE chat_identities

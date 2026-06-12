@@ -6,7 +6,9 @@ import {
   createAccountSession,
   resolveAccountSession,
   syncAccessRoles,
-  upsertMobileAccount
+  upsertMobileAccount,
+  usableAdminCount,
+  userDeletionHistory
 } from "@/lib/db/mariadb-access-store";
 
 function rowDate() {
@@ -239,5 +241,41 @@ describe("MariaDB access store", () => {
       missing.connection,
       [adminGroup]
     )).rejects.toThrow("必须保留至少一位可用后台管理员");
+  });
+
+  it("counts usable admins through the complete permission chain", async () => {
+    const recorder = recordingConnection([[{ total: 2 }]]);
+
+    await expect(usableAdminCount(recorder.connection)).resolves.toBe(2);
+
+    const sql = recorder.sql();
+    expect(sql).toContain("JOIN account_credentials");
+    expect(sql).toContain("rp.permission_code = 'admin.access'");
+    expect(sql).toContain("a.enabled = true");
+    expect(sql).toContain("p.enabled = true");
+  });
+
+  it("checks business history while ignoring target-only maintenance audits", async () => {
+    const recorder = recordingConnection([
+      [{ account_id: "account-1", person_id: "person-1" }],
+      [{ id: "identity-1" }],
+      [{ total: 0 }],
+      [{ total: 0 }],
+      [{ total: 0 }],
+      [{ total: 0 }],
+      [{ total: 0 }],
+      [{ total: 0 }]
+    ]);
+
+    await expect(userDeletionHistory(recorder.connection, "person-1")).resolves.toEqual({
+      deletable: true,
+      reasons: []
+    });
+
+    const sql = recorder.sql();
+    expect(sql).toContain("reporter_person_id");
+    expect(sql).toContain("target_chat_identity_id");
+    expect(sql).toContain("audit_logs WHERE actor_id");
+    expect(sql).not.toContain("audit_logs WHERE target_id");
   });
 });

@@ -9,6 +9,7 @@ import type {
   MobileAccountInput,
   SessionResolution,
   SessionType,
+  UserDeletionHistory,
   UserListItem,
   UserMutation,
   UserQuery
@@ -52,7 +53,9 @@ import {
   setUserPasswordInState,
   syncAccessRolesInState,
   updateUserInState,
-  upsertMobileAccountInState
+  upsertMobileAccountInState,
+  usableAdminCountFromState,
+  userDeletionHistoryFromState
 } from "../services/access-state-service";
 
 export type MobileBootstrapData = {
@@ -109,6 +112,8 @@ export type AppRepository = {
   setUserEnabled(userId: string, enabled: boolean, actor: AuthenticatedActor): Promise<UserListItem>;
   deleteUser(userId: string, actor: AuthenticatedActor): Promise<void>;
   setUserPassword(userId: string, passwordHash: string, actor: AuthenticatedActor): Promise<void>;
+  userDeletionHistory(userId: string): Promise<UserDeletionHistory>;
+  usableAdminCount(): Promise<number>;
   syncAccessRoles(userGroups: UserGroup[], actor?: AuthenticatedActor): Promise<void>;
 };
 
@@ -139,6 +144,8 @@ type AccessRepositoryStore = Omit<Pick<AppRepository,
   | "setUserEnabled"
   | "deleteUser"
   | "setUserPassword"
+  | "userDeletionHistory"
+  | "usableAdminCount"
   | "syncAccessRoles"
 >, "bootstrapAdmin"> & {
   bootstrapAdmin(
@@ -334,6 +341,8 @@ export function createFileAppRepository(store: StateFileRepository = {
     setUserPassword: (userId, passwordHash, actor) => updateState((state) => {
       setUserPasswordInState(state, userId, passwordHash, actor);
     }),
+    userDeletionHistory: async (userId) => userDeletionHistoryFromState(await store.readState(), userId),
+    usableAdminCount: async () => usableAdminCountFromState(await store.readState()),
     syncAccessRoles: (userGroups, actor) => updateState((state) => {
       syncAccessRolesInState(state, userGroups, actor);
     })
@@ -388,6 +397,8 @@ export function createMariaDbAppRepository(
     setUserEnabled: (userId, enabled, actor) => store.setUserEnabled(userId, enabled, actor),
     deleteUser: (userId, actor) => store.deleteUser(userId, actor),
     setUserPassword: (userId, passwordHash, actor) => store.setUserPassword(userId, passwordHash, actor),
+    userDeletionHistory: (userId) => store.userDeletionHistory(userId),
+    usableAdminCount: () => store.usableAdminCount(),
     syncAccessRoles: (userGroups, actor) => store.syncAccessRoles(userGroups, actor)
   };
 }

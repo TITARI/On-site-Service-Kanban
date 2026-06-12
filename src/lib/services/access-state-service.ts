@@ -13,6 +13,7 @@ import {
   type PermissionCode,
   type SessionResolution,
   type SessionType,
+  type UserDeletionHistory,
   type UserListItem,
   type UserMutation,
   type UserQuery
@@ -178,6 +179,20 @@ function actorForAccount(
     permissions,
     sessionType
   };
+}
+
+function isUsableAdmin(state: AccessState, account: Account) {
+  return Boolean(
+    actorForAccount(state, account, "admin")
+    && state.accountCredentials.some((credential) => (
+      credential.accountId === account.id && Boolean(credential.passwordHash)
+    ))
+  );
+}
+
+export function usableAdminCountFromState(stateInput: AppState) {
+  const state = normalizeAccessState(stateInput);
+  return state.accounts.filter((account) => isUsableAdmin(state, account)).length;
 }
 
 function authorizationFingerprint(state: AccessState, account: Account) {
@@ -780,6 +795,16 @@ export function updateUserInState(
   const person = account ? personForAccount(state, account) : undefined;
   if (!account || !person) throw new Error("User was not found");
 
+  const wasUsableAdmin = isUsableAdmin(state, account);
+  const nextEnabled = input.enabled ?? (account.enabled && person.enabled);
+  const nextGroup = input.groupId === undefined
+    ? (person.groupId ? groupOf(state, person.groupId) : undefined)
+    : enabledGroup(state, input.groupId);
+  const remainsUsableAdmin = Boolean(nextEnabled && nextGroup?.enabled && nextGroup.canAdmin);
+  if (wasUsableAdmin && !remainsUsableAdmin && usableAdminCountFromState(state) <= 1) {
+    throw new Error("必须保留至少一位可用后台管理员");
+  }
+
   const at = nowIso();
   let invalidate = false;
   if (input.phone !== undefined) {
@@ -805,7 +830,10 @@ export function updateUserInState(
     invalidate = true;
   }
   if (input.name !== undefined) person.name = input.name.trim();
-  if (input.groupLocked !== undefined) person.groupLocked = input.groupLocked;
+  if (input.groupLocked !== undefined && person.groupLocked !== input.groupLocked) {
+    person.groupLocked = input.groupLocked;
+    invalidate = true;
+  }
   person.updatedAt = at;
   account.updatedAt = at;
   if (invalidate) invalidateAccount(state, account, at);
@@ -836,6 +864,12 @@ export function deleteUserInState(
   const account = state.accounts.find((item) => item.id === userId || item.personId === userId);
   const person = account ? personForAccount(state, account) : undefined;
   if (!account || !person) throw new Error("User was not found");
+  if (isUsableAdmin(state, account) && usableAdminCountFromState(state) <= 1) {
+    throw new Error("必须保留至少一位可用后台管理员");
+  }
+  if (!userDeletionHistoryFromState(state, userId).deletable) {
+    throw new Error("该用户已有历史记录，仅可停用");
+  }
 
   state.accounts = state.accounts.filter((item) => item.id !== account.id);
   state.people = state.people.filter((item) => item.id !== person.id);
@@ -849,6 +883,62 @@ export function deleteUserInState(
     accountId: account.id,
     phone: person.phone
   }, actor);
+}
+
+export function userDeletionHistoryFromState(
+  stateInput: AppState,
+  userId: string
+): UserDeletionHistory {
+  const state = normalizeAccessState(stateInput);
+  const account = state.accounts.find((item) => item.id === userId || item.personId === userId);
+  const person = account ? personForAccount(state, account) : undefined;
+  if (!account || !person) throw new Error("User was not found");
+
+  const identityIds = new Set(
+    state.chatIdentities
+      .filter((identity) => identity.personId === person.id)
+      .map((identity) => identity.id)
+  );
+  const relatedPendingSessionIds = new Set(
+    (state.pendingWorkOrderSessions ?? [])
+      .filter((session) => (
+        session.personId === person.id || identityIds.has(session.chatIdentityId)
+      ))
+      .map((session) => session.id)
+  );
+  const ids = new Set([person.id, account.id]);
+  const reasons: string[] = [];
+
+  if (state.tickets.some((ticket) => (
+    ticket.reporterPersonId === person.id
+    || Boolean(ticket.reporterChatIdentityId && identityIds.has(ticket.reporterChatIdentityId))
+    || ids.has(ticket.submitterId)
+    || Boolean(ticket.handlerId && ids.has(ticket.handlerId))
+    || ticket.feedbackUsers.some((feedback) => ids.has(feedback.userId))
+    || ticket.replies.some((reply) => ids.has(reply.authorId))
+  ))) reasons.push("tickets");
+
+  if (state.messageRecords.some((message) => (
+    message.reporterPersonId === person.id
+    || Boolean(message.reporterChatIdentityId && identityIds.has(message.reporterChatIdentityId))
+  ))) reasons.push("inboundMessages");
+
+  if (relatedPendingSessionIds.size > 0) reasons.push("pendingSessions");
+
+  if ((state.outboundMessages ?? []).some((message) => (
+    Boolean(message.targetChatIdentityId && identityIds.has(message.targetChatIdentityId))
+    || Boolean(message.relatedSessionId && relatedPendingSessionIds.has(message.relatedSessionId))
+  ))) reasons.push("outboundMessages");
+
+  if ((state.conversations ?? []).some((conversation) => conversation.linkedPersonIds.includes(person.id))) {
+    reasons.push("conversations");
+  }
+
+  if (state.auditLogs.some((entry) => entry.actorId === account.id || entry.actorId === person.id)) {
+    reasons.push("auditLogs");
+  }
+
+  return { deletable: reasons.length === 0, reasons };
 }
 
 export function setUserPasswordInState(

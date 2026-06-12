@@ -61,6 +61,8 @@ import {
   syncAccessRoles,
   updateUser as updateAccessUser,
   upsertMobileAccount as upsertAccessMobileAccount,
+  usableAdminCount as countUsableAdmins,
+  userDeletionHistory as readUserDeletionHistory,
   type BootstrapAdminStoreInput
 } from "./mariadb-access-store";
 
@@ -1875,6 +1877,14 @@ export class MariaDbStateStore {
     await withDatabaseTransaction((connection) => (
       setAccessUserPassword(connection, userId, passwordHash, actor)
     ));
+  }
+
+  async userDeletionHistory(userId: string) {
+    return await readUserDeletionHistory(getDatabasePool(), userId);
+  }
+
+  async usableAdminCount() {
+    return await countUsableAdmins(getDatabasePool());
   }
 
   async syncAccessRoles(userGroups: UserGroup[], actor?: AuthenticatedActor) {

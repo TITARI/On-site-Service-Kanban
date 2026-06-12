@@ -258,6 +258,10 @@ describe("file access repository", () => {
     await repository.setUserEnabled(actor.personId, true, actor);
     const current = await repository.getUser(actor.personId);
     if (!current) throw new Error("user missing");
+    await repository.createAccountSession(current.accountId, "mobile", "group-lock-hash", future);
+    await repository.updateUser(actor.personId, { groupLocked: true }, actor);
+    await expect(repository.resolveAccountSession("group-lock-hash", "mobile")).resolves.toBeUndefined();
+
     await repository.createAccountSession(current.accountId, "mobile", "password-hash", future);
     await repository.setUserPassword(actor.personId, "scrypt$already-hashed", actor);
     await expect(repository.resolveAccountSession("password-hash", "mobile")).resolves.toBeUndefined();
@@ -521,6 +525,86 @@ describe("file access repository", () => {
     })).rejects.toThrow("必须保留至少一位可用后台管理员");
 
     expect(store.snapshot().config.userGroups?.find((group) => group.id === "admin")?.canAdmin).toBe(true);
+  });
+
+  it("detects business history but ignores audits where the user is only the target", async () => {
+    const store = memoryStore();
+    const repository = createFileAppRepository(store);
+    const admin = await repository.bootstrapAdmin({
+      legacyPassword: "legacy-secret",
+      name: "Root Admin",
+      phone: "13700137000",
+      password: "StrongPass123!",
+      group: { mode: "existing", groupId: "admin" }
+    });
+    const created = await repository.createUser({
+      name: "Alice",
+      phone: "13800138000",
+      groupId: "ops",
+      groupLocked: false,
+      enabled: true
+    }, admin);
+    await store.updateState?.((state) => {
+      state.auditLogs?.push({
+        id: "audit-target-only",
+        actorId: "account-other",
+        actorName: "Other Admin",
+        action: "user.update",
+        targetType: "user",
+        targetId: created.personId,
+        detail: {},
+        createdAt: "2026-06-12T00:00:00.000Z"
+      });
+    });
+
+    await expect(repository.userDeletionHistory(created.personId)).resolves.toEqual({
+      deletable: true,
+      reasons: []
+    });
+
+    await store.updateState?.((state) => {
+      state.messageRecords.push({
+        id: "message-history",
+        channel: "wechat",
+        senderName: "Alice",
+        text: "A01 needs help",
+        imageUrls: [],
+        receivedAt: "2026-06-12T00:00:00.000Z",
+        createdAt: "2026-06-12T00:00:00.000Z",
+        reporterPersonId: created.personId,
+        analysis: {
+          confidence: 1,
+          suggestedAction: "create-ticket",
+          reason: "matched"
+        }
+      });
+    });
+
+    await expect(repository.userDeletionHistory(created.personId)).resolves.toEqual({
+      deletable: false,
+      reasons: ["inboundMessages"]
+    });
+    await expect(repository.deleteUser(created.personId, admin)).rejects.toThrow("该用户已有历史记录，仅可停用");
+  });
+
+  it("blocks direct disable and delete calls for the final usable administrator", async () => {
+    const store = memoryStore();
+    const repository = createFileAppRepository(store);
+    const admin = await repository.bootstrapAdmin({
+      legacyPassword: "legacy-secret",
+      name: "Root Admin",
+      phone: "13700137000",
+      password: "StrongPass123!",
+      group: { mode: "existing", groupId: "admin" }
+    });
+
+    await expect(repository.usableAdminCount()).resolves.toBe(1);
+    await expect(repository.setUserEnabled(admin.personId, false, admin)).rejects.toThrow(
+      "必须保留至少一位可用后台管理员"
+    );
+    await expect(repository.deleteUser(admin.personId, admin)).rejects.toThrow(
+      "必须保留至少一位可用后台管理员"
+    );
   });
 
   it("rejects invalid Chinese mobile numbers, disabled users, and disabled groups", async () => {
