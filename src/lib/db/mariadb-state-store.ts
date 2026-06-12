@@ -22,6 +22,7 @@ import type { TicketSummary } from "../domain/ticket-summary";
 import { defaultConfig, normalizeUserGroups, type AppConfig } from "../seed";
 import { normalizeWxautoMcpConfig, syncWxautoMcpMessageIntegration } from "../integrations/wxauto/config";
 import type { AppState } from "../domain/app-state";
+import type { UserImportDecision, UserImportJob } from "../domain/user-import";
 import { createTicketService, type SubmitTicketInput } from "../services/ticket-service";
 import { processWechatWatchtowerMessage, type WatchtowerResult } from "../services/wechat-watchtower-service";
 import {
@@ -55,6 +56,7 @@ import {
   getChatIdentity as getAccessChatIdentity,
   identityByExternalId as readIdentityByExternalId,
   listChatIdentities as listAccessChatIdentities,
+  loadUserImportJob as readUserImportJob,
   listUsers as listAccessUsers,
   recordAdminLoginFailure as recordAccessLoginFailure,
   recordAdminLoginSuccess as recordAccessLoginSuccess,
@@ -64,7 +66,9 @@ import {
   setUserEnabled as setAccessUserEnabled,
   setUserPassword as setAccessUserPassword,
   syncAccessRoles,
+  saveUserImportPreview as saveAccessUserImportPreview,
   unbindChatIdentity as unbindAccessChatIdentity,
+  updateUserImportDecisions as updateAccessUserImportDecisions,
   updateUser as updateAccessUser,
   upsertMobileAccount as upsertAccessMobileAccount,
   usableAdminCount as countUsableAdmins,
@@ -1924,6 +1928,26 @@ export class MariaDbStateStore {
   ) {
     return await withDatabaseTransaction((connection) => (
       unbindAccessChatIdentity(connection, userId, platform, actor)
+    ));
+  }
+
+  async saveUserImportPreview(job: UserImportJob) {
+    return await withDatabaseTransaction((connection) => (
+      saveAccessUserImportPreview(connection, job)
+    ));
+  }
+
+  async loadUserImportJob(jobId: string) {
+    return await readUserImportJob(getDatabasePool(), jobId);
+  }
+
+  async updateUserImportDecisions(
+    jobId: string,
+    ownerAccountId: string,
+    updates: Array<{ rowId: string; decision: UserImportDecision }>
+  ) {
+    return await withDatabaseTransaction((connection) => (
+      updateAccessUserImportDecisions(connection, jobId, ownerAccountId, updates)
     ));
   }
 

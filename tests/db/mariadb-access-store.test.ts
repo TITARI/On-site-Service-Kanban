@@ -6,6 +6,8 @@ import {
   bindChatIdentity,
   createAccountSession,
   resolveAccountSession,
+  loadUserImportJob,
+  saveUserImportPreview,
   syncAccessRoles,
   upsertMobileAccount,
   usableAdminCount,
@@ -184,6 +186,89 @@ describe("MariaDB access store", () => {
     expect(calls.some((call) => call.params.some((param) => (
       typeof param === "string" && param.includes("\"fromPersonId\":\"person-other\"")
     )))).toBe(true);
+  });
+
+  it("stores and reloads a people import preview with conflict snapshots", async () => {
+    const save = recordingConnection([[], []]);
+    const job = {
+      id: "import-job-1",
+      type: "people" as const,
+      ownerAccountId: "account-admin",
+      sourceName: "users.xlsx",
+      sourceHash: "a".repeat(64),
+      previewVersion: "preview-1",
+      status: "preview" as const,
+      createdAt: "2026-06-12T00:00:00.000Z",
+      updatedAt: "2026-06-12T00:00:00.000Z",
+      rows: [{
+        id: "row-1",
+        rowNumber: 2,
+        raw: { 姓名: "张三" },
+        normalized: {
+          name: "张三",
+          phone: "13800138000",
+          groupId: "builder",
+          groupLocked: true,
+          enabled: true,
+          wechatExternalUserId: "wxid-occupied"
+        },
+        errors: [],
+        conflicts: ["wechat-occupied"],
+        allowedActions: ["add" as const, "skip" as const],
+        snapshot: {
+          wechatIdentity: {
+            id: "identity-1",
+            personId: "person-other",
+            lastSeenAt: "2026-06-12T00:00:00.000Z"
+          }
+        }
+      }]
+    };
+
+    await saveUserImportPreview(save.connection, job);
+
+    expect(save.sql()).toContain("INSERT INTO import_jobs");
+    expect(save.sql()).toContain("normalized_payload");
+    expect(save.calls.some((call) => call.params.some((param) => (
+      typeof param === "string" && param.includes("wechat-occupied")
+    )))).toBe(true);
+
+    const load = recordingConnection([
+      [{
+        id: job.id,
+        type: "people",
+        owner_account_id: job.ownerAccountId,
+        source_name: job.sourceName,
+        source_hash: job.sourceHash,
+        preview_version: job.previewVersion,
+        status: "preview",
+        created_at: rowDate(),
+        updated_at: rowDate()
+      }],
+      [{
+        id: "row-1",
+        row_number: 2,
+        raw_payload: JSON.stringify(job.rows[0].raw),
+        normalized_payload: JSON.stringify(job.rows[0].normalized),
+        conflict_json: JSON.stringify({
+          errors: [],
+          conflicts: ["wechat-occupied"],
+          allowedActions: ["add", "skip"],
+          snapshot: job.rows[0].snapshot
+        }),
+        decision_json: null,
+        result_action: null,
+        message: null
+      }]
+    ]);
+
+    const restored = await loadUserImportJob(load.connection, job.id);
+
+    expect(restored?.rows[0]).toMatchObject({
+      normalized: job.rows[0].normalized,
+      conflicts: ["wechat-occupied"],
+      snapshot: job.rows[0].snapshot
+    });
   });
 
   it("updates a mobile user and its single account role", async () => {

@@ -17,6 +17,7 @@ import type {
   UserQuery
 } from "../domain/access-control";
 import { toTicketSummary, type TicketSummary } from "../domain/ticket-summary";
+import type { UserImportDecision, UserImportJob } from "../domain/user-import";
 import { MariaDbStateStore, type WechatOrderLog } from "../db/mariadb-state-store";
 import { resolveStorageMode, type StorageMode } from "../db/storage-mode";
 import type { BoothRecord } from "../domain/types";
@@ -126,6 +127,13 @@ export type AppRepository = {
   identityByExternalId(platform: MessageChannel, externalUserId: string): Promise<ManagedChatIdentity | undefined>;
   bindChatIdentity(input: ChatIdentityBindingMutation, actor: AuthenticatedActor): Promise<UserListItem>;
   unbindChatIdentity(userId: string, platform: MessageChannel, actor: AuthenticatedActor): Promise<UserListItem>;
+  saveUserImportPreview(job: UserImportJob): Promise<UserImportJob>;
+  loadUserImportJob(jobId: string): Promise<UserImportJob | undefined>;
+  updateUserImportDecisions(
+    jobId: string,
+    ownerAccountId: string,
+    updates: Array<{ rowId: string; decision: UserImportDecision }>
+  ): Promise<UserImportJob>;
   syncAccessRoles(userGroups: UserGroup[], actor?: AuthenticatedActor): Promise<void>;
 };
 
@@ -163,6 +171,9 @@ type AccessRepositoryStore = Omit<Pick<AppRepository,
   | "identityByExternalId"
   | "bindChatIdentity"
   | "unbindChatIdentity"
+  | "saveUserImportPreview"
+  | "loadUserImportJob"
+  | "updateUserImportDecisions"
   | "syncAccessRoles"
 >, "bootstrapAdmin"> & {
   bootstrapAdmin(
@@ -369,6 +380,29 @@ export function createFileAppRepository(store: StateFileRepository = {
     unbindChatIdentity: (userId, platform, actor) => updateState((state) => (
       unbindChatIdentityInState(state, userId, platform, actor)
     )),
+    saveUserImportPreview: (job) => updateState((state) => {
+      state.userImportJobs ??= [];
+      state.userImportJobs = state.userImportJobs.filter((item) => item.id !== job.id);
+      state.userImportJobs.push(structuredClone(job));
+      return structuredClone(job);
+    }),
+    loadUserImportJob: async (jobId) => {
+      const state = await store.readState();
+      const job = state.userImportJobs?.find((item) => item.id === jobId);
+      return job ? structuredClone(job) : undefined;
+    },
+    updateUserImportDecisions: (jobId, ownerAccountId, updates) => updateState((state) => {
+      const job = state.userImportJobs?.find((item) => item.id === jobId);
+      if (!job || job.ownerAccountId !== ownerAccountId) throw new Error("导入预览不存在");
+      if (job.status !== "preview") throw new Error("导入预览已不能修改");
+      for (const update of updates) {
+        const row = job.rows.find((item) => item.id === update.rowId);
+        if (!row) throw new Error("导入行不存在");
+        row.decision = structuredClone(update.decision);
+      }
+      job.updatedAt = new Date().toISOString();
+      return structuredClone(job);
+    }),
     syncAccessRoles: (userGroups, actor) => updateState((state) => {
       syncAccessRolesInState(state, userGroups, actor);
     })
@@ -430,6 +464,11 @@ export function createMariaDbAppRepository(
     identityByExternalId: (platform, externalUserId) => store.identityByExternalId(platform, externalUserId),
     bindChatIdentity: (input, actor) => store.bindChatIdentity(input, actor),
     unbindChatIdentity: (userId, platform, actor) => store.unbindChatIdentity(userId, platform, actor),
+    saveUserImportPreview: (job) => store.saveUserImportPreview(job),
+    loadUserImportJob: (jobId) => store.loadUserImportJob(jobId),
+    updateUserImportDecisions: (jobId, ownerAccountId, updates) => (
+      store.updateUserImportDecisions(jobId, ownerAccountId, updates)
+    ),
     syncAccessRoles: (userGroups, actor) => store.syncAccessRoles(userGroups, actor)
   };
 }

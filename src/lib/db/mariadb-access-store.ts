@@ -18,6 +18,11 @@ import type {
 } from "../domain/access-control";
 import { PERMISSION_CODES, permissionCodesForGroup } from "../domain/access-control";
 import type { MessageChannel, UserGroup } from "../domain/types";
+import type {
+  UserImportDecision,
+  UserImportJob,
+  UserImportRow
+} from "../domain/user-import";
 import type { AppConfig } from "../seed";
 import type { DatabaseConnection } from "./connection";
 
@@ -53,6 +58,18 @@ async function execute(
 
 function bool(value: unknown) {
   return value === true || value === 1 || value === "1";
+}
+
+function parsedJson<T>(value: unknown, fallback: T): T {
+  if (value === null || value === undefined || value === "") return fallback;
+  if (typeof value === "string") {
+    try {
+      return JSON.parse(value) as T;
+    } catch {
+      return fallback;
+    }
+  }
+  return value as T;
 }
 
 function iso(value: unknown): string | undefined {
@@ -1333,6 +1350,159 @@ export async function unbindChatIdentity(
   const user = await getUser(connection, personId);
   if (!user) throw new Error("用户解绑结果不可用");
   return user;
+}
+
+export async function saveUserImportPreview(
+  connection: DatabaseConnection,
+  job: UserImportJob
+) {
+  const createdAt = new Date(job.createdAt);
+  const updatedAt = new Date(job.updatedAt);
+  await execute(
+    connection,
+    `INSERT INTO import_jobs (
+       id, type, source_name, status, total_rows, success_rows, failed_rows,
+       owner_account_id, source_hash, preview_version, created_at, updated_at, completed_at
+     ) VALUES (?, 'people', ?, ?, ?, 0, 0, ?, ?, ?, ?, ?, NULL)`,
+    [
+      job.id,
+      job.sourceName,
+      job.status,
+      job.rows.length,
+      job.ownerAccountId,
+      job.sourceHash,
+      job.previewVersion,
+      createdAt,
+      updatedAt
+    ]
+  );
+  for (const row of job.rows) {
+    await execute(
+      connection,
+      `INSERT INTO import_job_rows (
+         id, job_id, \`row_number\`, status, message, raw_payload,
+         normalized_payload, conflict_json, decision_json, result_action,
+         created_at, updated_at
+       ) VALUES (?, ?, ?, 'preview', NULL, ?, ?, ?, NULL, NULL, ?, ?)`,
+      [
+        row.id,
+        job.id,
+        row.rowNumber,
+        JSON.stringify(row.raw),
+        JSON.stringify(row.normalized),
+        JSON.stringify({
+          errors: row.errors,
+          conflicts: row.conflicts,
+          allowedActions: row.allowedActions,
+          snapshot: row.snapshot
+        }),
+        createdAt,
+        updatedAt
+      ]
+    );
+  }
+  return job;
+}
+
+export async function loadUserImportJob(
+  connection: DatabaseConnection,
+  jobId: string
+) {
+  const [jobRow] = await rows<Row>(
+    connection,
+    `SELECT *
+     FROM import_jobs
+     WHERE id = ? AND type = 'people'
+     LIMIT 1`,
+    [jobId]
+  );
+  if (!jobRow) return undefined;
+  const rowData = await rows<Row>(
+    connection,
+    `SELECT *
+     FROM import_job_rows
+     WHERE job_id = ?
+     ORDER BY \`row_number\`, id`,
+    [jobId]
+  );
+  const importRows = rowData.map((row): UserImportRow => {
+    const conflict = parsedJson<{
+      errors?: string[];
+      conflicts?: string[];
+      allowedActions?: UserImportRow["allowedActions"];
+      snapshot?: UserImportRow["snapshot"];
+    }>(row.conflict_json, {});
+    return {
+      id: String(row.id),
+      rowNumber: Number(row.row_number),
+      raw: parsedJson(row.raw_payload, {}),
+      normalized: parsedJson(row.normalized_payload, {
+        name: "",
+        phone: "",
+        groupId: "",
+        groupLocked: false,
+        enabled: true
+      }),
+      errors: conflict.errors ?? [],
+      conflicts: conflict.conflicts ?? [],
+      allowedActions: conflict.allowedActions ?? ["skip"],
+      snapshot: conflict.snapshot,
+      decision: parsedJson<UserImportDecision | undefined>(row.decision_json, undefined),
+      resultAction: row.result_action ? String(row.result_action) : undefined,
+      resultMessage: row.message ? String(row.message) : undefined
+    };
+  });
+  return {
+    id: String(jobRow.id),
+    type: "people" as const,
+    ownerAccountId: String(jobRow.owner_account_id ?? ""),
+    sourceName: String(jobRow.source_name),
+    sourceHash: String(jobRow.source_hash ?? ""),
+    previewVersion: String(jobRow.preview_version ?? ""),
+    status: String(jobRow.status) as UserImportJob["status"],
+    createdAt: requiredIso(jobRow.created_at),
+    updatedAt: requiredIso(jobRow.updated_at ?? jobRow.created_at),
+    completedAt: iso(jobRow.completed_at),
+    rows: importRows
+  };
+}
+
+export async function updateUserImportDecisions(
+  connection: DatabaseConnection,
+  jobId: string,
+  ownerAccountId: string,
+  updates: Array<{ rowId: string; decision: UserImportDecision }>
+) {
+  const [job] = await rows<Row>(
+    connection,
+    `SELECT id, status
+     FROM import_jobs
+     WHERE id = ? AND type = 'people' AND owner_account_id = ?
+     LIMIT 1
+     FOR UPDATE`,
+    [jobId, ownerAccountId]
+  );
+  if (!job) throw new Error("导入预览不存在");
+  if (String(job.status) !== "preview") throw new Error("导入预览已不能修改");
+  const now = new Date();
+  for (const update of updates) {
+    const result = await execute(
+      connection,
+      `UPDATE import_job_rows
+       SET decision_json = ?, updated_at = ?
+       WHERE id = ? AND job_id = ?`,
+      [JSON.stringify(update.decision), now, update.rowId, jobId]
+    );
+    if (result.affectedRows !== 1) throw new Error("导入行不存在");
+  }
+  await execute(
+    connection,
+    "UPDATE import_jobs SET updated_at = ? WHERE id = ?",
+    [now, jobId]
+  );
+  const updated = await loadUserImportJob(connection, jobId);
+  if (!updated) throw new Error("导入预览不存在");
+  return updated;
 }
 
 export async function usableAdminCount(connection: DatabaseConnection) {

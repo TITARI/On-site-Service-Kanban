@@ -200,6 +200,56 @@ describe("file access repository", () => {
     ]));
   });
 
+  it("persists import previews and row decisions without changing user records", async () => {
+    const store = memoryStore();
+    const repository = createFileAppRepository(store);
+    const beforePeople = store.snapshot().people;
+    const job = {
+      id: "import-job-1",
+      type: "people" as const,
+      ownerAccountId: "account-admin",
+      sourceName: "users.xlsx",
+      sourceHash: "a".repeat(64),
+      previewVersion: "preview-1",
+      status: "preview" as const,
+      createdAt: "2026-06-12T00:00:00.000Z",
+      updatedAt: "2026-06-12T00:00:00.000Z",
+      rows: [{
+        id: "row-1",
+        rowNumber: 2,
+        raw: { 姓名: "张三" },
+        normalized: {
+          name: "张三",
+          phone: "13800138000",
+          groupId: "ops",
+          groupLocked: false,
+          enabled: true
+        },
+        errors: [],
+        conflicts: [],
+        allowedActions: ["add" as const, "skip" as const]
+      }]
+    };
+
+    await repository.saveUserImportPreview(job);
+    const updated = await repository.updateUserImportDecisions(
+      job.id,
+      job.ownerAccountId,
+      [{
+        rowId: "row-1",
+        decision: {
+          action: "add",
+          confirmWechatRebind: false,
+          confirmWecomRebind: false
+        }
+      }]
+    );
+
+    expect(updated.rows[0].decision?.action).toBe("add");
+    expect((await repository.loadUserImportJob(job.id))?.sourceHash).toBe(job.sourceHash);
+    expect(store.snapshot().people).toEqual(beforePeople);
+  });
+
   it("derives actors only through account roles and role permissions", async () => {
     const store = memoryStore();
     const repository = createFileAppRepository(store);

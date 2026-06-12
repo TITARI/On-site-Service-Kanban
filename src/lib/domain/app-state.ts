@@ -19,6 +19,7 @@ import type {
   RolePermission
 } from "./access-control";
 import type { AppConfig } from "../seed";
+import type { UserImportJob } from "./user-import";
 
 export type AppState = {
   booths: BoothRecord[];
@@ -37,5 +38,6 @@ export type AppState = {
   accountSessions?: AccountSession[];
   auditLogs?: AuditLogEntry[];
   authBootstrap?: AuthBootstrapState;
+  userImportJobs?: UserImportJob[];
   config: AppConfig;
 };
