@@ -320,7 +320,7 @@ export function createFileAppRepository(store: StateFileRepository = {
 }
 
 export function createMariaDbAppRepository(
-  store: AutoAcceptanceStore = new MariaDbStateStore() as AutoAcceptanceStore
+  store: AutoAcceptanceStore = new MariaDbStateStore()
 ): AppRepository {
   return {
     kind: "mariadb",

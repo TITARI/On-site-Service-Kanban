@@ -33,6 +33,34 @@ import {
 } from "../services/auto-acceptance-service";
 import type { IntakeMessageInput } from "../services/message-intake-service";
 import { getDatabasePool, type DatabaseConnection, withDatabaseTransaction } from "./connection";
+import type {
+  AuthenticatedActor,
+  MobileAccountInput,
+  SessionType,
+  UserMutation,
+  UserQuery
+} from "../domain/access-control";
+import {
+  adminLoginRecord as readAdminLoginRecord,
+  bootstrapAdmin as bootstrapAdminAccess,
+  bootstrapStatus as readBootstrapStatus,
+  createAccountSession as createAccessSession,
+  createUser as createAccessUser,
+  deleteUser as deleteAccessUser,
+  getUser as getAccessUser,
+  listUsers as listAccessUsers,
+  recordAdminLoginFailure as recordAccessLoginFailure,
+  recordAdminLoginSuccess as recordAccessLoginSuccess,
+  resolveAccountSession as resolveAccessSession,
+  revokeAccountSession as revokeAccessSession,
+  revokeAccountSessions as revokeAccessSessions,
+  setUserEnabled as setAccessUserEnabled,
+  setUserPassword as setAccessUserPassword,
+  syncAccessRoles,
+  updateUser as updateAccessUser,
+  upsertMobileAccount as upsertAccessMobileAccount,
+  type BootstrapAdminStoreInput
+} from "./mariadb-access-store";
 
 type Row = RowDataPacket & Record<string, unknown>;
 type SqlValue = string | number | boolean | Date | null;
@@ -142,7 +170,9 @@ async function readPeople(connection: DatabaseConnection): Promise<Person[]> {
     name: String(row.name),
     phone: String(row.phone),
     role: row.role as Person["role"],
+    groupId: row.group_id ? String(row.group_id) : undefined,
     groupName: String(row.group_name_snapshot ?? ""),
+    groupLocked: bool(row.group_locked),
     nameConflict: parseJsonValue<Person["nameConflict"] | undefined>(row.name_conflict, undefined),
     boothScope: parseJsonValue<string[] | undefined>(row.booth_scope, undefined),
     enabled: bool(row.enabled),
@@ -886,15 +916,17 @@ async function writePeople(connection: DatabaseConnection, people: Person[], now
     await execute(
       connection,
       `INSERT INTO people (
-        id, name, phone, role, group_id, group_name_snapshot, name_conflict, booth_scope, enabled, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        id, name, phone, role, group_id, group_name_snapshot, group_locked,
+        name_conflict, booth_scope, enabled, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         person.id,
         person.name,
         person.phone,
         person.role,
-        null,
+        person.groupId ?? null,
         person.groupName,
+        person.groupLocked ?? false,
         person.nameConflict ? json(person.nameConflict) : null,
         person.boothScope ? json(person.boothScope) : null,
         person.enabled,
@@ -1503,6 +1535,7 @@ export class MariaDbStateStore {
   async saveConfig(config: AppConfig) {
     await withDatabaseTransaction(async (connection) => {
       await replaceConfigTables(connection, config);
+      await syncAccessRoles(connection, config.userGroups ?? []);
     });
     return config;
   }
@@ -1661,6 +1694,7 @@ export class MariaDbStateStore {
       await writeInboundMessages(target, state.messageRecords, now);
       await writePendingSessions(target, state.pendingWorkOrderSessions ?? [], now);
       await writeOutboundMessages(target, state.outboundMessages ?? [], now);
+      await syncAccessRoles(target, state.config.userGroups ?? [], now);
     };
 
     if (connection) {
@@ -1726,6 +1760,127 @@ export class MariaDbStateStore {
       status: String(row.status),
       createdAt: requiredIso(row.created_at)
     }));
+  }
+
+  async upsertMobileAccount(input: MobileAccountInput) {
+    return await withDatabaseTransaction(async (connection) => {
+      const config = await latestConfig(connection);
+      await syncAccessRoles(connection, config.userGroups ?? []);
+      return await upsertAccessMobileAccount(connection, config, input);
+    });
+  }
+
+  async createAccountSession(
+    accountId: string,
+    type: SessionType,
+    tokenHash: string,
+    expiresAt: string
+  ) {
+    return await withDatabaseTransaction((connection) => (
+      createAccessSession(connection, accountId, type, tokenHash, expiresAt)
+    ));
+  }
+
+  async resolveAccountSession(tokenHash: string, type: SessionType) {
+    return await resolveAccessSession(getDatabasePool(), tokenHash, type);
+  }
+
+  async revokeAccountSession(tokenHash: string) {
+    await withDatabaseTransaction((connection) => revokeAccessSession(connection, tokenHash));
+  }
+
+  async revokeAccountSessions(accountId: string) {
+    await withDatabaseTransaction((connection) => revokeAccessSessions(connection, accountId));
+  }
+
+  async adminLoginRecord(phone: string) {
+    return await readAdminLoginRecord(getDatabasePool(), phone);
+  }
+
+  async recordAdminLoginFailure(accountId: string, lockedUntil?: string) {
+    await withDatabaseTransaction((connection) => (
+      recordAccessLoginFailure(connection, accountId, lockedUntil)
+    ));
+  }
+
+  async recordAdminLoginSuccess(accountId: string) {
+    await withDatabaseTransaction((connection) => recordAccessLoginSuccess(connection, accountId));
+  }
+
+  async bootstrapStatus() {
+    return await readBootstrapStatus(getDatabasePool());
+  }
+
+  async bootstrapAdmin(input: BootstrapAdminStoreInput) {
+    return await withDatabaseTransaction(async (connection) => {
+      const result = await bootstrapAdminAccess(connection, await latestConfig(connection), input);
+      await replaceConfigTables(connection, result.config);
+      await syncAccessRoles(connection, result.config.userGroups ?? []);
+      const actor = await readAdminLoginRecord(connection, input.phone);
+      if (!actor) throw new Error("管理员初始化结果不可用");
+      return actor.actor;
+    });
+  }
+
+  async listUsers(query: UserQuery) {
+    return await listAccessUsers(getDatabasePool(), query);
+  }
+
+  async getUser(userId: string) {
+    return await getAccessUser(getDatabasePool(), userId);
+  }
+
+  async createUser(input: UserMutation, actor: AuthenticatedActor) {
+    return await withDatabaseTransaction((connection) => createAccessUser(connection, input, actor));
+  }
+
+  async updateUser(
+    userId: string,
+    input: Partial<UserMutation>,
+    actor: AuthenticatedActor
+  ) {
+    return await withDatabaseTransaction((connection) => (
+      updateAccessUser(connection, userId, input, actor)
+    ));
+  }
+
+  async setUserEnabled(userId: string, enabled: boolean, actor: AuthenticatedActor) {
+    return await withDatabaseTransaction((connection) => (
+      setAccessUserEnabled(connection, userId, enabled, actor)
+    ));
+  }
+
+  async deleteUser(userId: string, actor: AuthenticatedActor) {
+    await withDatabaseTransaction((connection) => deleteAccessUser(connection, userId, actor));
+  }
+
+  async setUserPassword(userId: string, passwordHash: string, actor: AuthenticatedActor) {
+    await withDatabaseTransaction((connection) => (
+      setAccessUserPassword(connection, userId, passwordHash, actor)
+    ));
+  }
+
+  async syncAccessRoles(userGroups: UserGroup[], actor?: AuthenticatedActor) {
+    await withDatabaseTransaction(async (connection) => {
+      await syncAccessRoles(connection, userGroups);
+      const now = new Date();
+      await execute(
+        connection,
+        `INSERT INTO audit_logs (
+          id, actor_id, actor_name, action, target_type, target_id, detail_json, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          stableId("audit", `access.roles.sync:${now.toISOString()}:${crypto.randomUUID()}`),
+          actor?.accountId ?? null,
+          actor?.name ?? "system",
+          "access.roles.sync",
+          "user_groups",
+          null,
+          json({ groupIds: userGroups.map((group) => group.id) }),
+          now
+        ]
+      );
+    });
   }
 }
 
