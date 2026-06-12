@@ -21,6 +21,7 @@ import {
   type UserQuery
 } from "../domain/access-control";
 import type { MessageChannel, Person, UserGroup } from "../domain/types";
+import type { UserImportApplyResult } from "../domain/user-import";
 
 type AccessState = AppState & {
   people: NonNullable<AppState["people"]>;
@@ -1128,4 +1129,151 @@ export function setUserPasswordInState(
   audit(state, "user.password.set", "user", account.personId, {
     passwordChanged: true
   }, actor);
+}
+
+function sameIdentitySnapshot(
+  identity: AccessState["chatIdentities"][number] | undefined,
+  snapshot: { id: string; personId?: string; lastSeenAt: string } | undefined
+) {
+  if (!identity && !snapshot) return true;
+  return Boolean(
+    identity
+    && snapshot
+    && identity.id === snapshot.id
+    && identity.personId === snapshot.personId
+    && identity.lastSeenAt === snapshot.lastSeenAt
+  );
+}
+
+export function applyUserImportInState(
+  stateInput: AppState,
+  jobId: string,
+  ownerAccountId: string,
+  actor: AuthenticatedActor
+): UserImportApplyResult {
+  const state = normalizeAccessState(stateInput);
+  state.userImportJobs ??= [];
+  const job = state.userImportJobs.find((item) => item.id === jobId);
+  if (!job || job.ownerAccountId !== ownerAccountId) throw new Error("导入预览不存在");
+  if (job.status !== "preview") throw new Error("导入预览已不能提交");
+  const selectedRows = job.rows.filter((row) => row.decision && row.decision.action !== "skip");
+  const staleRows: typeof job.rows = [];
+
+  for (const row of selectedRows) {
+    const decision = row.decision!;
+    const group = groupOf(state, row.normalized.groupId);
+    const account = state.accounts.find((item) => item.loginName === row.normalized.phone);
+    const currentUser = account ? getUserFromState(state, account.id) : undefined;
+    const currentWechat = row.normalized.wechatExternalUserId
+      ? state.chatIdentities.find((identity) => (
+          identity.platform === "wechat"
+          && identity.externalUserId === row.normalized.wechatExternalUserId
+        ))
+      : undefined;
+    const currentWecom = row.normalized.wecomExternalUserId
+      ? state.chatIdentities.find((identity) => (
+          identity.platform === "wecom"
+          && identity.externalUserId === row.normalized.wecomExternalUserId
+        ))
+      : undefined;
+    const targetPersonId = currentUser?.personId;
+    const stale = (
+      !group?.enabled
+      || (decision.action === "add" && Boolean(currentUser))
+      || (
+        decision.action === "overwrite"
+        && (
+          !currentUser
+          || currentUser.personId !== row.snapshot?.existingUser?.personId
+          || currentUser.updatedAt !== row.snapshot?.existingUser?.updatedAt
+        )
+      )
+      || !sameIdentitySnapshot(currentWechat, row.snapshot?.wechatIdentity)
+      || !sameIdentitySnapshot(currentWecom, row.snapshot?.wecomIdentity)
+      || Boolean(
+        currentWechat?.personId
+        && currentWechat.personId !== targetPersonId
+        && !decision.confirmWechatRebind
+      )
+      || Boolean(
+        currentWecom?.personId
+        && currentWecom.personId !== targetPersonId
+        && !decision.confirmWecomRebind
+      )
+    );
+    if (stale) {
+      if (!row.conflicts.includes("stale-preview")) row.conflicts.push("stale-preview");
+      row.resultMessage = "导入数据已变化，请重新处理冲突";
+      staleRows.push(row);
+    }
+  }
+
+  job.updatedAt = nowIso();
+  if (staleRows.length > 0) return { job: structuredClone(job), stale: true };
+
+  for (const row of job.rows) {
+    const decision = row.decision;
+    if (!decision || decision.action === "skip") {
+      row.resultAction = "skip";
+      row.resultMessage = "已跳过";
+      continue;
+    }
+    const mutation = {
+      name: row.normalized.name,
+      phone: row.normalized.phone,
+      groupId: row.normalized.groupId,
+      groupLocked: row.normalized.groupLocked,
+      enabled: row.normalized.enabled
+    };
+    const user = decision.action === "add"
+      ? createUserInState(state, mutation, actor)
+      : updateUserInState(
+          state,
+          row.snapshot?.existingUser?.personId ?? row.normalized.phone,
+          mutation,
+          actor
+        );
+    if (row.normalized.wechatExternalUserId) {
+      const identity = state.chatIdentities.find((item) => (
+        item.platform === "wechat"
+        && item.externalUserId === row.normalized.wechatExternalUserId
+      ));
+      bindChatIdentityInState(state, {
+        userId: user.personId,
+        platform: "wechat",
+        identityId: identity?.id,
+        externalUserId: row.normalized.wechatExternalUserId,
+        displayName: identity?.displayName || row.normalized.name,
+        confirmedRebindFromPersonId: decision.confirmWechatRebind ? identity?.personId : undefined
+      }, actor);
+    }
+    if (row.normalized.wecomExternalUserId) {
+      const identity = state.chatIdentities.find((item) => (
+        item.platform === "wecom"
+        && item.externalUserId === row.normalized.wecomExternalUserId
+      ));
+      bindChatIdentityInState(state, {
+        userId: user.personId,
+        platform: "wecom",
+        identityId: identity?.id,
+        externalUserId: row.normalized.wecomExternalUserId,
+        displayName: identity?.displayName || row.normalized.name,
+        confirmedRebindFromPersonId: decision.confirmWecomRebind ? identity?.personId : undefined
+      }, actor);
+    }
+    row.resultAction = decision.action;
+    row.resultMessage = decision.action === "add" ? "新增成功" : "覆盖成功";
+  }
+
+  job.status = "completed";
+  job.completedAt = nowIso();
+  job.updatedAt = job.completedAt;
+  audit(state, "user_import.commit", "import_job", job.id, {
+    sourceName: job.sourceName,
+    totalRows: job.rows.length,
+    selectedRows: selectedRows.length,
+    addedRows: job.rows.filter((row) => row.resultAction === "add").length,
+    overwrittenRows: job.rows.filter((row) => row.resultAction === "overwrite").length
+  }, actor);
+  return { job: structuredClone(job), stale: false };
 }

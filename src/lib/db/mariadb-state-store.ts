@@ -45,6 +45,7 @@ import type {
 } from "../domain/access-control";
 import {
   adminLoginRecord as readAdminLoginRecord,
+  applyUserImport as applyAccessUserImport,
   assertUsableAdminAfterGroupChange,
   bootstrapAdmin as bootstrapAdminAccess,
   bootstrapStatus as readBootstrapStatus,
@@ -1948,6 +1949,16 @@ export class MariaDbStateStore {
   ) {
     return await withDatabaseTransaction((connection) => (
       updateAccessUserImportDecisions(connection, jobId, ownerAccountId, updates)
+    ));
+  }
+
+  async applyUserImport(
+    jobId: string,
+    ownerAccountId: string,
+    actor: AuthenticatedActor
+  ) {
+    return await withDatabaseTransaction((connection) => (
+      applyAccessUserImport(connection, jobId, ownerAccountId, actor)
     ));
   }
 

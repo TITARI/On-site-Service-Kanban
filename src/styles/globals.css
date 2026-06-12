@@ -2059,6 +2059,17 @@ textarea {
   white-space: nowrap;
 }
 
+.admin-user-toolbar-actions {
+  display: flex;
+  gap: 7px;
+}
+
+.admin-user-toolbar-actions button {
+  min-height: 40px;
+  border-radius: 6px;
+  white-space: nowrap;
+}
+
 .admin-user-list-message,
 .admin-user-editor-message {
   margin: 0;
@@ -2466,6 +2477,352 @@ textarea {
   border-radius: 6px;
 }
 
+.admin-import-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+}
+
+.admin-import-scrim {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  border: 0;
+  border-radius: 0;
+  background: rgba(18, 30, 24, 0.4);
+  cursor: default;
+}
+
+.admin-import-panel {
+  position: absolute;
+  inset: 3vh 3vw;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  max-width: 1180px;
+  margin: 0 auto;
+  border-radius: 8px;
+  background: #fffdf8;
+  box-shadow: 0 28px 70px rgba(23, 35, 29, 0.26);
+  overflow: hidden;
+}
+
+.admin-import-panel > header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  border-bottom: 1px solid var(--line);
+  padding: 18px 22px;
+}
+
+.admin-import-panel h2 {
+  margin: 0;
+  color: var(--green-deep);
+  font-size: 22px;
+}
+
+.admin-import-steps {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0;
+  margin: 0;
+  padding: 0 22px;
+  background: #f4f7f3;
+  list-style: none;
+}
+
+.admin-import-steps li {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 46px;
+  border-bottom: 2px solid transparent;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.admin-import-steps li > span {
+  display: grid;
+  width: 22px;
+  height: 22px;
+  place-items: center;
+  border-radius: 999px;
+  background: #e4e8e4;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.admin-import-steps li.active {
+  border-bottom-color: var(--green);
+  color: var(--green-deep);
+}
+
+.admin-import-steps li.active > span {
+  background: var(--green);
+  color: #fff;
+}
+
+.admin-import-body {
+  min-height: 0;
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  padding: 20px 22px 24px;
+  overflow: auto;
+}
+
+.admin-import-upload {
+  display: grid;
+  width: min(100%, 720px);
+  gap: 16px;
+  margin: 3vh auto 0;
+}
+
+.admin-import-template {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  border-bottom: 1px solid var(--line);
+  padding: 0 0 16px;
+  color: var(--green);
+}
+
+.admin-import-template > div {
+  display: grid;
+  gap: 3px;
+}
+
+.admin-import-template strong {
+  color: var(--green-deep);
+  font-size: 14px;
+}
+
+.admin-import-template span {
+  color: var(--muted);
+  font-size: 11.5px;
+  overflow-wrap: anywhere;
+}
+
+.admin-import-template button,
+.admin-import-upload > button {
+  border-radius: 6px;
+}
+
+.admin-import-file {
+  display: grid;
+  min-height: 150px;
+  place-items: center;
+  align-content: center;
+  gap: 8px;
+  border: 1px dashed rgba(31, 106, 77, 0.3);
+  border-radius: 8px;
+  background: #f7faf6;
+  color: var(--green);
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.admin-import-file input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+
+.admin-import-preview {
+  min-width: 0;
+  display: grid;
+  gap: 12px;
+}
+
+.admin-import-summary {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.admin-import-summary > div {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.admin-import-summary button {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 7px 9px;
+  background: #fff;
+  color: var(--green);
+  font-size: 11.5px;
+  font-weight: 900;
+}
+
+.admin-import-table {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.admin-import-row {
+  display: grid;
+  grid-template-columns: 42px minmax(130px, 1fr) 90px minmax(160px, 1.1fr) minmax(170px, 1.2fr) minmax(150px, 0.9fr);
+  gap: 9px;
+  align-items: center;
+  min-height: 58px;
+  border-bottom: 1px solid rgba(31, 106, 77, 0.08);
+  padding: 8px 10px;
+  color: #4f5b54;
+  font-size: 12px;
+}
+
+.admin-import-row:last-child {
+  border-bottom: 0;
+}
+
+.admin-import-head {
+  min-height: 36px;
+  background: #f3f7f3;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.admin-import-row > div {
+  min-width: 0;
+}
+
+.admin-import-row strong,
+.admin-import-row small {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.admin-import-row strong {
+  color: var(--ink);
+}
+
+.admin-import-row small {
+  color: var(--muted);
+  font-size: 10.5px;
+}
+
+.admin-import-identities,
+.admin-import-issues,
+.admin-import-decision {
+  display: grid;
+  gap: 4px;
+}
+
+.admin-import-issues em {
+  justify-self: start;
+  border-radius: 999px;
+  padding: 2px 6px;
+  background: #fff1dd;
+  color: var(--amber);
+  font-size: 10.5px;
+  font-style: normal;
+  font-weight: 900;
+}
+
+.admin-import-issues em.error {
+  background: #ffe8e4;
+  color: var(--red);
+}
+
+.admin-import-issues em.success {
+  background: var(--green-soft);
+  color: var(--green);
+}
+
+.admin-import-decision select {
+  min-height: 34px;
+  border-radius: 6px;
+  padding-block: 5px;
+  background: #fff;
+  font-size: 12px;
+}
+
+.admin-import-decision label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--red);
+  font-size: 10.5px;
+  font-weight: 900;
+}
+
+.admin-import-decision input {
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  accent-color: var(--red);
+}
+
+.admin-import-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.admin-import-actions button {
+  border-radius: 6px;
+}
+
+.admin-import-result {
+  display: grid;
+  width: min(100%, 520px);
+  gap: 14px;
+  justify-items: center;
+  margin: 8vh auto 0;
+  color: var(--green);
+  text-align: center;
+}
+
+.admin-import-result h3 {
+  margin: 0;
+  color: var(--green-deep);
+  font-size: 22px;
+}
+
+.admin-import-result > div {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+}
+
+.admin-import-result > div span {
+  border-radius: 999px;
+  padding: 5px 10px;
+  background: var(--green-soft);
+  color: var(--green-deep);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.admin-import-result a,
+.admin-import-result button {
+  min-width: 180px;
+  border-radius: 6px;
+  text-decoration: none;
+}
+
+.admin-import-error {
+  margin: 0;
+  border-radius: 6px;
+  padding: 9px 11px;
+  background: #fff0ed;
+  color: var(--red);
+  font-size: 12.5px;
+  font-weight: 900;
+}
+
 .admin-user-editor-actions {
   display: flex;
   justify-content: flex-end;
@@ -2510,6 +2867,11 @@ textarea {
 
   .admin-user-create {
     justify-self: stretch;
+  }
+
+  .admin-user-toolbar-actions {
+    grid-column: span 2;
+    justify-content: flex-end;
   }
 
   .admin-user-head {
@@ -2586,8 +2948,13 @@ textarea {
   }
 
   .admin-user-search,
-  .admin-user-create {
+  .admin-user-toolbar-actions {
     grid-column: 1 / -1;
+  }
+
+  .admin-user-toolbar-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .admin-user-row {
@@ -2610,6 +2977,65 @@ textarea {
 
   .admin-user-binding-fields {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 900px) {
+  .admin-import-panel {
+    inset: 0;
+    border-radius: 0;
+  }
+
+  .admin-import-row {
+    grid-template-columns: 34px minmax(120px, 1fr) minmax(120px, 1fr);
+  }
+
+  .admin-import-row > :nth-child(4),
+  .admin-import-row > :nth-child(5),
+  .admin-import-row > :nth-child(6) {
+    grid-column: 2 / -1;
+  }
+
+  .admin-import-head {
+    display: none;
+  }
+
+  .admin-import-summary {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .admin-import-summary > div {
+    width: 100%;
+    margin-left: 0;
+    overflow-x: auto;
+  }
+}
+
+@media (max-width: 560px) {
+  .admin-import-panel > header,
+  .admin-import-body {
+    padding-inline: 14px;
+  }
+
+  .admin-import-steps {
+    padding-inline: 8px;
+  }
+
+  .admin-import-template {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .admin-import-template button {
+    grid-column: 1 / -1;
+  }
+
+  .admin-import-row {
+    grid-template-columns: 30px minmax(0, 1fr);
+  }
+
+  .admin-import-row > :nth-child(n + 3) {
+    grid-column: 2;
   }
 }
 

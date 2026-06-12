@@ -14,8 +14,10 @@ import {
   Search,
   Trash2,
   Unlink,
+  Upload,
   X
 } from "lucide-react";
+import { AdminUserImport } from "@/components/admin-user-import";
 import {
   type ManagedChatIdentity,
   permissionCodesForGroup,
@@ -162,6 +164,7 @@ export function AdminUsersPanel({ groups }: { groups: UserGroup[] }) {
   const [identityConflict, setIdentityConflict] = useState<IdentityConflict | null>(null);
   const [actionFeedback, setActionFeedback] = useState<{ personId: string; message: string } | null>(null);
   const [busyUserId, setBusyUserId] = useState<string | null>(null);
+  const [importOpen, setImportOpen] = useState(false);
 
   const queryString = useMemo(() => {
     const params = new URLSearchParams({
@@ -535,10 +538,16 @@ export function AdminUsersPanel({ groups }: { groups: UserGroup[] }) {
         <button className="admin-icon-button" type="button" onClick={refreshUsers} aria-label="刷新用户" title="刷新用户">
           <RefreshCw size={17} aria-hidden="true" />
         </button>
-        <button className="primary-button admin-user-create" type="button" onClick={openCreate}>
-          <Plus size={17} aria-hidden="true" />
-          新建用户
-        </button>
+        <div className="admin-user-toolbar-actions">
+          <button className="secondary-button" type="button" onClick={() => setImportOpen(true)}>
+            <Upload size={17} aria-hidden="true" />
+            批量导入
+          </button>
+          <button className="primary-button admin-user-create" type="button" onClick={openCreate}>
+            <Plus size={17} aria-hidden="true" />
+            新建用户
+          </button>
+        </div>
       </div>
 
       {listError && <p className="admin-user-list-message error" role="alert">{listError}</p>}
@@ -859,6 +868,12 @@ export function AdminUsersPanel({ groups }: { groups: UserGroup[] }) {
             </div>
           )}
         </div>
+      )}
+      {importOpen && (
+        <AdminUserImport
+          onClose={() => setImportOpen(false)}
+          onCompleted={refreshUsers}
+        />
       )}
     </section>
   );

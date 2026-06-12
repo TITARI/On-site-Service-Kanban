@@ -17,7 +17,11 @@ import type {
   UserQuery
 } from "../domain/access-control";
 import { toTicketSummary, type TicketSummary } from "../domain/ticket-summary";
-import type { UserImportDecision, UserImportJob } from "../domain/user-import";
+import type {
+  UserImportApplyResult,
+  UserImportDecision,
+  UserImportJob
+} from "../domain/user-import";
 import { MariaDbStateStore, type WechatOrderLog } from "../db/mariadb-state-store";
 import { resolveStorageMode, type StorageMode } from "../db/storage-mode";
 import type { BoothRecord } from "../domain/types";
@@ -38,6 +42,7 @@ import {
 import { hashPassword } from "../services/password-service";
 import {
   adminLoginRecordFromState,
+  applyUserImportInState,
   assertUsableAdminAfterGroupChange,
   bootstrapAdminInState,
   bootstrapStatusFromState,
@@ -134,6 +139,11 @@ export type AppRepository = {
     ownerAccountId: string,
     updates: Array<{ rowId: string; decision: UserImportDecision }>
   ): Promise<UserImportJob>;
+  applyUserImport(
+    jobId: string,
+    ownerAccountId: string,
+    actor: AuthenticatedActor
+  ): Promise<UserImportApplyResult>;
   syncAccessRoles(userGroups: UserGroup[], actor?: AuthenticatedActor): Promise<void>;
 };
 
@@ -174,6 +184,7 @@ type AccessRepositoryStore = Omit<Pick<AppRepository,
   | "saveUserImportPreview"
   | "loadUserImportJob"
   | "updateUserImportDecisions"
+  | "applyUserImport"
   | "syncAccessRoles"
 >, "bootstrapAdmin"> & {
   bootstrapAdmin(
@@ -403,6 +414,9 @@ export function createFileAppRepository(store: StateFileRepository = {
       job.updatedAt = new Date().toISOString();
       return structuredClone(job);
     }),
+    applyUserImport: (jobId, ownerAccountId, actor) => updateState((state) => (
+      applyUserImportInState(state, jobId, ownerAccountId, actor)
+    )),
     syncAccessRoles: (userGroups, actor) => updateState((state) => {
       syncAccessRolesInState(state, userGroups, actor);
     })
@@ -468,6 +482,9 @@ export function createMariaDbAppRepository(
     loadUserImportJob: (jobId) => store.loadUserImportJob(jobId),
     updateUserImportDecisions: (jobId, ownerAccountId, updates) => (
       store.updateUserImportDecisions(jobId, ownerAccountId, updates)
+    ),
+    applyUserImport: (jobId, ownerAccountId, actor) => (
+      store.applyUserImport(jobId, ownerAccountId, actor)
     ),
     syncAccessRoles: (userGroups, actor) => store.syncAccessRoles(userGroups, actor)
   };

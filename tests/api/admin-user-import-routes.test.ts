@@ -9,7 +9,8 @@ const store = vi.hoisted(() => ({
   identityByExternalId: vi.fn(),
   saveUserImportPreview: vi.fn(),
   loadUserImportJob: vi.fn(),
-  updateUserImportDecisions: vi.fn()
+  updateUserImportDecisions: vi.fn(),
+  applyUserImport: vi.fn()
 }));
 
 vi.mock("@/lib/repositories/app-repository", () => ({
@@ -18,6 +19,9 @@ vi.mock("@/lib/repositories/app-repository", () => ({
 
 const previewRoute = await import("@/app/api/admin/user-imports/preview/route");
 const rowsRoute = await import("@/app/api/admin/user-imports/[jobId]/rows/route");
+const jobRoute = await import("@/app/api/admin/user-imports/[jobId]/route");
+const commitRoute = await import("@/app/api/admin/user-imports/[jobId]/commit/route");
+const reportRoute = await import("@/app/api/admin/user-imports/[jobId]/report/route");
 
 const actor = {
   accountId: "account-admin",
@@ -215,5 +219,75 @@ describe("admin user import routes", () => {
       actor.accountId,
       expect.any(Array)
     );
+  });
+
+  it("commits, reloads, and exports an owned import job", async () => {
+    const job = {
+      id: "import-job-1",
+      type: "people" as const,
+      ownerAccountId: actor.accountId,
+      sourceName: "users.xlsx",
+      sourceHash: "b".repeat(64),
+      previewVersion: "preview-1",
+      status: "preview" as const,
+      createdAt: "2026-06-12T00:00:00.000Z",
+      updatedAt: "2026-06-12T00:00:00.000Z",
+      rows: [{
+        id: "row-1",
+        rowNumber: 2,
+        raw: {},
+        normalized: {
+          name: "王五",
+          phone: "13700137001",
+          groupId: "builder",
+          groupLocked: false,
+          enabled: true,
+          wechatExternalUserId: "wxid-wang"
+        },
+        errors: [],
+        conflicts: [],
+        allowedActions: ["add" as const, "skip" as const],
+        decision: {
+          action: "add" as const,
+          confirmWechatRebind: false,
+          confirmWecomRebind: false
+        }
+      }]
+    };
+    const completed = {
+      ...job,
+      status: "completed" as const,
+      completedAt: "2026-06-12T01:00:00.000Z",
+      rows: [{
+        ...job.rows[0],
+        resultAction: "add",
+        resultMessage: "新增成功"
+      }]
+    };
+    store.loadUserImportJob.mockResolvedValue(job);
+    store.applyUserImport.mockResolvedValue({ job: completed, stale: false });
+    const context = { params: Promise.resolve({ jobId: job.id }) };
+
+    const commit = await commitRoute.POST(request(
+      `http://localhost/api/admin/user-imports/${job.id}/commit`,
+      {}
+    ), context);
+    expect(commit.status).toBe(200);
+    expect(store.applyUserImport).toHaveBeenCalledWith(job.id, actor.accountId, actor);
+
+    store.loadUserImportJob.mockResolvedValue(completed);
+    const detail = await jobRoute.GET(new Request(
+      `http://localhost/api/admin/user-imports/${job.id}`,
+      { headers: { cookie: `board_admin_session=${"A".repeat(43)}` } }
+    ), context);
+    expect(detail.status).toBe(200);
+
+    const report = await reportRoute.GET(new Request(
+      `http://localhost/api/admin/user-imports/${job.id}/report`,
+      { headers: { cookie: `board_admin_session=${"A".repeat(43)}` } }
+    ), context);
+    expect(report.status).toBe(200);
+    expect(report.headers.get("content-type")).toContain("spreadsheetml.sheet");
+    expect((await report.arrayBuffer()).byteLength).toBeGreaterThan(100);
   });
 });

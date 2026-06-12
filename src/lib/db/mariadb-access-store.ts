@@ -19,6 +19,7 @@ import type {
 import { PERMISSION_CODES, permissionCodesForGroup } from "../domain/access-control";
 import type { MessageChannel, UserGroup } from "../domain/types";
 import type {
+  UserImportApplyResult,
   UserImportDecision,
   UserImportJob,
   UserImportRow
@@ -1503,6 +1504,224 @@ export async function updateUserImportDecisions(
   const updated = await loadUserImportJob(connection, jobId);
   if (!updated) throw new Error("导入预览不存在");
   return updated;
+}
+
+function matchesIdentitySnapshot(
+  identity: ManagedChatIdentity | undefined,
+  snapshot: { id: string; personId?: string; lastSeenAt: string } | undefined
+) {
+  if (!identity && !snapshot) return true;
+  return Boolean(
+    identity
+    && snapshot
+    && identity.id === snapshot.id
+    && identity.personId === snapshot.personId
+    && identity.lastSeenAt === snapshot.lastSeenAt
+  );
+}
+
+export async function applyUserImport(
+  connection: DatabaseConnection,
+  jobId: string,
+  ownerAccountId: string,
+  actor: AuthenticatedActor
+): Promise<UserImportApplyResult> {
+  const [lockedJob] = await rows<Row>(
+    connection,
+    `SELECT id, status
+     FROM import_jobs
+     WHERE id = ? AND type = 'people' AND owner_account_id = ?
+     LIMIT 1
+     FOR UPDATE`,
+    [jobId, ownerAccountId]
+  );
+  if (!lockedJob) throw new Error("导入预览不存在");
+  if (String(lockedJob.status) !== "preview") throw new Error("导入预览已不能提交");
+  const job = await loadUserImportJob(connection, jobId);
+  if (!job) throw new Error("导入预览不存在");
+  const selectedRows = job.rows.filter((row) => row.decision && row.decision.action !== "skip");
+  const staleRows: UserImportRow[] = [];
+
+  for (const row of selectedRows) {
+    const decision = row.decision!;
+    const [group] = await rows<Row>(
+      connection,
+      "SELECT id, enabled FROM user_groups WHERE id = ? LIMIT 1 FOR UPDATE",
+      [row.normalized.groupId]
+    );
+    const users = await listUsers(connection, {
+      search: row.normalized.phone,
+      page: 1,
+      pageSize: 10
+    });
+    const currentUser = users.users.find((user) => user.phone === row.normalized.phone);
+    if (currentUser) await lockedUser(connection, currentUser.personId);
+    const currentWechat = row.normalized.wechatExternalUserId
+      ? await identityByExternalId(connection, "wechat", row.normalized.wechatExternalUserId)
+      : undefined;
+    const currentWecom = row.normalized.wecomExternalUserId
+      ? await identityByExternalId(connection, "wecom", row.normalized.wecomExternalUserId)
+      : undefined;
+    const targetPersonId = currentUser?.personId;
+    const stale = (
+      !group
+      || !bool(group.enabled)
+      || (decision.action === "add" && Boolean(currentUser))
+      || (
+        decision.action === "overwrite"
+        && (
+          !currentUser
+          || currentUser.personId !== row.snapshot?.existingUser?.personId
+          || currentUser.updatedAt !== row.snapshot?.existingUser?.updatedAt
+        )
+      )
+      || !matchesIdentitySnapshot(currentWechat, row.snapshot?.wechatIdentity)
+      || !matchesIdentitySnapshot(currentWecom, row.snapshot?.wecomIdentity)
+      || Boolean(
+        currentWechat?.personId
+        && currentWechat.personId !== targetPersonId
+        && !decision.confirmWechatRebind
+      )
+      || Boolean(
+        currentWecom?.personId
+        && currentWecom.personId !== targetPersonId
+        && !decision.confirmWecomRebind
+      )
+    );
+    if (stale) {
+      if (!row.conflicts.includes("stale-preview")) row.conflicts.push("stale-preview");
+      row.resultMessage = "导入数据已变化，请重新处理冲突";
+      staleRows.push(row);
+    }
+  }
+
+  const now = new Date();
+  if (staleRows.length > 0) {
+    for (const row of staleRows) {
+      await execute(
+        connection,
+        `UPDATE import_job_rows
+         SET conflict_json = ?, message = ?, updated_at = ?
+         WHERE id = ? AND job_id = ?`,
+        [
+          JSON.stringify({
+            errors: row.errors,
+            conflicts: row.conflicts,
+            allowedActions: row.allowedActions,
+            snapshot: row.snapshot
+          }),
+          row.resultMessage ?? null,
+          now,
+          row.id,
+          job.id
+        ]
+      );
+    }
+    await execute(connection, "UPDATE import_jobs SET updated_at = ? WHERE id = ?", [now, job.id]);
+    const staleJob = await loadUserImportJob(connection, job.id);
+    if (!staleJob) throw new Error("导入预览不存在");
+    return { job: staleJob, stale: true };
+  }
+
+  for (const row of job.rows) {
+    const decision = row.decision;
+    if (!decision || decision.action === "skip") {
+      await execute(
+        connection,
+        `UPDATE import_job_rows
+         SET status = 'skipped', result_action = 'skip', message = '已跳过', updated_at = ?
+         WHERE id = ? AND job_id = ?`,
+        [now, row.id, job.id]
+      );
+      row.resultAction = "skip";
+      row.resultMessage = "已跳过";
+      continue;
+    }
+    const mutation: UserMutation = {
+      name: row.normalized.name,
+      phone: row.normalized.phone,
+      groupId: row.normalized.groupId,
+      groupLocked: row.normalized.groupLocked,
+      enabled: row.normalized.enabled
+    };
+    const user = decision.action === "add"
+      ? await createUser(connection, mutation, actor)
+      : await updateUser(
+          connection,
+          row.snapshot?.existingUser?.personId ?? row.normalized.phone,
+          mutation,
+          actor
+        );
+    if (row.normalized.wechatExternalUserId) {
+      const identity = await identityByExternalId(
+        connection,
+        "wechat",
+        row.normalized.wechatExternalUserId
+      );
+      await bindChatIdentity(connection, {
+        userId: user.personId,
+        platform: "wechat",
+        identityId: identity?.id,
+        externalUserId: row.normalized.wechatExternalUserId,
+        displayName: identity?.displayName || row.normalized.name,
+        confirmedRebindFromPersonId: decision.confirmWechatRebind ? identity?.personId : undefined
+      }, actor);
+    }
+    if (row.normalized.wecomExternalUserId) {
+      const identity = await identityByExternalId(
+        connection,
+        "wecom",
+        row.normalized.wecomExternalUserId
+      );
+      await bindChatIdentity(connection, {
+        userId: user.personId,
+        platform: "wecom",
+        identityId: identity?.id,
+        externalUserId: row.normalized.wecomExternalUserId,
+        displayName: identity?.displayName || row.normalized.name,
+        confirmedRebindFromPersonId: decision.confirmWecomRebind ? identity?.personId : undefined
+      }, actor);
+    }
+    row.resultAction = decision.action;
+    row.resultMessage = decision.action === "add" ? "新增成功" : "覆盖成功";
+    await execute(
+      connection,
+      `UPDATE import_job_rows
+       SET status = 'success', result_action = ?, message = ?, updated_at = ?
+       WHERE id = ? AND job_id = ?`,
+      [row.resultAction, row.resultMessage, now, row.id, job.id]
+    );
+  }
+
+  await execute(
+    connection,
+    `UPDATE import_jobs
+     SET status = 'completed',
+         success_rows = ?,
+         failed_rows = 0,
+         updated_at = ?,
+         completed_at = ?
+     WHERE id = ?`,
+    [selectedRows.length, now, now, job.id]
+  );
+  await appendAudit(connection, {
+    actorId: actor.accountId,
+    actorName: actor.name,
+    action: "user_import.commit",
+    targetType: "import_job",
+    targetId: job.id,
+    detail: {
+      sourceName: job.sourceName,
+      totalRows: job.rows.length,
+      selectedRows: selectedRows.length,
+      addedRows: job.rows.filter((row) => row.resultAction === "add").length,
+      overwrittenRows: job.rows.filter((row) => row.resultAction === "overwrite").length
+    },
+    now
+  });
+  const completed = await loadUserImportJob(connection, job.id);
+  if (!completed) throw new Error("导入结果不可用");
+  return { job: completed, stale: false };
 }
 
 export async function usableAdminCount(connection: DatabaseConnection) {

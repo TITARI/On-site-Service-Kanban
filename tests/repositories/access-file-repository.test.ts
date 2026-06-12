@@ -250,6 +250,154 @@ describe("file access repository", () => {
     expect(store.snapshot().people).toEqual(beforePeople);
   });
 
+  it("aborts the whole import when a selected row becomes stale", async () => {
+    const store = memoryStore();
+    const repository = createFileAppRepository(store);
+    const admin = {
+      accountId: "account-admin",
+      personId: "person-admin",
+      name: "Root Admin",
+      phone: "13700137000",
+      groupId: "admin",
+      groupName: "Administrators",
+      permissions: ["admin.access"] as const,
+      sessionType: "admin" as const
+    };
+    const job = {
+      id: "import-job-stale",
+      type: "people" as const,
+      ownerAccountId: admin.accountId,
+      sourceName: "users.xlsx",
+      sourceHash: "b".repeat(64),
+      previewVersion: "preview-stale",
+      status: "preview" as const,
+      createdAt: "2026-06-12T00:00:00.000Z",
+      updatedAt: "2026-06-12T00:00:00.000Z",
+      rows: [
+        {
+          id: "row-safe",
+          rowNumber: 2,
+          raw: {},
+          normalized: {
+            name: "Safe User",
+            phone: "13600136000",
+            groupId: "ops",
+            groupLocked: false,
+            enabled: true
+          },
+          errors: [],
+          conflicts: [],
+          allowedActions: ["add" as const, "skip" as const],
+          decision: {
+            action: "add" as const,
+            confirmWechatRebind: false,
+            confirmWecomRebind: false
+          }
+        },
+        {
+          id: "row-stale",
+          rowNumber: 3,
+          raw: {},
+          normalized: {
+            name: "Stale User",
+            phone: "13500135000",
+            groupId: "ops",
+            groupLocked: false,
+            enabled: true
+          },
+          errors: [],
+          conflicts: [],
+          allowedActions: ["add" as const, "skip" as const],
+          decision: {
+            action: "add" as const,
+            confirmWechatRebind: false,
+            confirmWecomRebind: false
+          }
+        }
+      ]
+    };
+    await repository.saveUserImportPreview(job);
+    await repository.upsertMobileAccount({
+      name: "Someone Else",
+      phone: "13500135000",
+      groupId: "ops"
+    });
+
+    const result = await repository.applyUserImport(job.id, admin.accountId, admin);
+
+    expect(result.stale).toBe(true);
+    expect(result.job.rows[1].conflicts).toContain("stale-preview");
+    expect((await repository.listUsers({
+      search: "13600136000",
+      page: 1,
+      pageSize: 10
+    })).total).toBe(0);
+  });
+
+  it("commits selected users and account identifiers in one atomic update", async () => {
+    const store = memoryStore();
+    const repository = createFileAppRepository(store);
+    const admin = {
+      accountId: "account-admin",
+      personId: "person-admin",
+      name: "Root Admin",
+      phone: "13700137000",
+      groupId: "admin",
+      groupName: "Administrators",
+      permissions: ["admin.access"] as const,
+      sessionType: "admin" as const
+    };
+    const job = {
+      id: "import-job-success",
+      type: "people" as const,
+      ownerAccountId: admin.accountId,
+      sourceName: "users.xlsx",
+      sourceHash: "c".repeat(64),
+      previewVersion: "preview-success",
+      status: "preview" as const,
+      createdAt: "2026-06-12T00:00:00.000Z",
+      updatedAt: "2026-06-12T00:00:00.000Z",
+      rows: [{
+        id: "row-1",
+        rowNumber: 2,
+        raw: {},
+        normalized: {
+          name: "Imported User",
+          phone: "13600136000",
+          groupId: "ops",
+          groupLocked: true,
+          enabled: true,
+          wechatExternalUserId: "wxid-imported"
+        },
+        errors: [],
+        conflicts: [],
+        allowedActions: ["add" as const, "skip" as const],
+        decision: {
+          action: "add" as const,
+          confirmWechatRebind: false,
+          confirmWecomRebind: false
+        }
+      }]
+    };
+    await repository.saveUserImportPreview(job);
+
+    const result = await repository.applyUserImport(job.id, admin.accountId, admin);
+    const imported = (await repository.listUsers({
+      search: "13600136000",
+      page: 1,
+      pageSize: 10
+    })).users[0];
+
+    expect(result).toMatchObject({ stale: false, job: { status: "completed" } });
+    expect(imported).toMatchObject({
+      name: "Imported User",
+      groupLocked: true,
+      identities: {
+        wechat: { externalUserId: "wxid-imported" }
+      }
+    });
+  });
+
   it("derives actors only through account roles and role permissions", async () => {
     const store = memoryStore();
     const repository = createFileAppRepository(store);

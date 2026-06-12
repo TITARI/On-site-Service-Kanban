@@ -73,6 +73,11 @@ export type UserImportJob = {
   rows: UserImportRow[];
 };
 
+export type UserImportApplyResult = {
+  job: UserImportJob;
+  stale: boolean;
+};
+
 type ParsedRow = Omit<UserImportRow, "id" | "conflicts" | "allowedActions">;
 
 const TRUE_VALUES = new Set(["是", "启用", "true", "1"]);

@@ -157,6 +157,37 @@ export async function saveUserImportDecisions(
   return await repository.updateUserImportDecisions(job.id, actor.accountId, updates);
 }
 
+export async function getUserImportJob(
+  repository: AppRepository,
+  jobId: string,
+  actor: AuthenticatedActor
+) {
+  const job = await repository.loadUserImportJob(jobId);
+  if (!job || job.ownerAccountId !== actor.accountId) {
+    throw new UserImportError("导入预览不存在", 404);
+  }
+  return job;
+}
+
+export async function commitUserImport(
+  repository: AppRepository,
+  jobId: string,
+  actor: AuthenticatedActor
+) {
+  const job = await getUserImportJob(repository, jobId, actor);
+  if (job.status !== "preview") throw new UserImportError("导入预览已不能提交", 409);
+  const undecided = job.rows.filter((row) => row.errors.length === 0 && !row.decision);
+  if (undecided.length > 0) throw new UserImportError("请先为所有可处理行选择导入操作");
+  if (!job.rows.some((row) => row.decision && row.decision.action !== "skip")) {
+    throw new UserImportError("没有选择需要导入的用户");
+  }
+  const result = await repository.applyUserImport(job.id, actor.accountId, actor);
+  if (result.stale) {
+    throw new UserImportError("导入数据已变化，请重新处理冲突", 409);
+  }
+  return result.job;
+}
+
 export function userImportErrorStatus(error: unknown) {
   return error instanceof UserImportError ? error.status : 400;
 }
