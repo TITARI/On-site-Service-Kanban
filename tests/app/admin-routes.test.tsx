@@ -6,6 +6,7 @@ import AdminLogsPage from "@/app/admin/logs/page";
 import AdminWorkOrderSettingsPage from "@/app/admin/work-order-settings/page";
 import AdminExhibitionDataPage from "@/app/admin/exhibition-data/page";
 import AdminSystemPage from "@/app/admin/system/page";
+import AdminUsersPage from "@/app/admin/users/page";
 import { defaultConfig } from "@/lib/seed";
 
 const bootstrap = {
@@ -127,6 +128,7 @@ describe("admin subroutes", () => {
     expect(screen.getByRole("link", { name: "微信下单日志" }).getAttribute("href")).toBe("/admin/logs");
     expect(screen.getByRole("link", { name: "工单设置" }).getAttribute("href")).toBe("/admin/work-order-settings");
     expect(screen.getByRole("link", { name: "展览数据" }).getAttribute("href")).toBe("/admin/exhibition-data");
+    expect(screen.getByRole("link", { name: "用户与权限" }).getAttribute("href")).toBe("/admin/users");
     expect(screen.getByRole("link", { name: "系统配置" }).getAttribute("href")).toBe("/admin/system");
     expect(screen.getByText("消息身份联通")).not.toBeNull();
     expect(screen.getByText("人员 1")).not.toBeNull();
@@ -180,6 +182,28 @@ describe("admin subroutes", () => {
     expect(screen.getByRole("button", { name: "保存 wxauto 设置" })).not.toBeNull();
     expect(screen.getByRole("heading", { name: "关键词配置" })).not.toBeNull();
     expect(screen.getByRole("button", { name: "保存关键词配置" })).not.toBeNull();
+  });
+
+  it("renders the user management route inside the backend shell", async () => {
+    const fetchMock = mockBootstrapFetch();
+    fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/api/admin/users?")) {
+        return new Response(JSON.stringify({
+          users: [],
+          total: 0,
+          page: 1,
+          pageSize: 20
+        }), { status: 200 });
+      }
+      return mockBootstrapFetch()(input);
+    });
+
+    await renderWithSession(<AdminUsersPage />, fetchMock);
+
+    expect(await screen.findByRole("heading", { name: "用户与权限" })).not.toBeNull();
+    expect(screen.getByRole("button", { name: "新建用户" })).not.toBeNull();
+    expect(screen.getByRole("link", { name: "用户与权限" }).getAttribute("aria-current")).toBe("page");
   });
 
   it("loads the sidebar log badge count from the log API on management pages", async () => {
