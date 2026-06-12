@@ -1,11 +1,13 @@
 import type { AppState } from "../domain/app-state";
-import type { KeywordGroup, Ticket, UserGroup } from "../domain/types";
+import type { KeywordGroup, MessageChannel, Ticket, UserGroup } from "../domain/types";
 import type {
   AccountSession,
   AdminLoginRecord,
   AuthenticatedActor,
   BootstrapAdminInput,
   BootstrapAdminSessionInput,
+  ChatIdentityBindingMutation,
+  ManagedChatIdentity,
   MobileAccountInput,
   SessionResolution,
   SessionType,
@@ -38,10 +40,14 @@ import {
   assertUsableAdminAfterGroupChange,
   bootstrapAdminInState,
   bootstrapStatusFromState,
+  bindChatIdentityInState,
   createAccountSessionInState,
   createUserInState,
   deleteUserInState,
   getUserFromState,
+  getChatIdentityFromState,
+  identityByExternalIdFromState,
+  listChatIdentitiesFromState,
   listUsersFromState,
   normalizeAccessState,
   recordAdminLoginFailureInState,
@@ -52,6 +58,7 @@ import {
   setUserEnabledInState,
   setUserPasswordInState,
   syncAccessRolesInState,
+  unbindChatIdentityInState,
   updateUserInState,
   upsertMobileAccountInState,
   usableAdminCountFromState,
@@ -114,6 +121,11 @@ export type AppRepository = {
   setUserPassword(userId: string, passwordHash: string, actor: AuthenticatedActor): Promise<void>;
   userDeletionHistory(userId: string): Promise<UserDeletionHistory>;
   usableAdminCount(): Promise<number>;
+  listChatIdentities(platform?: MessageChannel): Promise<ManagedChatIdentity[]>;
+  getChatIdentity(identityId: string): Promise<ManagedChatIdentity | undefined>;
+  identityByExternalId(platform: MessageChannel, externalUserId: string): Promise<ManagedChatIdentity | undefined>;
+  bindChatIdentity(input: ChatIdentityBindingMutation, actor: AuthenticatedActor): Promise<UserListItem>;
+  unbindChatIdentity(userId: string, platform: MessageChannel, actor: AuthenticatedActor): Promise<UserListItem>;
   syncAccessRoles(userGroups: UserGroup[], actor?: AuthenticatedActor): Promise<void>;
 };
 
@@ -146,6 +158,11 @@ type AccessRepositoryStore = Omit<Pick<AppRepository,
   | "setUserPassword"
   | "userDeletionHistory"
   | "usableAdminCount"
+  | "listChatIdentities"
+  | "getChatIdentity"
+  | "identityByExternalId"
+  | "bindChatIdentity"
+  | "unbindChatIdentity"
   | "syncAccessRoles"
 >, "bootstrapAdmin"> & {
   bootstrapAdmin(
@@ -343,6 +360,15 @@ export function createFileAppRepository(store: StateFileRepository = {
     }),
     userDeletionHistory: async (userId) => userDeletionHistoryFromState(await store.readState(), userId),
     usableAdminCount: async () => usableAdminCountFromState(await store.readState()),
+    listChatIdentities: async (platform) => listChatIdentitiesFromState(await store.readState(), platform),
+    getChatIdentity: async (identityId) => getChatIdentityFromState(await store.readState(), identityId),
+    identityByExternalId: async (platform, externalUserId) => (
+      identityByExternalIdFromState(await store.readState(), platform, externalUserId)
+    ),
+    bindChatIdentity: (input, actor) => updateState((state) => bindChatIdentityInState(state, input, actor)),
+    unbindChatIdentity: (userId, platform, actor) => updateState((state) => (
+      unbindChatIdentityInState(state, userId, platform, actor)
+    )),
     syncAccessRoles: (userGroups, actor) => updateState((state) => {
       syncAccessRolesInState(state, userGroups, actor);
     })
@@ -399,6 +425,11 @@ export function createMariaDbAppRepository(
     setUserPassword: (userId, passwordHash, actor) => store.setUserPassword(userId, passwordHash, actor),
     userDeletionHistory: (userId) => store.userDeletionHistory(userId),
     usableAdminCount: () => store.usableAdminCount(),
+    listChatIdentities: (platform) => store.listChatIdentities(platform),
+    getChatIdentity: (identityId) => store.getChatIdentity(identityId),
+    identityByExternalId: (platform, externalUserId) => store.identityByExternalId(platform, externalUserId),
+    bindChatIdentity: (input, actor) => store.bindChatIdentity(input, actor),
+    unbindChatIdentity: (userId, platform, actor) => store.unbindChatIdentity(userId, platform, actor),
     syncAccessRoles: (userGroups, actor) => store.syncAccessRoles(userGroups, actor)
   };
 }

@@ -36,6 +36,7 @@ import { getDatabasePool, type DatabaseConnection, withDatabaseTransaction } fro
 import type {
   AuthenticatedActor,
   BootstrapAdminSessionInput,
+  ChatIdentityBindingMutation,
   MobileAccountInput,
   SessionType,
   UserMutation,
@@ -46,10 +47,14 @@ import {
   assertUsableAdminAfterGroupChange,
   bootstrapAdmin as bootstrapAdminAccess,
   bootstrapStatus as readBootstrapStatus,
+  bindChatIdentity as bindAccessChatIdentity,
   createAccountSession as createAccessSession,
   createUser as createAccessUser,
   deleteUser as deleteAccessUser,
   getUser as getAccessUser,
+  getChatIdentity as getAccessChatIdentity,
+  identityByExternalId as readIdentityByExternalId,
+  listChatIdentities as listAccessChatIdentities,
   listUsers as listAccessUsers,
   recordAdminLoginFailure as recordAccessLoginFailure,
   recordAdminLoginSuccess as recordAccessLoginSuccess,
@@ -59,6 +64,7 @@ import {
   setUserEnabled as setAccessUserEnabled,
   setUserPassword as setAccessUserPassword,
   syncAccessRoles,
+  unbindChatIdentity as unbindAccessChatIdentity,
   updateUser as updateAccessUser,
   upsertMobileAccount as upsertAccessMobileAccount,
   usableAdminCount as countUsableAdmins,
@@ -1885,6 +1891,40 @@ export class MariaDbStateStore {
 
   async usableAdminCount() {
     return await countUsableAdmins(getDatabasePool());
+  }
+
+  async listChatIdentities(platform?: ChatIdentity["platform"]) {
+    return await listAccessChatIdentities(getDatabasePool(), platform);
+  }
+
+  async getChatIdentity(identityId: string) {
+    return await getAccessChatIdentity(getDatabasePool(), identityId);
+  }
+
+  async identityByExternalId(
+    platform: ChatIdentity["platform"],
+    externalUserId: string
+  ) {
+    return await readIdentityByExternalId(getDatabasePool(), platform, externalUserId);
+  }
+
+  async bindChatIdentity(
+    input: ChatIdentityBindingMutation,
+    actor: AuthenticatedActor
+  ) {
+    return await withDatabaseTransaction((connection) => (
+      bindAccessChatIdentity(connection, input, actor)
+    ));
+  }
+
+  async unbindChatIdentity(
+    userId: string,
+    platform: ChatIdentity["platform"],
+    actor: AuthenticatedActor
+  ) {
+    return await withDatabaseTransaction((connection) => (
+      unbindAccessChatIdentity(connection, userId, platform, actor)
+    ));
   }
 
   async syncAccessRoles(userGroups: UserGroup[], actor?: AuthenticatedActor) {

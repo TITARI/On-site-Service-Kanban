@@ -155,6 +155,28 @@ export type UserListItem = {
   updatedAt: string;
 };
 
+export type ManagedChatIdentity = {
+  id: string;
+  platform: MessageChannel;
+  externalUserId: string;
+  displayName: string;
+  isTemporary: boolean;
+  personId?: string;
+  personName?: string;
+  personPhone?: string;
+  firstSeenAt: string;
+  lastSeenAt: string;
+};
+
+export type ChatIdentityBindingMutation = {
+  userId: string;
+  platform: MessageChannel;
+  identityId?: string;
+  externalUserId: string;
+  displayName: string;
+  confirmedRebindFromPersonId?: string;
+};
+
 export type UserDeletionHistory = {
   deletable: boolean;
   reasons: string[];

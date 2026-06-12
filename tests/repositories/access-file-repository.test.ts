@@ -138,6 +138,68 @@ describe("file access repository", () => {
     expect(store.snapshot().accounts).toHaveLength(1);
   });
 
+  it("rebinds one platform identity atomically and releases the target's previous binding", async () => {
+    const store = memoryStore();
+    const repository = createFileAppRepository(store);
+    const alice = await repository.upsertMobileAccount({
+      name: "Alice",
+      phone: "13800138000",
+      groupId: "ops"
+    });
+    const bob = await repository.upsertMobileAccount({
+      name: "Bob",
+      phone: "13900139000",
+      groupId: "review"
+    });
+    const admin = {
+      accountId: "account-admin",
+      personId: "person-admin",
+      name: "Root Admin",
+      phone: "13700137000",
+      groupId: "admin",
+      groupName: "Administrators",
+      permissions: ["admin.access"] as const,
+      sessionType: "admin" as const
+    };
+
+    await repository.bindChatIdentity({
+      userId: alice.actor.personId,
+      platform: "wechat",
+      externalUserId: "wxid-alice-old",
+      displayName: "Alice old"
+    }, admin);
+    await repository.bindChatIdentity({
+      userId: bob.actor.personId,
+      platform: "wechat",
+      externalUserId: "wxid-bob",
+      displayName: "Bob WeChat"
+    }, admin);
+    const occupied = await repository.identityByExternalId("wechat", "wxid-bob");
+
+    const rebound = await repository.bindChatIdentity({
+      userId: alice.actor.personId,
+      platform: "wechat",
+      identityId: occupied?.id,
+      externalUserId: "wxid-bob",
+      displayName: "Alice WeChat",
+      confirmedRebindFromPersonId: bob.actor.personId
+    }, admin);
+
+    expect(rebound.identities.wechat).toMatchObject({
+      externalUserId: "wxid-bob",
+      displayName: "Alice WeChat"
+    });
+    const identities = await repository.listChatIdentities("wechat");
+    expect(identities.find((identity) => identity.externalUserId === "wxid-alice-old")?.personId).toBeUndefined();
+    expect(identities.find((identity) => identity.externalUserId === "wxid-bob")?.personId).toBe(alice.actor.personId);
+    expect(store.snapshot().auditLogs).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        action: "chat_identity.rebind",
+        targetId: occupied?.id
+      })
+    ]));
+  });
+
   it("derives actors only through account roles and role permissions", async () => {
     const store = memoryStore();
     const repository = createFileAppRepository(store);

@@ -2318,7 +2318,7 @@ textarea {
 }
 
 .admin-user-inherited,
-.admin-user-binding-overview {
+.admin-user-binding-editor {
   display: grid;
   gap: 10px;
   border-top: 1px solid var(--line);
@@ -2331,7 +2331,7 @@ textarea {
 }
 
 .admin-user-inherited strong,
-.admin-user-binding-overview > strong {
+.admin-user-binding-title strong {
   color: var(--green-deep);
   font-size: 13px;
 }
@@ -2347,13 +2347,123 @@ textarea {
   gap: 6px;
 }
 
-.admin-user-binding-overview > div {
+.admin-user-binding-title {
   display: grid;
-  grid-template-columns: 88px minmax(0, 1fr);
-  gap: 10px;
-  align-items: start;
+  gap: 3px;
+}
+
+.admin-user-binding-title span {
   color: var(--muted);
   font-size: 12px;
+}
+
+.admin-user-binding-control {
+  display: grid;
+  gap: 10px;
+  border: 1px solid rgba(31, 106, 77, 0.12);
+  border-radius: 6px;
+  padding: 12px;
+  background: #fff;
+}
+
+.admin-user-binding-control > header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.admin-user-binding-control > header > div {
+  display: grid;
+  gap: 2px;
+}
+
+.admin-user-binding-control > header strong {
+  color: var(--green-deep);
+  font-size: 13px;
+}
+
+.admin-user-binding-control > header span {
+  color: var(--muted);
+  font-size: 11.5px;
+  overflow-wrap: anywhere;
+}
+
+.admin-user-binding-control label {
+  display: grid;
+  gap: 5px;
+}
+
+.admin-user-binding-control label > span {
+  color: var(--muted);
+  font-size: 11.5px;
+  font-weight: 900;
+}
+
+.admin-user-binding-control input,
+.admin-user-binding-control select {
+  border-radius: 6px;
+  background: #fff;
+  font-size: 13px;
+}
+
+.admin-user-binding-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.admin-user-binding-control > .secondary-button {
+  justify-self: end;
+  border-radius: 6px;
+}
+
+.admin-user-conflict-dialog {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  z-index: 3;
+  display: grid;
+  width: min(420px, calc(100% - 28px));
+  gap: 10px;
+  border: 1px solid rgba(177, 61, 50, 0.22);
+  border-radius: 8px;
+  padding: 20px;
+  background: #fffdf8;
+  box-shadow: 0 24px 60px rgba(23, 35, 29, 0.26);
+  transform: translate(-50%, -50%);
+}
+
+.admin-user-conflict-dialog h3,
+.admin-user-conflict-dialog p {
+  margin: 0;
+}
+
+.admin-user-conflict-dialog h3 {
+  color: var(--red);
+  font-size: 17px;
+}
+
+.admin-user-conflict-dialog p {
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.admin-user-conflict-dialog > span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.admin-user-conflict-dialog > div {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 4px;
+}
+
+.admin-user-conflict-dialog button {
+  border-radius: 6px;
 }
 
 .admin-user-editor-actions {
@@ -2496,6 +2606,10 @@ textarea {
 
   .admin-user-form-grid label {
     grid-column: auto;
+  }
+
+  .admin-user-binding-fields {
+    grid-template-columns: 1fr;
   }
 }
 

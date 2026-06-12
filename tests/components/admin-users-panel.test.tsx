@@ -72,6 +72,21 @@ afterEach(() => {
 function mockUsersFetch() {
   return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
+    if (url === "/api/admin/chat-identities") {
+      return new Response(JSON.stringify({
+        identities: [
+          {
+            id: "identity-free",
+            platform: "wecom",
+            externalUserId: "wecom-free",
+            displayName: "待绑定企微",
+            isTemporary: false,
+            firstSeenAt: "2026-06-10T00:00:00.000Z",
+            lastSeenAt: "2026-06-12T00:00:00.000Z"
+          }
+        ]
+      }), { status: 200 });
+    }
     if (url.startsWith("/api/admin/users?")) {
       return new Response(JSON.stringify({
         users: [builder, administrator],
@@ -92,6 +107,21 @@ function mockUsersFetch() {
     }
     if (url === "/api/admin/users/person-2/password" && init?.method === "POST") {
       return new Response(null, { status: 204 });
+    }
+    if (url === "/api/admin/users/person-1/chat-identities/wecom" && init?.method === "PUT") {
+      return new Response(JSON.stringify({
+        user: {
+          ...builder,
+          identities: {
+            ...builder.identities,
+            wecom: {
+              id: "identity-free",
+              externalUserId: "wecom-free",
+              displayName: "待绑定企微"
+            }
+          }
+        }
+      }), { status: 200 });
     }
     return new Response(JSON.stringify({ message: "unexpected request" }), { status: 500 });
   });
@@ -155,6 +185,113 @@ describe("AdminUsersPanel", () => {
       expect(fetchMock).toHaveBeenCalledWith(
         "/api/admin/users/person-2/password",
         expect.objectContaining({ method: "POST" })
+      );
+    });
+  });
+
+  it("binds a discovered enterprise WeChat identity from the editor", async () => {
+    const fetchMock = mockUsersFetch();
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+
+    render(<AdminUsersPanel groups={groups} />);
+
+    await screen.findByText("张三");
+    await user.click(screen.getByRole("button", { name: "编辑张三" }));
+    await user.selectOptions(await screen.findByLabelText("企微已识别账号"), "identity-free");
+    await user.click(screen.getByRole("button", { name: "绑定企微账号" }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/admin/users/person-1/chat-identities/wecom",
+        expect.objectContaining({
+          method: "PUT",
+          body: expect.stringContaining("\"identityId\":\"identity-free\"")
+        })
+      );
+    });
+  });
+
+  it("requires an explicit UI confirmation before reassigning an occupied identity", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.startsWith("/api/admin/users?")) {
+        return new Response(JSON.stringify({
+          users: [builder],
+          total: 1,
+          page: 1,
+          pageSize: 20
+        }), { status: 200 });
+      }
+      if (url === "/api/admin/chat-identities") {
+        return new Response(JSON.stringify({
+          identities: [{
+            id: "identity-occupied",
+            platform: "wechat",
+            externalUserId: "wxid-occupied",
+            displayName: "李四微信",
+            isTemporary: false,
+            personId: "person-other",
+            personName: "李四",
+            personPhone: "13900139000",
+            firstSeenAt: "2026-06-10T00:00:00.000Z",
+            lastSeenAt: "2026-06-12T00:00:00.000Z"
+          }]
+        }), { status: 200 });
+      }
+      if (url === "/api/admin/users/person-1/chat-identities/wechat" && init?.method === "PUT") {
+        const body = JSON.parse(String(init.body)) as { confirmationToken?: string };
+        if (!body.confirmationToken) {
+          return new Response(JSON.stringify({
+            message: "该账号已绑定其他用户，需要确认换绑",
+            code: "IDENTITY_CONFLICT",
+            confirmationToken: "confirmation-token",
+            conflict: {
+              identityId: "identity-occupied",
+              externalUserId: "wxid-occupied",
+              displayName: "李四微信",
+              personId: "person-other",
+              personName: "李四",
+              personPhone: "13900139000"
+            }
+          }), { status: 409 });
+        }
+        return new Response(JSON.stringify({
+          user: {
+            ...builder,
+            identities: {
+              wechat: {
+                id: "identity-occupied",
+                externalUserId: "wxid-occupied",
+                displayName: "李四微信"
+              }
+            }
+          }
+        }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ message: "unexpected request" }), { status: 500 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+
+    render(<AdminUsersPanel groups={groups} />);
+
+    await screen.findByText("张三");
+    await user.click(screen.getByRole("button", { name: "编辑张三" }));
+    await user.selectOptions(await screen.findByLabelText("微信已识别账号"), "identity-occupied");
+    await user.click(screen.getByRole("button", { name: "绑定微信账号" }));
+
+    expect(await screen.findByRole("heading", { name: "确认换绑账号" })).not.toBeNull();
+    expect(screen.getByText(/当前属于 李四/)).not.toBeNull();
+    await user.click(screen.getByRole("button", { name: "确认换绑" }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/admin/users/person-1/chat-identities/wechat",
+        expect.objectContaining({
+          method: "PUT",
+          body: expect.stringContaining("\"confirmationToken\":\"confirmation-token\"")
+        })
       );
     });
   });

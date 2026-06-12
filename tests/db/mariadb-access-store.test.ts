@@ -3,6 +3,7 @@ import type { DatabaseConnection } from "@/lib/db/connection";
 import { defaultConfig } from "@/lib/seed";
 import {
   assertUsableAdminAfterGroupChange,
+  bindChatIdentity,
   createAccountSession,
   resolveAccountSession,
   syncAccessRoles,
@@ -108,6 +109,81 @@ describe("MariaDB access store", () => {
     expect(sql).toContain("s.token_hash = ?");
     expect(sql).toContain("s.session_type = ?");
     expect(params).toEqual(["hash", "admin"]);
+  });
+
+  it("locks the target and occupied identity while performing a confirmed rebind", async () => {
+    const { connection, calls, sql } = recordingConnection([
+      [{
+        account_id: "account-1",
+        person_id: "person-1",
+        name: "张三",
+        phone: "13800138000",
+        group_id: "builder",
+        group_locked: 0,
+        person_enabled: 1,
+        account_enabled: 1
+      }],
+      [{
+        id: "identity-1",
+        platform: "wechat",
+        external_user_id: "wxid-occupied",
+        display_name: "李四微信",
+        is_temporary: 0,
+        person_id: "person-other"
+      }],
+      [],
+      [],
+      [],
+      [{
+        account_id: "account-1",
+        person_id: "person-1",
+        name: "张三",
+        phone: "13800138000",
+        group_id: "builder",
+        group_name: "搭建组",
+        group_locked: 0,
+        person_enabled: 1,
+        account_enabled: 1,
+        permission_codes: "ticket.process",
+        has_password: 0,
+        person_updated_at: rowDate(),
+        account_updated_at: rowDate()
+      }],
+      [{
+        id: "identity-1",
+        person_id: "person-1",
+        platform: "wechat",
+        external_user_id: "wxid-occupied",
+        display_name: "张三微信"
+      }]
+    ]);
+    const actor = {
+      accountId: "account-admin",
+      personId: "person-admin",
+      name: "Root Admin",
+      phone: "13700137000",
+      groupId: "admin",
+      groupName: "Administrators",
+      permissions: ["admin.access"] as const,
+      sessionType: "admin" as const
+    };
+
+    const result = await bindChatIdentity(connection, {
+      userId: "person-1",
+      platform: "wechat",
+      identityId: "identity-1",
+      externalUserId: "wxid-occupied",
+      displayName: "张三微信",
+      confirmedRebindFromPersonId: "person-other"
+    }, actor);
+
+    expect(result.identities.wechat?.externalUserId).toBe("wxid-occupied");
+    expect(sql()).toContain("FOR UPDATE");
+    expect(sql()).toContain("SET person_id = NULL");
+    expect(calls.some((call) => call.params.includes("chat_identity.rebind"))).toBe(true);
+    expect(calls.some((call) => call.params.some((param) => (
+      typeof param === "string" && param.includes("\"fromPersonId\":\"person-other\"")
+    )))).toBe(true);
   });
 
   it("updates a mobile user and its single account role", async () => {

@@ -7,14 +7,17 @@ import {
   ChevronLeft,
   ChevronRight,
   KeyRound,
+  Link2,
   Pencil,
   Plus,
   RefreshCw,
   Search,
   Trash2,
+  Unlink,
   X
 } from "lucide-react";
 import {
+  type ManagedChatIdentity,
   permissionCodesForGroup,
   type PermissionCode,
   type UserListItem
@@ -35,6 +38,25 @@ type UserListResponse = {
   total: number;
   page: number;
   pageSize: number;
+};
+
+type IdentityDraft = {
+  identityId: string;
+  externalUserId: string;
+  displayName: string;
+};
+
+type IdentityConflict = {
+  platform: "wechat" | "wecom";
+  confirmationToken: string;
+  conflict: {
+    identityId: string;
+    externalUserId: string;
+    displayName: string;
+    personId: string;
+    personName?: string;
+    personPhone?: string;
+  };
 };
 
 const PAGE_SIZE = 20;
@@ -130,6 +152,14 @@ export function AdminUsersPanel({ groups }: { groups: UserGroup[] }) {
   const [saving, setSaving] = useState(false);
   const [password, setPassword] = useState("");
   const [passwordSaving, setPasswordSaving] = useState(false);
+  const [identityOptions, setIdentityOptions] = useState<ManagedChatIdentity[]>([]);
+  const [identityDrafts, setIdentityDrafts] = useState<Record<"wechat" | "wecom", IdentityDraft>>({
+    wechat: { identityId: "", externalUserId: "", displayName: "" },
+    wecom: { identityId: "", externalUserId: "", displayName: "" }
+  });
+  const [identityLoading, setIdentityLoading] = useState(false);
+  const [identityBusy, setIdentityBusy] = useState<"wechat" | "wecom" | null>(null);
+  const [identityConflict, setIdentityConflict] = useState<IdentityConflict | null>(null);
   const [actionFeedback, setActionFeedback] = useState<{ personId: string; message: string } | null>(null);
   const [busyUserId, setBusyUserId] = useState<string | null>(null);
 
@@ -200,6 +230,7 @@ export function AdminUsersPanel({ groups }: { groups: UserGroup[] }) {
     setEditorError(null);
     setEditorMessage(null);
     setPassword("");
+    setIdentityConflict(null);
   }
 
   function openEdit(user: UserListItem) {
@@ -208,6 +239,20 @@ export function AdminUsersPanel({ groups }: { groups: UserGroup[] }) {
     setEditorError(null);
     setEditorMessage(null);
     setPassword("");
+    setIdentityConflict(null);
+    setIdentityDrafts({
+      wechat: {
+        identityId: user.identities.wechat?.id ?? "",
+        externalUserId: user.identities.wechat?.externalUserId ?? "",
+        displayName: user.identities.wechat?.displayName ?? ""
+      },
+      wecom: {
+        identityId: user.identities.wecom?.id ?? "",
+        externalUserId: user.identities.wecom?.externalUserId ?? "",
+        displayName: user.identities.wecom?.displayName ?? ""
+      }
+    });
+    void loadIdentityOptions();
   }
 
   function closeEditor() {
@@ -216,6 +261,118 @@ export function AdminUsersPanel({ groups }: { groups: UserGroup[] }) {
     setEditorError(null);
     setEditorMessage(null);
     setPassword("");
+    setIdentityConflict(null);
+  }
+
+  async function loadIdentityOptions() {
+    setIdentityLoading(true);
+    try {
+      const response = await fetch("/api/admin/chat-identities", { cache: "no-store" });
+      const payload = await readPayload(response);
+      if (!response.ok) throw new Error(responseMessage(payload, "已识别账号加载失败"));
+      setIdentityOptions((payload as { identities?: ManagedChatIdentity[] }).identities ?? []);
+    } catch (error) {
+      setEditorError(error instanceof Error ? error.message : "已识别账号加载失败");
+    } finally {
+      setIdentityLoading(false);
+    }
+  }
+
+  function patchIdentityDraft(platform: "wechat" | "wecom", patch: Partial<IdentityDraft>) {
+    setIdentityDrafts((current) => ({
+      ...current,
+      [platform]: { ...current[platform], ...patch }
+    }));
+  }
+
+  function applyUpdatedUser(user: UserListItem) {
+    setEditorUser(user);
+    setEditor(userDraft(user));
+    setUsers((current) => current.map((item) => item.personId === user.personId ? user : item));
+    setIdentityDrafts({
+      wechat: {
+        identityId: user.identities.wechat?.id ?? "",
+        externalUserId: user.identities.wechat?.externalUserId ?? "",
+        displayName: user.identities.wechat?.displayName ?? ""
+      },
+      wecom: {
+        identityId: user.identities.wecom?.id ?? "",
+        externalUserId: user.identities.wecom?.externalUserId ?? "",
+        displayName: user.identities.wecom?.displayName ?? ""
+      }
+    });
+  }
+
+  async function bindPlatform(platform: "wechat" | "wecom", confirmationToken?: string) {
+    if (!editor?.personId) return;
+    const draft = identityDrafts[platform];
+    setIdentityBusy(platform);
+    setEditorError(null);
+    setEditorMessage(null);
+    try {
+      const response = await fetch(`/api/admin/users/${editor.personId}/chat-identities/${platform}`, {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          identityId: draft.identityId || undefined,
+          externalUserId: draft.identityId ? undefined : draft.externalUserId,
+          displayName: draft.displayName,
+          confirmationToken
+        })
+      });
+      const payload = await readPayload(response);
+      if (response.status === 409 && payload && typeof payload === "object") {
+        const conflictPayload = payload as {
+          code?: string;
+          confirmationToken?: string;
+          conflict?: IdentityConflict["conflict"];
+        };
+        if (
+          conflictPayload.code === "IDENTITY_CONFLICT"
+          && conflictPayload.confirmationToken
+          && conflictPayload.conflict
+        ) {
+          setIdentityConflict({
+            platform,
+            confirmationToken: conflictPayload.confirmationToken,
+            conflict: conflictPayload.conflict
+          });
+          return;
+        }
+      }
+      if (!response.ok) throw new Error(responseMessage(payload, "账号绑定失败"));
+      const user = (payload as { user: UserListItem }).user;
+      applyUpdatedUser(user);
+      setIdentityConflict(null);
+      setEditorMessage(`${platform === "wechat" ? "微信" : "企微"}账号已绑定`);
+      void loadIdentityOptions();
+    } catch (error) {
+      setEditorError(error instanceof Error ? error.message : "账号绑定失败");
+    } finally {
+      setIdentityBusy(null);
+    }
+  }
+
+  async function unbindPlatform(platform: "wechat" | "wecom") {
+    if (!editor?.personId) return;
+    if (!window.confirm(`确定解绑当前${platform === "wechat" ? "微信" : "企微"}账号？`)) return;
+    setIdentityBusy(platform);
+    setEditorError(null);
+    setEditorMessage(null);
+    try {
+      const response = await fetch(`/api/admin/users/${editor.personId}/chat-identities/${platform}`, {
+        method: "DELETE"
+      });
+      const payload = await readPayload(response);
+      if (!response.ok) throw new Error(responseMessage(payload, "账号解绑失败"));
+      applyUpdatedUser((payload as { user: UserListItem }).user);
+      setEditorMessage(`${platform === "wechat" ? "微信" : "企微"}账号已解绑`);
+      void loadIdentityOptions();
+    } catch (error) {
+      setEditorError(error instanceof Error ? error.message : "账号解绑失败");
+    } finally {
+      setIdentityBusy(null);
+    }
   }
 
   function patchEditor(patch: Partial<UserEditorDraft>) {
@@ -548,16 +705,97 @@ export function AdminUsersPanel({ groups }: { groups: UserGroup[] }) {
               </section>
 
               {editorUser && (
-                <section className="admin-user-binding-overview">
-                  <strong>账号绑定</strong>
-                  <div>
-                    <span>微信</span>
-                    <BindingSummary user={editorUser} platform="wechat" />
+                <section className="admin-user-binding-editor">
+                  <div className="admin-user-binding-title">
+                    <strong>账号绑定</strong>
+                    <span>每个平台最多绑定一个稳定账号标识。</span>
                   </div>
-                  <div>
-                    <span>企业微信</span>
-                    <BindingSummary user={editorUser} platform="wecom" />
-                  </div>
+                  {(["wechat", "wecom"] as const).map((platform) => {
+                    const label = platform === "wechat" ? "微信" : "企微";
+                    const current = editorUser.identities[platform];
+                    const options = identityOptions.filter((identity) => identity.platform === platform);
+                    const draft = identityDrafts[platform];
+                    return (
+                      <div className="admin-user-binding-control" key={platform}>
+                        <header>
+                          <div>
+                            <strong>{label}</strong>
+                            <span>{current ? `${current.displayName} · ${current.externalUserId}` : "未绑定"}</span>
+                          </div>
+                          {current && (
+                            <button
+                              className="admin-icon-button"
+                              type="button"
+                              onClick={() => void unbindPlatform(platform)}
+                              aria-label={`解绑${label}账号`}
+                              title={`解绑${label}账号`}
+                              disabled={identityBusy === platform}
+                            >
+                              <Unlink size={16} aria-hidden="true" />
+                            </button>
+                          )}
+                        </header>
+                        <label>
+                          <span>{label}已识别账号</span>
+                          <select
+                            aria-label={`${label}已识别账号`}
+                            value={draft.identityId}
+                            disabled={identityLoading}
+                            onChange={(event) => {
+                              const identityId = event.target.value;
+                              const selected = identityOptions.find((identity) => identity.id === identityId);
+                              patchIdentityDraft(platform, {
+                                identityId,
+                                externalUserId: selected?.externalUserId ?? "",
+                                displayName: selected?.displayName ?? ""
+                              });
+                            }}
+                          >
+                            <option value="">手工填写稳定账号标识</option>
+                            {options.map((identity) => (
+                              <option key={identity.id} value={identity.id}>
+                                {identity.displayName} · {identity.externalUserId}
+                                {identity.personName ? `（已绑定 ${identity.personName}）` : ""}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <div className="admin-user-binding-fields">
+                          <label>
+                            <span>账号标识</span>
+                            <input
+                              value={draft.externalUserId}
+                              onChange={(event) => patchIdentityDraft(platform, {
+                                identityId: "",
+                                externalUserId: event.target.value
+                              })}
+                              disabled={Boolean(draft.identityId)}
+                              placeholder={platform === "wechat" ? "wxid_..." : "企业微信 external_userid"}
+                            />
+                          </label>
+                          <label>
+                            <span>显示名称</span>
+                            <input
+                              value={draft.displayName}
+                              onChange={(event) => patchIdentityDraft(platform, {
+                                displayName: event.target.value
+                              })}
+                              placeholder={`${label}显示名称`}
+                            />
+                          </label>
+                        </div>
+                        <button
+                          className="secondary-button"
+                          type="button"
+                          onClick={() => void bindPlatform(platform)}
+                          disabled={identityBusy === platform || (!draft.identityId && !draft.externalUserId.trim())}
+                        >
+                          <Link2 size={16} aria-hidden="true" />
+                          {identityBusy === platform ? "绑定中..." : `绑定${label}账号`}
+                        </button>
+                      </div>
+                    );
+                  })}
                 </section>
               )}
 
@@ -598,6 +836,28 @@ export function AdminUsersPanel({ groups }: { groups: UserGroup[] }) {
               </form>
             )}
           </aside>
+          {identityConflict && (
+            <div className="admin-user-conflict-dialog" role="alertdialog" aria-modal="true" aria-labelledby="identity-conflict-title">
+              <h3 id="identity-conflict-title">确认换绑账号</h3>
+              <p>
+                {identityConflict.conflict.displayName}（{identityConflict.conflict.externalUserId}）
+                当前属于 {identityConflict.conflict.personName ?? "其他用户"}
+                {identityConflict.conflict.personPhone ? ` ${identityConflict.conflict.personPhone}` : ""}。
+              </p>
+              <span>确认后，该账号会从原用户解绑并转移到当前用户。</span>
+              <div>
+                <button className="secondary-button" type="button" onClick={() => setIdentityConflict(null)}>取消</button>
+                <button
+                  className="danger-button"
+                  type="button"
+                  onClick={() => void bindPlatform(identityConflict.platform, identityConflict.confirmationToken)}
+                  disabled={identityBusy === identityConflict.platform}
+                >
+                  确认换绑
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )}
     </section>

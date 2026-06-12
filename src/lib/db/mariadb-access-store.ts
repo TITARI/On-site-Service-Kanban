@@ -5,6 +5,8 @@ import type {
   AccountSession,
   AdminLoginRecord,
   AuthenticatedActor,
+  ChatIdentityBindingMutation,
+  ManagedChatIdentity,
   MobileAccountInput,
   PermissionCode,
   SessionResolution,
@@ -1055,8 +1057,17 @@ function userWhere(query: UserQuery) {
   const params: SqlValue[] = [];
   if (query.search?.trim()) {
     const search = `%${query.search.trim()}%`;
-    conditions.push("(p.name LIKE ? OR p.phone LIKE ? OR COALESCE(g.name, p.group_name_snapshot) LIKE ?)");
-    params.push(search, search, search);
+    conditions.push(`(
+      p.name LIKE ?
+      OR p.phone LIKE ?
+      OR COALESCE(g.name, p.group_name_snapshot) LIKE ?
+      OR EXISTS (
+        SELECT 1 FROM chat_identities ci_search
+        WHERE ci_search.person_id = p.id
+          AND (ci_search.external_user_id LIKE ? OR ci_search.display_name LIKE ?)
+      )
+    )`);
+    params.push(search, search, search, search, search);
   }
   if (query.groupId !== undefined) {
     conditions.push("p.group_id = ?");
@@ -1123,6 +1134,205 @@ export async function getUser(
     [userId, userId]
   );
   return (await userItems(connection, selected))[0];
+}
+
+function managedIdentityFromRow(row: Row): ManagedChatIdentity {
+  return {
+    id: String(row.id),
+    platform: row.platform as MessageChannel,
+    externalUserId: String(row.external_user_id),
+    displayName: String(row.display_name),
+    isTemporary: bool(row.is_temporary),
+    personId: row.person_id ? String(row.person_id) : undefined,
+    personName: row.person_name ? String(row.person_name) : undefined,
+    personPhone: row.person_phone ? String(row.person_phone) : undefined,
+    firstSeenAt: requiredIso(row.first_seen_at),
+    lastSeenAt: requiredIso(row.last_seen_at)
+  };
+}
+
+const managedIdentitySelect = `SELECT
+  ci.id,
+  ci.platform,
+  ci.external_user_id,
+  ci.display_name,
+  ci.is_temporary,
+  ci.person_id,
+  ci.first_seen_at,
+  ci.last_seen_at,
+  p.name AS person_name,
+  p.phone AS person_phone
+FROM chat_identities ci
+LEFT JOIN people p ON p.id = ci.person_id`;
+
+export async function listChatIdentities(
+  connection: DatabaseConnection,
+  platform?: MessageChannel
+) {
+  const selected = await rows<Row>(
+    connection,
+    `${managedIdentitySelect}
+     ${platform ? "WHERE ci.platform = ?" : ""}
+     ORDER BY ci.last_seen_at DESC, ci.id`,
+    platform ? [platform] : []
+  );
+  return selected.map(managedIdentityFromRow);
+}
+
+export async function getChatIdentity(
+  connection: DatabaseConnection,
+  identityId: string
+) {
+  const [selected] = await rows<Row>(
+    connection,
+    `${managedIdentitySelect}
+     WHERE ci.id = ?
+     LIMIT 1`,
+    [identityId]
+  );
+  return selected ? managedIdentityFromRow(selected) : undefined;
+}
+
+export async function identityByExternalId(
+  connection: DatabaseConnection,
+  platform: MessageChannel,
+  externalUserId: string
+) {
+  const [selected] = await rows<Row>(
+    connection,
+    `${managedIdentitySelect}
+     WHERE ci.platform = ? AND ci.external_user_id = ?
+     LIMIT 1`,
+    [platform, externalUserId]
+  );
+  return selected ? managedIdentityFromRow(selected) : undefined;
+}
+
+export async function bindChatIdentity(
+  connection: DatabaseConnection,
+  input: ChatIdentityBindingMutation,
+  actor: AuthenticatedActor
+) {
+  const target = await lockedUser(connection, input.userId);
+  const personId = String(target.person_id);
+  const externalUserId = input.externalUserId.trim();
+  const displayName = input.displayName.trim() || externalUserId;
+  const identityParams = input.identityId
+    ? [input.identityId]
+    : [input.platform, externalUserId];
+  const [selected] = await rows<Row>(
+    connection,
+    `SELECT *
+     FROM chat_identities
+     WHERE ${input.identityId ? "id = ?" : "platform = ? AND external_user_id = ?"}
+     LIMIT 1
+     FOR UPDATE`,
+    identityParams
+  );
+  if (input.identityId && !selected) throw new Error("账号身份不存在");
+  if (selected && String(selected.platform) !== input.platform) throw new Error("账号身份平台不匹配");
+  if (selected && bool(selected.is_temporary)) throw new Error("临时身份不能绑定，请等待稳定账号标识");
+
+  const identityId = selected ? String(selected.id) : `identity-${randomUUID()}`;
+  const fromPersonId = selected?.person_id ? String(selected.person_id) : undefined;
+  if (
+    fromPersonId
+    && fromPersonId !== personId
+    && input.confirmedRebindFromPersonId !== fromPersonId
+  ) {
+    throw new Error("账号身份已被其他用户占用");
+  }
+
+  const now = new Date();
+  await execute(
+    connection,
+    `UPDATE chat_identities
+     SET person_id = NULL, verified_by = NULL, verified_at = NULL
+     WHERE person_id = ? AND platform = ? AND id <> ?`,
+    [personId, input.platform, identityId]
+  );
+
+  if (selected) {
+    await execute(
+      connection,
+      `UPDATE chat_identities
+       SET person_id = ?, display_name = ?, is_temporary = false,
+           verified_by = 'admin', verified_at = ?, last_seen_at = ?
+       WHERE id = ?`,
+      [personId, displayName, now, now, identityId]
+    );
+  } else {
+    await execute(
+      connection,
+      `INSERT INTO chat_identities (
+         id, platform, external_user_id, display_name, is_temporary,
+         person_id, verified_by, verified_at, first_seen_at, last_seen_at
+       ) VALUES (?, ?, ?, ?, false, ?, 'admin', ?, ?, ?)`,
+      [identityId, input.platform, externalUserId, displayName, personId, now, now, now]
+    );
+  }
+
+  await appendAudit(connection, {
+    actorId: actor.accountId,
+    actorName: actor.name,
+    action: fromPersonId && fromPersonId !== personId
+      ? "chat_identity.rebind"
+      : "chat_identity.bind",
+    targetType: "chat_identity",
+    targetId: identityId,
+    detail: {
+      platform: input.platform,
+      externalUserId,
+      fromPersonId,
+      toPersonId: personId
+    },
+    now
+  });
+  const user = await getUser(connection, personId);
+  if (!user) throw new Error("用户绑定结果不可用");
+  return user;
+}
+
+export async function unbindChatIdentity(
+  connection: DatabaseConnection,
+  userId: string,
+  platform: MessageChannel,
+  actor: AuthenticatedActor
+) {
+  const target = await lockedUser(connection, userId);
+  const personId = String(target.person_id);
+  const identities = await rows<Row>(
+    connection,
+    `SELECT id, external_user_id
+     FROM chat_identities
+     WHERE person_id = ? AND platform = ?
+     FOR UPDATE`,
+    [personId, platform]
+  );
+  await execute(
+    connection,
+    `UPDATE chat_identities
+     SET person_id = NULL, verified_by = NULL, verified_at = NULL
+     WHERE person_id = ? AND platform = ?`,
+    [personId, platform]
+  );
+  for (const identity of identities) {
+    await appendAudit(connection, {
+      actorId: actor.accountId,
+      actorName: actor.name,
+      action: "chat_identity.unbind",
+      targetType: "chat_identity",
+      targetId: String(identity.id),
+      detail: {
+        platform,
+        externalUserId: String(identity.external_user_id),
+        fromPersonId: personId
+      }
+    });
+  }
+  const user = await getUser(connection, personId);
+  if (!user) throw new Error("用户解绑结果不可用");
+  return user;
 }
 
 export async function usableAdminCount(connection: DatabaseConnection) {

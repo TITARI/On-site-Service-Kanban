@@ -9,6 +9,8 @@ import {
   type AdminLoginRecord,
   type AuthenticatedActor,
   type BootstrapAdminInput,
+  type ChatIdentityBindingMutation,
+  type ManagedChatIdentity,
   type MobileAccountInput,
   type PermissionCode,
   type SessionResolution,
@@ -18,7 +20,7 @@ import {
   type UserMutation,
   type UserQuery
 } from "../domain/access-control";
-import type { Person, UserGroup } from "../domain/types";
+import type { MessageChannel, Person, UserGroup } from "../domain/types";
 
 type AccessState = AppState & {
   people: NonNullable<AppState["people"]>;
@@ -749,7 +751,10 @@ export function listUsersFromState(stateInput: AppState, query: UserQuery) {
     return person ? [userItem(state, person, account)] : [];
   }).filter((item) => {
     const bound = Object.keys(item.identities).length > 0;
-    return (!search || [item.name, item.phone, item.groupName].some((value) => value.toLowerCase().includes(search)))
+    const identitySearchValues = Object.values(item.identities).flatMap((identity) => (
+      identity ? [identity.externalUserId, identity.displayName] : []
+    ));
+    return (!search || [item.name, item.phone, item.groupName, ...identitySearchValues].some((value) => value.toLowerCase().includes(search)))
       && (query.groupId === undefined || item.groupId === query.groupId)
       && (query.enabled === undefined || item.enabled === query.enabled)
       && (query.admin === undefined || item.permissions.includes("admin.access") === query.admin)
@@ -763,6 +768,158 @@ export function listUsersFromState(stateInput: AppState, query: UserQuery) {
     users: items.slice(offset, offset + pageSize),
     total: items.length
   };
+}
+
+function managedIdentity(state: AccessState, identity: AccessState["chatIdentities"][number]): ManagedChatIdentity {
+  const person = identity.personId
+    ? state.people.find((item) => item.id === identity.personId)
+    : undefined;
+  return {
+    id: identity.id,
+    platform: identity.platform,
+    externalUserId: identity.externalUserId,
+    displayName: identity.displayName,
+    isTemporary: Boolean(identity.isTemporary),
+    personId: person?.id,
+    personName: person?.name,
+    personPhone: person?.phone,
+    firstSeenAt: identity.firstSeenAt,
+    lastSeenAt: identity.lastSeenAt
+  };
+}
+
+export function listChatIdentitiesFromState(
+  stateInput: AppState,
+  platform?: MessageChannel
+) {
+  const state = normalizeAccessState(stateInput);
+  return state.chatIdentities
+    .filter((identity) => !platform || identity.platform === platform)
+    .map((identity) => managedIdentity(state, identity))
+    .sort((left, right) => right.lastSeenAt.localeCompare(left.lastSeenAt));
+}
+
+export function getChatIdentityFromState(stateInput: AppState, identityId: string) {
+  const state = normalizeAccessState(stateInput);
+  const identity = state.chatIdentities.find((item) => item.id === identityId);
+  return identity ? managedIdentity(state, identity) : undefined;
+}
+
+export function identityByExternalIdFromState(
+  stateInput: AppState,
+  platform: MessageChannel,
+  externalUserId: string
+) {
+  const state = normalizeAccessState(stateInput);
+  const identity = state.chatIdentities.find((item) => (
+    item.platform === platform && item.externalUserId === externalUserId
+  ));
+  return identity ? managedIdentity(state, identity) : undefined;
+}
+
+export function bindChatIdentityInState(
+  stateInput: AppState,
+  input: ChatIdentityBindingMutation,
+  actor: AuthenticatedActor
+) {
+  const state = normalizeAccessState(stateInput);
+  const account = state.accounts.find((item) => item.id === input.userId || item.personId === input.userId);
+  const person = account ? personForAccount(state, account) : undefined;
+  if (!account || !person) throw new Error("用户不存在");
+
+  const externalUserId = input.externalUserId.trim();
+  const displayName = input.displayName.trim() || externalUserId;
+  let identity = input.identityId
+    ? state.chatIdentities.find((item) => item.id === input.identityId)
+    : state.chatIdentities.find((item) => (
+        item.platform === input.platform && item.externalUserId === externalUserId
+      ));
+  if (input.identityId && !identity) throw new Error("账号身份不存在");
+  if (identity && identity.platform !== input.platform) throw new Error("账号身份平台不匹配");
+  if (identity?.isTemporary) throw new Error("临时身份不能绑定，请等待稳定账号标识");
+
+  const fromPersonId = identity?.personId;
+  if (fromPersonId && fromPersonId !== person.id) {
+    if (input.confirmedRebindFromPersonId !== fromPersonId) {
+      throw new Error("账号身份已被其他用户占用");
+    }
+  }
+
+  const at = nowIso();
+  for (const current of state.chatIdentities) {
+    if (
+      current.personId === person.id
+      && current.platform === input.platform
+      && current.id !== identity?.id
+    ) {
+      current.personId = undefined;
+      current.verifiedBy = undefined;
+      current.verifiedAt = undefined;
+    }
+  }
+
+  if (identity) {
+    identity.personId = person.id;
+    identity.displayName = displayName;
+    identity.verifiedBy = "admin";
+    identity.verifiedAt = at;
+    identity.lastSeenAt = at;
+  } else {
+    identity = {
+      id: `identity-${randomUUID()}`,
+      platform: input.platform,
+      externalUserId,
+      displayName,
+      isTemporary: false,
+      personId: person.id,
+      verifiedBy: "admin",
+      verifiedAt: at,
+      firstSeenAt: at,
+      lastSeenAt: at
+    };
+    state.chatIdentities.push(identity);
+  }
+
+  audit(
+    state,
+    fromPersonId && fromPersonId !== person.id ? "chat_identity.rebind" : "chat_identity.bind",
+    "chat_identity",
+    identity.id,
+    {
+      platform: input.platform,
+      externalUserId: identity.externalUserId,
+      fromPersonId,
+      toPersonId: person.id
+    },
+    actor
+  );
+  return userItem(state, person, account);
+}
+
+export function unbindChatIdentityInState(
+  stateInput: AppState,
+  userId: string,
+  platform: MessageChannel,
+  actor: AuthenticatedActor
+) {
+  const state = normalizeAccessState(stateInput);
+  const account = state.accounts.find((item) => item.id === userId || item.personId === userId);
+  const person = account ? personForAccount(state, account) : undefined;
+  if (!account || !person) throw new Error("用户不存在");
+  const identities = state.chatIdentities.filter((identity) => (
+    identity.personId === person.id && identity.platform === platform
+  ));
+  for (const identity of identities) {
+    identity.personId = undefined;
+    identity.verifiedBy = undefined;
+    identity.verifiedAt = undefined;
+    audit(state, "chat_identity.unbind", "chat_identity", identity.id, {
+      platform,
+      externalUserId: identity.externalUserId,
+      fromPersonId: person.id
+    }, actor);
+  }
+  return userItem(state, person, account);
 }
 
 export function createUserInState(
