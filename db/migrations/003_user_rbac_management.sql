@@ -65,7 +65,7 @@ CREATE TABLE IF NOT EXISTS role_permissions (
   role_id varchar(128) NOT NULL,
   permission_code varchar(64) NOT NULL,
   created_at datetime(3) NOT NULL,
-  PRIMARY KEY pk_role_permissions (role_id, permission_code)
+  PRIMARY KEY (role_id, permission_code)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS account_sessions (

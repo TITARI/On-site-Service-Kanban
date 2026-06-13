@@ -141,7 +141,7 @@ describe("initial MariaDB schema", () => {
       role_id varchar(128) NOT NULL,
       permission_code varchar(64) NOT NULL,
       created_at datetime(3) NOT NULL,
-      PRIMARY KEY pk_role_permissions (role_id, permission_code)
+      PRIMARY KEY (role_id, permission_code)
     `));
     expect(tableDefinition("account_sessions")).toBe(normalizeSql(`
       id varchar(64) NOT NULL PRIMARY KEY,
