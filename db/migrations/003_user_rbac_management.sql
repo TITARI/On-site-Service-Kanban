@@ -1,5 +1,5 @@
 ALTER TABLE people
-  ADD COLUMN group_locked boolean NOT NULL DEFAULT false AFTER group_name_snapshot;
+  ADD COLUMN IF NOT EXISTS group_locked boolean NOT NULL DEFAULT false AFTER group_name_snapshot;
 
 UPDATE people p
 JOIN user_groups g ON p.group_id IS NULL AND p.group_name_snapshot = g.name
@@ -179,17 +179,17 @@ SET duplicate_identity.person_id = NULL,
 WHERE duplicate_identity.person_id IS NOT NULL;
 
 ALTER TABLE chat_identities
-  ADD UNIQUE KEY uniq_chat_identity_person_platform (person_id, platform);
+  ADD UNIQUE KEY IF NOT EXISTS uniq_chat_identity_person_platform (person_id, platform);
 
 ALTER TABLE import_jobs
-  ADD COLUMN owner_account_id varchar(64) NULL,
-  ADD COLUMN source_hash char(64) NULL,
-  ADD COLUMN preview_version varchar(64) NULL,
-  ADD COLUMN updated_at datetime(3) NULL;
+  ADD COLUMN IF NOT EXISTS owner_account_id varchar(128) NULL,
+  ADD COLUMN IF NOT EXISTS source_hash char(64) NULL,
+  ADD COLUMN IF NOT EXISTS preview_version varchar(64) NULL,
+  ADD COLUMN IF NOT EXISTS updated_at datetime(3) NULL;
 
 ALTER TABLE import_job_rows
-  ADD COLUMN normalized_payload json NULL,
-  ADD COLUMN conflict_json json NULL,
-  ADD COLUMN decision_json json NULL,
-  ADD COLUMN result_action varchar(32) NULL,
-  ADD COLUMN updated_at datetime(3) NULL;
+  ADD COLUMN IF NOT EXISTS normalized_payload json NULL,
+  ADD COLUMN IF NOT EXISTS conflict_json json NULL,
+  ADD COLUMN IF NOT EXISTS decision_json json NULL,
+  ADD COLUMN IF NOT EXISTS result_action varchar(32) NULL,
+  ADD COLUMN IF NOT EXISTS updated_at datetime(3) NULL;

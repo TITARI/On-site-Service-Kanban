@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import { MariaDbStateStore } from "@/lib/db/mariadb-state-store";
 import type { DatabaseConnection } from "@/lib/db/connection";
+import type { AppState } from "@/lib/domain/app-state";
+import type { UserGroup } from "@/lib/domain/types";
 import { defaultConfig } from "@/lib/seed";
 
 function rowDate() {
@@ -41,8 +43,10 @@ function fakeConnection(): DatabaseConnection {
         name: "张三",
         phone: "13800138000",
         role: "handler",
+        group_id: "builder",
         group_name_snapshot: "搭建组",
         name_conflict: null,
+        group_locked: 1,
         booth_scope: JSON.stringify(["A01"]),
         enabled: 1,
         created_at: rowDate(),
@@ -115,6 +119,33 @@ function fakeConnection(): DatabaseConnection {
   } as unknown as DatabaseConnection;
 }
 
+function writableState(overrides: Partial<AppState> = {}): AppState {
+  return {
+    booths: [],
+    tickets: [],
+    messageRecords: [],
+    people: [],
+    chatIdentities: [],
+    conversations: [],
+    pendingWorkOrderSessions: [],
+    outboundMessages: [],
+    config: defaultConfig(),
+    ...overrides
+  };
+}
+
+function recordingConnection() {
+  const calls: Array<{ sql: string; params: unknown[] }> = [];
+  const connection = {
+    execute: vi.fn(async (sql: string, params: unknown[] = []) => {
+      calls.push({ sql, params });
+      if (sql.trimStart().startsWith("SELECT")) return [[]];
+      return [{ affectedRows: 1 }];
+    })
+  } as unknown as DatabaseConnection;
+  return { calls, connection };
+}
+
 describe("MariaDbStateStore", () => {
   it("loads admin bootstrap records from MariaDB tables", async () => {
     const data = await new MariaDbStateStore().adminBootstrap(fakeConnection());
@@ -122,10 +153,63 @@ describe("MariaDbStateStore", () => {
     expect(data.booths).toEqual([expect.objectContaining({ boothNumber: "A01" })]);
     expect(data.messageRecords).toEqual([expect.objectContaining({ id: "message-1" })]);
     expect(data.people).toEqual([expect.objectContaining({ id: "person-1", groupName: "搭建组" })]);
+    expect(data.people[0]).toEqual(expect.objectContaining({
+      groupId: "builder",
+      groupLocked: true
+    }));
     expect(data.chatIdentities).toEqual([expect.objectContaining({ id: "identity-1", personId: "person-1" })]);
     expect(data.conversations).toEqual([expect.objectContaining({ id: "conv-1", linkedPersonIds: ["person-1"] })]);
     expect(data.pendingWorkOrderSessions).toEqual([expect.objectContaining({ id: "pending-1", missingFields: ["phone"] })]);
     expect(data.outboundMessages).toEqual([expect.objectContaining({ id: "outbound-1", status: "pending" })]);
+  });
+
+  it("persists people group ids, group snapshots, and group locks", async () => {
+    const { calls, connection } = recordingConnection();
+    await new MariaDbStateStore().writeState(writableState({
+      people: [{
+        id: "person-rbac",
+        name: "RBAC User",
+        phone: "13800138001",
+        role: "admin",
+        groupId: "admin-group",
+        groupName: "Admin Group Snapshot",
+        groupLocked: true,
+        enabled: true,
+        createdAt: "2026-06-13T10:00:00.000Z",
+        updatedAt: "2026-06-13T10:00:00.000Z"
+      }]
+    }), connection);
+
+    const insert = calls.find((call) => call.sql.includes("INSERT INTO people"));
+    expect(insert?.sql.replace(/\s+/g, " ")).toContain("group_id, group_name_snapshot, group_locked");
+    expect(insert?.params.slice(4, 7)).toEqual(["admin-group", "Admin Group Snapshot", true]);
+  });
+
+  it("persists group canAdmin with a false fallback for legacy config", async () => {
+    const config = defaultConfig();
+    const legacyGroup = {
+      id: "legacy-group",
+      name: "Legacy Group",
+      description: "Legacy config without canAdmin",
+      canClaim: false,
+      canProcess: false,
+      canAccept: false,
+      enabled: true
+    } as UserGroup;
+    config.userGroups = [
+      {
+        ...config.userGroups![0],
+        id: "admin-group",
+        canAdmin: true
+      },
+      legacyGroup
+    ];
+    const { calls, connection } = recordingConnection();
+
+    await new MariaDbStateStore().writeState(writableState({ config }), connection);
+
+    const inserts = calls.filter((call) => call.sql.includes("INSERT INTO user_groups"));
+    expect(inserts.map((call) => call.params[6])).toEqual([true, false]);
   });
 
   it("persists auto acceptance and queues business and processing notifications", async () => {

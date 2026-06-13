@@ -142,7 +142,9 @@ async function readPeople(connection: DatabaseConnection): Promise<Person[]> {
     name: String(row.name),
     phone: String(row.phone),
     role: row.role as Person["role"],
+    groupId: row.group_id ? String(row.group_id) : undefined,
     groupName: String(row.group_name_snapshot ?? ""),
+    groupLocked: bool(row.group_locked),
     nameConflict: parseJsonValue<Person["nameConflict"] | undefined>(row.name_conflict, undefined),
     boothScope: parseJsonValue<string[] | undefined>(row.booth_scope, undefined),
     enabled: bool(row.enabled),
@@ -721,7 +723,7 @@ async function writeConfig(connection: DatabaseConnection, config: AppConfig, no
       `INSERT INTO user_groups (
         id, name, description, can_claim, can_process, can_accept, can_admin, enabled, created_at, updated_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [group.id, group.name, group.description, group.canClaim, group.canProcess, group.canAccept, false, group.enabled, now, now]
+      [group.id, group.name, group.description, group.canClaim, group.canProcess, group.canAccept, group.canAdmin ?? false, group.enabled, now, now]
     );
   }
 
@@ -886,15 +888,16 @@ async function writePeople(connection: DatabaseConnection, people: Person[], now
     await execute(
       connection,
       `INSERT INTO people (
-        id, name, phone, role, group_id, group_name_snapshot, name_conflict, booth_scope, enabled, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        id, name, phone, role, group_id, group_name_snapshot, group_locked, name_conflict, booth_scope, enabled, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         person.id,
         person.name,
         person.phone,
         person.role,
-        null,
+        person.groupId ?? null,
         person.groupName,
+        person.groupLocked ?? false,
         person.nameConflict ? json(person.nameConflict) : null,
         person.boothScope ? json(person.boothScope) : null,
         person.enabled,

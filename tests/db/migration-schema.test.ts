@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { splitSqlStatements } from "@/lib/db/migrations";
 
 function normalizeSql(sql: string) {
   return sql.replace(/\s+/g, " ").trim();
@@ -21,6 +22,11 @@ describe("initial MariaDB schema", () => {
   function alterTableDefinition(table: string) {
     const match = rbacSchema.match(new RegExp(`ALTER TABLE ${table}([\\s\\S]*?);`));
     return normalizeSql(match?.[1] ?? "");
+  }
+
+  function varcharWidth(definition: string, column: string) {
+    const match = definition.match(new RegExp(`\\b${column} varchar\\((\\d+)\\)`));
+    return Number(match?.[1] ?? Number.NaN);
   }
 
   it("creates the core tables required by the database design", () => {
@@ -91,8 +97,40 @@ describe("initial MariaDB schema", () => {
 
   it("adds the exact people group lock column", () => {
     expect(alterTableDefinition("people")).toBe(normalizeSql(`
-      ADD COLUMN group_locked boolean NOT NULL DEFAULT false AFTER group_name_snapshot
+      ADD COLUMN IF NOT EXISTS group_locked boolean NOT NULL DEFAULT false AFTER group_name_snapshot
     `));
+  });
+
+  it("keeps every Task 1 ALTER addition restart-safe and independently splittable", () => {
+    const alterStatements = splitSqlStatements(rbacSchema)
+      .filter((statement) => statement.startsWith("ALTER TABLE"))
+      .map(normalizeSql);
+
+    expect(alterStatements).toEqual([
+      normalizeSql(`
+        ALTER TABLE people
+          ADD COLUMN IF NOT EXISTS group_locked boolean NOT NULL DEFAULT false AFTER group_name_snapshot
+      `),
+      normalizeSql(`
+        ALTER TABLE chat_identities
+          ADD UNIQUE KEY IF NOT EXISTS uniq_chat_identity_person_platform (person_id, platform)
+      `),
+      normalizeSql(`
+        ALTER TABLE import_jobs
+          ADD COLUMN IF NOT EXISTS owner_account_id varchar(128) NULL,
+          ADD COLUMN IF NOT EXISTS source_hash char(64) NULL,
+          ADD COLUMN IF NOT EXISTS preview_version varchar(64) NULL,
+          ADD COLUMN IF NOT EXISTS updated_at datetime(3) NULL
+      `),
+      normalizeSql(`
+        ALTER TABLE import_job_rows
+          ADD COLUMN IF NOT EXISTS normalized_payload json NULL,
+          ADD COLUMN IF NOT EXISTS conflict_json json NULL,
+          ADD COLUMN IF NOT EXISTS decision_json json NULL,
+          ADD COLUMN IF NOT EXISTS result_action varchar(32) NULL,
+          ADD COLUMN IF NOT EXISTS updated_at datetime(3) NULL
+      `)
+    ]);
   });
 
   it("uses the exact account, credential, role, permission, session, and bootstrap definitions", () => {
@@ -257,18 +295,23 @@ describe("initial MariaDB schema", () => {
 
   it("adds exact nullable import preview columns", () => {
     expect(alterTableDefinition("import_jobs")).toBe(normalizeSql(`
-      ADD COLUMN owner_account_id varchar(64) NULL,
-      ADD COLUMN source_hash char(64) NULL,
-      ADD COLUMN preview_version varchar(64) NULL,
-      ADD COLUMN updated_at datetime(3) NULL
+      ADD COLUMN IF NOT EXISTS owner_account_id varchar(128) NULL,
+      ADD COLUMN IF NOT EXISTS source_hash char(64) NULL,
+      ADD COLUMN IF NOT EXISTS preview_version varchar(64) NULL,
+      ADD COLUMN IF NOT EXISTS updated_at datetime(3) NULL
     `));
     expect(alterTableDefinition("import_job_rows")).toBe(normalizeSql(`
-      ADD COLUMN normalized_payload json NULL,
-      ADD COLUMN conflict_json json NULL,
-      ADD COLUMN decision_json json NULL,
-      ADD COLUMN result_action varchar(32) NULL,
-      ADD COLUMN updated_at datetime(3) NULL
+      ADD COLUMN IF NOT EXISTS normalized_payload json NULL,
+      ADD COLUMN IF NOT EXISTS conflict_json json NULL,
+      ADD COLUMN IF NOT EXISTS decision_json json NULL,
+      ADD COLUMN IF NOT EXISTS result_action varchar(32) NULL,
+      ADD COLUMN IF NOT EXISTS updated_at datetime(3) NULL
     `));
+  });
+
+  it("keeps import job owner ids as wide as account ids", () => {
+    expect(varcharWidth(alterTableDefinition("import_jobs"), "owner_account_id"))
+      .toBe(varcharWidth(tableDefinition("accounts"), "id"));
   });
 
   it("seeds the exact permission codes and labels", () => {
