@@ -8,7 +8,7 @@ export const PERMISSION_CODES = [
 ] as const;
 
 export type PermissionCode = typeof PERMISSION_CODES[number];
-export type SessionType = MessageChannel | "admin";
+export type SessionType = "mobile" | "admin";
 
 export type Account = {
   id: string;
@@ -24,7 +24,7 @@ export type Account = {
 export type AccountCredential = {
   accountId: string;
   passwordHash: string;
-  passwordChangedAt?: string;
+  passwordChangedAt: string;
   mustChangePassword: boolean;
   failedAttempts: number;
   lockedUntil?: string;
@@ -66,46 +66,46 @@ export type AccountSession = {
 export type AuthenticatedActor = {
   accountId: string;
   personId: string;
-  loginName: string;
   name: string;
   phone: string;
   groupId: string;
   groupName: string;
   permissions: PermissionCode[];
-  sessionId: string;
   sessionType: SessionType;
-  authVersion: number;
 };
 
 export type MobileAccountInput = {
-  personId: string;
-  loginName: string;
-  channel: MessageChannel;
+  name: string;
+  phone: string;
+  groupId: string;
 };
 
 export type UserMutation = {
-  personId?: string;
   name: string;
   phone: string;
   groupId: string;
   groupLocked: boolean;
-  loginName: string;
   enabled: boolean;
-  password?: string;
-  mustChangePassword?: boolean;
 };
 
 export type BootstrapAdminInput = {
+  legacyPassword: string;
   name: string;
   phone: string;
-  loginName: string;
   password: string;
+  group:
+    | { mode: "existing"; groupId: string }
+    | { mode: "create"; name: string };
 };
 
 export type UserQuery = {
   search?: string;
   groupId?: string;
   enabled?: boolean;
+  admin?: boolean;
+  binding?: "bound" | "unbound";
+  page: number;
+  pageSize: number;
 };
 
 export type SessionResolution = {
@@ -114,31 +114,33 @@ export type SessionResolution = {
 };
 
 export type AdminLoginRecord = {
-  account: Account;
+  actor: AuthenticatedActor;
   credential: AccountCredential;
-  role: Role;
-  permissionCodes: PermissionCode[];
 };
 
 export type AuthBootstrapState = {
-  id: string;
   completedAt?: string;
   completedByAccountId?: string;
 };
 
 export type UserListItem = {
   personId: string;
+  accountId: string;
   name: string;
   phone: string;
   groupId: string;
   groupName: string;
   groupLocked: boolean;
-  accountId: string;
-  loginName: string;
   enabled: boolean;
-  roleId: string;
-  permissionCodes: PermissionCode[];
+  permissions: PermissionCode[];
+  hasPassword: boolean;
   lastLoginAt?: string;
+  identities: Partial<Record<MessageChannel, {
+    id: string;
+    externalUserId: string;
+    displayName: string;
+  }>>;
+  updatedAt: string;
 };
 
 export function permissionCodesForGroup(group: UserGroup): PermissionCode[] {

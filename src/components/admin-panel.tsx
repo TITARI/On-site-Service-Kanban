@@ -838,6 +838,7 @@ export function AdminConfigCenter({
         canClaim: isChecked(formData, "newGroupCanClaim"),
         canProcess: isChecked(formData, "newGroupCanProcess"),
         canAccept: isChecked(formData, "newGroupCanAccept"),
+        canAdmin: false,
         enabled: true
       });
     }

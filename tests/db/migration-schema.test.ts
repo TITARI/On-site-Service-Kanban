@@ -2,11 +2,26 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
+function normalizeSql(sql: string) {
+  return sql.replace(/\s+/g, " ").trim();
+}
+
 describe("initial MariaDB schema", () => {
   const schema = readFileSync(path.join(process.cwd(), "db", "migrations", "001_initial_schema.sql"), "utf-8");
   const keywordRuleSetSchema = readFileSync(path.join(process.cwd(), "db", "migrations", "002_keyword_rule_sets.sql"), "utf-8");
   const rbacSchemaPath = path.join(process.cwd(), "db", "migrations", "003_user_rbac_management.sql");
   const rbacSchema = existsSync(rbacSchemaPath) ? readFileSync(rbacSchemaPath, "utf-8") : "";
+  const normalizedRbacSchema = normalizeSql(rbacSchema);
+
+  function tableDefinition(table: string) {
+    const match = rbacSchema.match(new RegExp(`CREATE TABLE IF NOT EXISTS ${table} \\(([\\s\\S]*?)\\) ENGINE=`));
+    return normalizeSql(match?.[1] ?? "");
+  }
+
+  function alterTableDefinition(table: string) {
+    const match = rbacSchema.match(new RegExp(`ALTER TABLE ${table}([\\s\\S]*?);`));
+    return normalizeSql(match?.[1] ?? "");
+  }
 
   it("creates the core tables required by the database design", () => {
     [
@@ -74,8 +89,120 @@ describe("initial MariaDB schema", () => {
     });
   });
 
-  it("deduplicates chat identities before enforcing one identity per person and platform", () => {
+  it("uses the exact account, credential, role, session, and bootstrap definitions", () => {
+    expect(tableDefinition("accounts")).toBe(normalizeSql(`
+      id varchar(128) NOT NULL PRIMARY KEY,
+      person_id varchar(64) NOT NULL,
+      login_name varchar(64) NOT NULL,
+      enabled boolean NOT NULL DEFAULT true,
+      auth_version int NOT NULL DEFAULT 1,
+      last_login_at datetime(3) NULL,
+      created_at datetime(3) NOT NULL,
+      updated_at datetime(3) NOT NULL,
+      UNIQUE KEY uniq_accounts_person (person_id),
+      UNIQUE KEY uniq_accounts_login_name (login_name),
+      KEY idx_accounts_enabled (enabled)
+    `));
+    expect(tableDefinition("account_credentials")).toBe(normalizeSql(`
+      account_id varchar(128) NOT NULL PRIMARY KEY,
+      password_hash varchar(255) NOT NULL,
+      password_changed_at datetime(3) NOT NULL,
+      must_change_password boolean NOT NULL DEFAULT false,
+      failed_attempts int NOT NULL DEFAULT 0,
+      locked_until datetime(3) NULL
+    `));
+    expect(tableDefinition("account_roles")).toBe(normalizeSql(`
+      account_id varchar(128) NOT NULL,
+      role_id varchar(128) NOT NULL,
+      created_at datetime(3) NOT NULL,
+      PRIMARY KEY (account_id, role_id),
+      UNIQUE KEY uniq_account_single_role (account_id)
+    `));
+    expect(tableDefinition("account_sessions")).toBe(normalizeSql(`
+      id varchar(64) NOT NULL PRIMARY KEY,
+      account_id varchar(128) NOT NULL,
+      session_type varchar(16) NOT NULL,
+      token_hash char(64) NOT NULL,
+      auth_version int NOT NULL,
+      expires_at datetime(3) NOT NULL,
+      last_seen_at datetime(3) NOT NULL,
+      revoked_at datetime(3) NULL,
+      created_at datetime(3) NOT NULL,
+      UNIQUE KEY uniq_account_session_token (token_hash),
+      KEY idx_account_sessions_lookup (token_hash, session_type, revoked_at, expires_at),
+      KEY idx_account_sessions_account (account_id, revoked_at)
+    `));
+    expect(tableDefinition("auth_bootstrap_state")).toBe(normalizeSql(`
+      id varchar(32) NOT NULL PRIMARY KEY,
+      completed_at datetime(3) NULL,
+      completed_by_account_id varchar(128) NULL
+    `));
+  });
+
+  it("backfills groups and role timestamps from deterministic source rows", () => {
+    expect(normalizedRbacSchema).toContain(normalizeSql(`
+      UPDATE people p
+      JOIN user_groups g ON p.group_id IS NULL AND p.group_name_snapshot = g.name
+      SET p.group_id = g.id;
+    `));
+    expect(normalizedRbacSchema).toContain(normalizeSql(`
+      UPDATE people
+      SET group_id = (
+        SELECT fallback_group.id
+        FROM user_groups fallback_group
+        WHERE fallback_group.enabled = true
+        ORDER BY fallback_group.created_at, fallback_group.id
+        LIMIT 1
+      )
+      WHERE group_id IS NULL;
+    `));
+    expect(normalizedRbacSchema).toContain(normalizeSql(`
+      SELECT CONCAT('role-', id), 'ticket.claim', updated_at FROM user_groups WHERE can_claim = true
+      UNION ALL
+      SELECT CONCAT('role-', id), 'ticket.process', updated_at FROM user_groups WHERE can_process = true
+      UNION ALL
+      SELECT CONCAT('role-', id), 'ticket.accept', updated_at FROM user_groups WHERE can_accept = true
+      UNION ALL
+      SELECT CONCAT('role-', id), 'admin.access', updated_at FROM user_groups WHERE can_admin = true;
+    `));
+    expect(normalizedRbacSchema).toContain(normalizeSql(`
+      INSERT IGNORE INTO account_roles (account_id, role_id, created_at)
+      SELECT CONCAT('account-', p.id), CONCAT('role-', p.group_id), p.updated_at
+      FROM people p
+      WHERE p.group_id IS NOT NULL;
+    `));
+  });
+
+  it("preserves duplicate chat identity rows while clearing duplicate bindings", () => {
+    expect(normalizedRbacSchema).toContain(normalizeSql(`
+      UPDATE chat_identities duplicate_identity
+      JOIN chat_identities keeper
+        ON duplicate_identity.person_id = keeper.person_id
+       AND duplicate_identity.platform = keeper.platform
+       AND duplicate_identity.id > keeper.id
+      SET duplicate_identity.person_id = NULL,
+          duplicate_identity.verified_by = NULL,
+          duplicate_identity.verified_at = NULL
+      WHERE duplicate_identity.person_id IS NOT NULL;
+    `));
+    expect(normalizedRbacSchema).not.toContain("DELETE duplicate_identity");
     expect(rbacSchema).toContain("uniq_chat_identity_person_platform");
+  });
+
+  it("adds exact nullable import preview columns", () => {
+    expect(alterTableDefinition("import_jobs")).toBe(normalizeSql(`
+      ADD COLUMN owner_account_id varchar(64) NULL,
+      ADD COLUMN source_hash char(64) NULL,
+      ADD COLUMN preview_version varchar(64) NULL,
+      ADD COLUMN updated_at datetime(3) NULL
+    `));
+    expect(alterTableDefinition("import_job_rows")).toBe(normalizeSql(`
+      ADD COLUMN normalized_payload json NULL,
+      ADD COLUMN conflict_json json NULL,
+      ADD COLUMN decision_json json NULL,
+      ADD COLUMN result_action varchar(32) NULL,
+      ADD COLUMN updated_at datetime(3) NULL
+    `));
   });
 
   it("seeds the fixed permission codes", () => {
