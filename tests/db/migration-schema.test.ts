@@ -89,7 +89,13 @@ describe("initial MariaDB schema", () => {
     });
   });
 
-  it("uses the exact account, credential, role, session, and bootstrap definitions", () => {
+  it("adds the exact people group lock column", () => {
+    expect(alterTableDefinition("people")).toBe(normalizeSql(`
+      ADD COLUMN group_locked boolean NOT NULL DEFAULT false AFTER group_name_snapshot
+    `));
+  });
+
+  it("uses the exact account, credential, role, permission, session, and bootstrap definitions", () => {
     expect(tableDefinition("accounts")).toBe(normalizeSql(`
       id varchar(128) NOT NULL PRIMARY KEY,
       person_id varchar(64) NOT NULL,
@@ -111,12 +117,31 @@ describe("initial MariaDB schema", () => {
       failed_attempts int NOT NULL DEFAULT 0,
       locked_until datetime(3) NULL
     `));
+    expect(tableDefinition("roles")).toBe(normalizeSql(`
+      id varchar(128) NOT NULL PRIMARY KEY,
+      name varchar(120) NOT NULL,
+      source_group_id varchar(64) NOT NULL,
+      enabled boolean NOT NULL DEFAULT true,
+      created_at datetime(3) NOT NULL,
+      updated_at datetime(3) NOT NULL,
+      UNIQUE KEY uniq_roles_source_group (source_group_id)
+    `));
+    expect(tableDefinition("permissions")).toBe(normalizeSql(`
+      code varchar(64) NOT NULL PRIMARY KEY,
+      name varchar(120) NOT NULL
+    `));
     expect(tableDefinition("account_roles")).toBe(normalizeSql(`
       account_id varchar(128) NOT NULL,
       role_id varchar(128) NOT NULL,
       created_at datetime(3) NOT NULL,
       PRIMARY KEY (account_id, role_id),
       UNIQUE KEY uniq_account_single_role (account_id)
+    `));
+    expect(tableDefinition("role_permissions")).toBe(normalizeSql(`
+      role_id varchar(128) NOT NULL,
+      permission_code varchar(64) NOT NULL,
+      created_at datetime(3) NOT NULL,
+      PRIMARY KEY pk_role_permissions (role_id, permission_code)
     `));
     expect(tableDefinition("account_sessions")).toBe(normalizeSql(`
       id varchar(64) NOT NULL PRIMARY KEY,
@@ -157,6 +182,25 @@ describe("initial MariaDB schema", () => {
       WHERE group_id IS NULL;
     `));
     expect(normalizedRbacSchema).toContain(normalizeSql(`
+      INSERT IGNORE INTO roles (
+        id,
+        name,
+        source_group_id,
+        enabled,
+        created_at,
+        updated_at
+      )
+      SELECT
+        CONCAT('role-', id),
+        name,
+        id,
+        enabled,
+        created_at,
+        updated_at
+      FROM user_groups;
+    `));
+    expect(normalizedRbacSchema).toContain(normalizeSql(`
+      INSERT IGNORE INTO role_permissions (role_id, permission_code, created_at)
       SELECT CONCAT('role-', id), 'ticket.claim', updated_at FROM user_groups WHERE can_claim = true
       UNION ALL
       SELECT CONCAT('role-', id), 'ticket.process', updated_at FROM user_groups WHERE can_process = true
@@ -164,6 +208,28 @@ describe("initial MariaDB schema", () => {
       SELECT CONCAT('role-', id), 'ticket.accept', updated_at FROM user_groups WHERE can_accept = true
       UNION ALL
       SELECT CONCAT('role-', id), 'admin.access', updated_at FROM user_groups WHERE can_admin = true;
+    `));
+    expect(normalizedRbacSchema).toContain(normalizeSql(`
+      INSERT IGNORE INTO accounts (
+        id,
+        person_id,
+        login_name,
+        enabled,
+        auth_version,
+        last_login_at,
+        created_at,
+        updated_at
+      )
+      SELECT
+        CONCAT('account-', id),
+        id,
+        phone,
+        enabled,
+        1,
+        NULL,
+        created_at,
+        updated_at
+      FROM people;
     `));
     expect(normalizedRbacSchema).toContain(normalizeSql(`
       INSERT IGNORE INTO account_roles (account_id, role_id, created_at)
@@ -205,14 +271,13 @@ describe("initial MariaDB schema", () => {
     `));
   });
 
-  it("seeds the fixed permission codes", () => {
-    [
-      "ticket.claim",
-      "ticket.process",
-      "ticket.accept",
-      "admin.access"
-    ].forEach((permissionCode) => {
-      expect(rbacSchema).toContain(permissionCode);
-    });
+  it("seeds the exact permission codes and labels", () => {
+    expect(normalizedRbacSchema).toContain(normalizeSql(`
+      INSERT IGNORE INTO permissions (code, name) VALUES
+        ('ticket.claim', '认领工单'),
+        ('ticket.process', '处理工单'),
+        ('ticket.accept', '验收工单'),
+        ('admin.access', '后台管理');
+    `));
   });
 });

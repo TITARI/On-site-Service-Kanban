@@ -32,9 +32,9 @@ function state(): AppState {
         { id: "wechat", channel: "wechat", label: "微信 MCP", enabled: true, mcpServerName: "wechat-mcp", endpoint: "/api/integrations/wechat/messages", secretEnv: "WECHAT_MCP_SECRET", autoCreateTickets: true }
       ],
       userGroups: [
-        { id: "builder", name: "搭建组", description: "搭建", canClaim: true, canProcess: true, canAccept: false, enabled: true },
-        { id: "organizer", name: "主场组", description: "主场", canClaim: false, canProcess: false, canAccept: true, enabled: true },
-        { id: "business", name: "业务组", description: "业务", canClaim: false, canProcess: false, canAccept: true, enabled: true }
+        { id: "builder", name: "搭建组", description: "搭建", canClaim: true, canProcess: true, canAccept: false, canAdmin: false, enabled: true },
+        { id: "organizer", name: "主场组", description: "主场", canClaim: false, canProcess: false, canAccept: true, canAdmin: false, enabled: true },
+        { id: "business", name: "业务组", description: "业务", canClaim: false, canProcess: false, canAccept: true, canAdmin: false, enabled: true }
       ]
     }
   };

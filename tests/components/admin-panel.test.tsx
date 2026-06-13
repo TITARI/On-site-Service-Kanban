@@ -20,9 +20,9 @@ const config: AppConfig = {
     { id: "wecom", channel: "wecom", label: "企业微信 MCP", enabled: true, mcpServerName: "wecom-mcp", endpoint: "/api/integrations/wechat/messages", secretEnv: "WECOM_MCP_SECRET", autoCreateTickets: false }
   ],
   userGroups: [
-    { id: "business", name: "业务组", description: "业务人员验收", canClaim: false, canProcess: false, canAccept: true, enabled: true },
-    { id: "organizer", name: "主场组", description: "主场运营验收", canClaim: false, canProcess: false, canAccept: true, enabled: true },
-    { id: "builder", name: "搭建组", description: "认领并处理现场搭建问题", canClaim: true, canProcess: true, canAccept: false, enabled: true }
+    { id: "business", name: "业务组", description: "业务人员验收", canClaim: false, canProcess: false, canAccept: true, canAdmin: false, enabled: true },
+    { id: "organizer", name: "主场组", description: "主场运营验收", canClaim: false, canProcess: false, canAccept: true, canAdmin: false, enabled: true },
+    { id: "builder", name: "搭建组", description: "认领并处理现场搭建问题", canClaim: true, canProcess: true, canAccept: false, canAdmin: false, enabled: true }
   ],
   assignmentRules: []
 };
@@ -112,9 +112,9 @@ const configWithStaleIssueGroup: AppConfig = {
     { id: "network", name: "网络", urgencyMinutes: 20, priorityWeight: 25, assignmentGroup: "网络组", enabled: true }
   ],
   userGroups: [
-    { id: "business", name: "业务组", description: "业务人员验收", canClaim: false, canProcess: false, canAccept: true, enabled: true },
-    { id: "organizer", name: "主场组", description: "主场运营验收", canClaim: false, canProcess: false, canAccept: true, enabled: true },
-    { id: "builder", name: "搭建", description: "认领并处理现场搭建问题", canClaim: true, canProcess: true, canAccept: false, enabled: true }
+    { id: "business", name: "业务组", description: "业务人员验收", canClaim: false, canProcess: false, canAccept: true, canAdmin: false, enabled: true },
+    { id: "organizer", name: "主场组", description: "主场运营验收", canClaim: false, canProcess: false, canAccept: true, canAdmin: false, enabled: true },
+    { id: "builder", name: "搭建", description: "认领并处理现场搭建问题", canClaim: true, canProcess: true, canAccept: false, canAdmin: false, enabled: true }
   ]
 };
 

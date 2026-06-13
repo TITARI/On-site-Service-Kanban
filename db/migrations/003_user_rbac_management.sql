@@ -90,9 +90,9 @@ CREATE TABLE IF NOT EXISTS auth_bootstrap_state (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 INSERT IGNORE INTO permissions (code, name) VALUES
-  ('ticket.claim', '工单认领'),
-  ('ticket.process', '工单处理'),
-  ('ticket.accept', '工单验收'),
+  ('ticket.claim', '认领工单'),
+  ('ticket.process', '处理工单'),
+  ('ticket.accept', '验收工单'),
   ('admin.access', '后台管理');
 
 INSERT IGNORE INTO roles (
