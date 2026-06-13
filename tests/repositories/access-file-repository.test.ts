@@ -4,7 +4,7 @@ import type {
   AuthenticatedActor,
   UserMutation
 } from "@/lib/domain/access-control";
-import type { UserGroup } from "@/lib/domain/types";
+import type { Ticket, UserGroup } from "@/lib/domain/types";
 import { createFileAppRepository } from "@/lib/repositories/app-repository";
 import { verifyPassword } from "@/lib/services/password-service";
 import { defaultConfig } from "@/lib/seed";
@@ -105,6 +105,118 @@ function memoryStore(initial = accessState(), atomic = true) {
   return store;
 }
 
+function deferred() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
+function autoAcceptanceTicket(): Ticket {
+  return {
+    id: "ticket-auto-accept",
+    title: "A01 network repair",
+    boothNumber: "A01",
+    companyName: "Example Company",
+    companyShortName: "Example",
+    description: "Network restored",
+    imageUrls: [],
+    issueType: "Network",
+    submitterId: "person-submitter",
+    submitterName: "Submitter",
+    submitterPhone: "13800138009",
+    reporterChatIdentityId: "chat-reporter",
+    sourceConversationId: "conversation-site",
+    feedbackUsers: [],
+    status: "已解决",
+    handlerId: "person-handler",
+    handlerName: "Handler",
+    assignmentGroup: "Builder",
+    urgeCount: 0,
+    urgeLevel: 0,
+    priorityScore: 25,
+    aiDecisions: [],
+    replies: [],
+    timeline: [],
+    createdAt: "2026-06-05T07:00:00.000Z",
+    updatedAt: "2026-06-05T08:00:00.000Z"
+  };
+}
+
+function controllableAtomicStore(initial: AccessTestState) {
+  let current = structuredClone(initial);
+  let updateQueue = Promise.resolve();
+  let controlsEnabled = false;
+  let autoPausedInUpdate = false;
+  let autoPausedInWrite = false;
+  let autoReleased = false;
+  const autoPaused = deferred();
+  const releaseAuto = deferred();
+
+  const releasePausedAuto = () => {
+    if (autoReleased) return;
+    autoReleased = true;
+    releaseAuto.resolve();
+  };
+
+  return {
+    readState: async () => structuredClone(current) as AppState,
+    writeState: async (state: AppState) => {
+      const closesTicket =
+        current.tickets[0]?.status !== "已关闭" &&
+        state.tickets[0]?.status === "已关闭";
+      if (controlsEnabled && closesTicket) {
+        autoPausedInWrite = true;
+        autoPaused.resolve();
+        await releaseAuto.promise;
+      }
+      current = structuredClone(state) as AccessTestState;
+    },
+    updateState: <T>(operation: (state: AppState) => Promise<T> | T) => {
+      if (controlsEnabled && autoPausedInUpdate) {
+        releasePausedAuto();
+      }
+      const queued = updateQueue.then(async () => {
+        const draft = structuredClone(current);
+        const previousStatus = current.tickets[0]?.status;
+        const result = await operation(draft);
+        const closesTicket =
+          previousStatus !== "已关闭" &&
+          draft.tickets[0]?.status === "已关闭";
+        if (controlsEnabled && closesTicket) {
+          autoPausedInUpdate = true;
+          autoPaused.resolve();
+          await releaseAuto.promise;
+        }
+        current = draft as AccessTestState;
+        if (controlsEnabled && autoPausedInWrite) {
+          releasePausedAuto();
+        }
+        return result;
+      });
+      updateQueue = queued.then(() => undefined, () => undefined);
+      return queued;
+    },
+    beginInterleaving: () => {
+      controlsEnabled = true;
+    },
+    waitForAutoPause: () => autoPaused.promise,
+    snapshot: () => structuredClone(current)
+  };
+}
+
+function expectAccountPersonIds(state: AccessTestState) {
+  const people = state.people ?? [];
+  const accounts = state.accounts ?? [];
+  expect(new Set(people.map((person) => person.id)).size).toBe(people.length);
+  expect(accounts).toHaveLength(people.length);
+  for (const account of accounts) {
+    expect(account.personId).toMatch(/^person-/);
+    expect(account.id).toBe(`account-${account.personId}`);
+  }
+}
+
 function adminActor(): AuthenticatedActor {
   return {
     accountId: "account-admin",
@@ -145,9 +257,7 @@ describe("file access repository", () => {
       permissions: ["ticket.claim", "ticket.process"],
       sessionType: "mobile"
     });
-    expect(firstPersonId).toBe(
-      "person-ppQvl3HWfzQDTS8ZJpiO0_rTvxtOfO25ox8xOY3qQ7w"
-    );
+    expect(firstPersonId).toMatch(/^person-/);
     expect(firstAccountId).toBe(`account-${firstPersonId}`);
     expect(firstSnapshot.accountRoles).toEqual([
       expect.objectContaining({
@@ -188,6 +298,88 @@ describe("file access repository", () => {
     expect(store.snapshot().accountRoles?.filter(
       (link) => link.accountId === firstAccountId
     )).toHaveLength(1);
+  });
+
+  it("does not reuse a mobile-created person id when the old phone is reused", async () => {
+    const store = memoryStore();
+    const repository = createFileAppRepository(store);
+    const original = await createMobile(repository);
+
+    await repository.updateUser(
+      original.actor.personId,
+      { phone: "13900139000" },
+      adminActor()
+    );
+    const replacement = await createMobile(repository);
+
+    expect(original.actor.personId).toMatch(/^person-/);
+    expect(replacement.actor.personId).toMatch(/^person-/);
+    expect(replacement.actor.personId).not.toBe(original.actor.personId);
+    await expect(
+      repository.getUser(original.actor.personId)
+    ).resolves.toMatchObject({ phone: "13900139000" });
+    expectAccountPersonIds(store.snapshot());
+  });
+
+  it("does not reuse a createUser person id when the old phone is reused", async () => {
+    const store = memoryStore();
+    const repository = createFileAppRepository(store);
+    const actor = adminActor();
+    const original = await repository.createUser({
+      name: "Created User",
+      phone: "13800138000",
+      groupId: "builder",
+      groupLocked: false,
+      enabled: true
+    }, actor);
+
+    await repository.updateUser(
+      original.personId,
+      { phone: "13900139000" },
+      actor
+    );
+    const replacement = await repository.createUser({
+      name: "Replacement User",
+      phone: "13800138000",
+      groupId: "business",
+      groupLocked: false,
+      enabled: true
+    }, actor);
+
+    expect(original.personId).toMatch(/^person-/);
+    expect(replacement.personId).toMatch(/^person-/);
+    expect(replacement.personId).not.toBe(original.personId);
+    await expect(repository.getUser(original.personId)).resolves.toMatchObject({
+      phone: "13900139000"
+    });
+    expectAccountPersonIds(store.snapshot());
+  });
+
+  it("does not reuse a prior person id when bootstrap reuses an old phone", async () => {
+    const store = memoryStore();
+    const repository = createFileAppRepository(store);
+    const original = await createMobile(repository);
+
+    await repository.updateUser(
+      original.actor.personId,
+      { phone: "13900139000" },
+      adminActor()
+    );
+    const bootstrap = await repository.bootstrapAdmin({
+      legacyPassword: "legacy-secret",
+      name: "Root Admin",
+      phone: "13800138000",
+      password: "StrongPass123!",
+      group: { mode: "existing", groupId: "admin" }
+    });
+
+    expect(original.actor.personId).toMatch(/^person-/);
+    expect(bootstrap.personId).toMatch(/^person-/);
+    expect(bootstrap.personId).not.toBe(original.actor.personId);
+    await expect(
+      repository.getUser(original.actor.personId)
+    ).resolves.toMatchObject({ phone: "13900139000" });
+    expectAccountPersonIds(store.snapshot());
   });
 
   it("derives actors only from persisted account-role-permission links", async () => {
@@ -280,6 +472,29 @@ describe("file access repository", () => {
     });
     await expect(
       repository.resolveAccountSession("hash-only-value", "mobile")
+    ).resolves.toBeUndefined();
+  });
+
+  it("rejects a persisted session with malformed expiry text", async () => {
+    const store = memoryStore();
+    const repository = createFileAppRepository(store);
+    const { actor } = await createMobile(repository);
+    const session = await repository.createAccountSession(
+      actor.accountId,
+      "mobile",
+      "malformed-expiry-hash",
+      "2099-01-01T00:00:00.000Z"
+    );
+
+    store.mutate((state) => {
+      const stored = state.accountSessions?.find(
+        (item) => item.id === session.id
+      );
+      if (stored) stored.expiresAt = "not-an-expiry";
+    });
+
+    await expect(
+      repository.resolveAccountSession("malformed-expiry-hash", "mobile")
     ).resolves.toBeUndefined();
   });
 
@@ -702,6 +917,37 @@ describe("file access repository", () => {
     await expect(
       repository.resolveAccountSession("config-session-hash", "mobile")
     ).resolves.toBeUndefined();
+  });
+
+  it("keeps auto acceptance and an interleaved access mutation atomic", async () => {
+    const initial = accessState();
+    initial.tickets = [autoAcceptanceTicket()];
+    initial.config.autoAcceptance = {
+      enabled: true,
+      timeoutMinutes: 1
+    };
+    const store = controllableAtomicStore(initial);
+    const autoRepository = createFileAppRepository(store);
+    const accessRepository = createFileAppRepository(store);
+    const { actor } = await createMobile(accessRepository);
+    store.beginInterleaving();
+
+    const autoAcceptance = autoRepository.runAutoAcceptance(
+      new Date("2026-06-05T08:01:00.000Z")
+    );
+    await store.waitForAutoPause();
+    const passwordUpdate = accessRepository.setUserPassword(
+      actor.personId,
+      "scrypt$interleaved-hash",
+      actor
+    );
+    await Promise.all([autoAcceptance, passwordUpdate]);
+
+    const snapshot = store.snapshot();
+    expect(snapshot.tickets[0]?.status).toBe("已关闭");
+    expect(snapshot.accountCredentials?.find(
+      (credential) => credential.accountId === actor.accountId
+    )?.passwordHash).toBe("scrypt$interleaved-hash");
   });
 
   it("serializes fallback mutations across repository instances", async () => {

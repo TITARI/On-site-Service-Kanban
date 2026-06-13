@@ -176,13 +176,9 @@ export function createFileAppRepository(store: StateFileRepository = {
   const updateState = createStateUpdater(store);
   return {
     kind: "file",
-    runAutoAcceptance: async (now = new Date()) => {
-      const state = stateCollections(await store.readState());
-      const result = runAutoAcceptanceForState(state, { now: now.toISOString() });
-      if (result.acceptedTicketIds.length > 0) {
-        await store.writeState(state);
-      }
-    },
+    runAutoAcceptance: (now = new Date()) => updateState((state) => {
+      runAutoAcceptanceForState(state, { now: now.toISOString() });
+    }),
     mobileBootstrap: async () => {
       const state = stateCollections(await store.readState());
       return {

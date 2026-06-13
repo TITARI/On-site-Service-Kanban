@@ -55,8 +55,8 @@ function stableId(prefix: string, value: string) {
   return `${prefix}-${createHash("sha256").update(value).digest("base64url")}`;
 }
 
-function createPersonId(phone: string) {
-  return stableId("person", phone);
+function createPersonId() {
+  return `person-${randomUUID()}`;
 }
 
 function accessRoleId(groupId: string) {
@@ -450,7 +450,7 @@ function createPersonAndAccount(
   }
 
   const group = enabledGroup(state, input.groupId);
-  const personId = createPersonId(phone);
+  const personId = createPersonId();
   const accountId = `account-${personId}`;
   const person: Person = {
     id: personId,
@@ -597,10 +597,12 @@ export function resolveAccountSessionInState(
       item.tokenHash === tokenHash &&
       item.sessionType === type
   );
+  const expiryMs = session ? Date.parse(session.expiresAt) : Number.NaN;
   if (
     !session ||
     session.revokedAt ||
-    Date.parse(session.expiresAt) <= Date.now()
+    !Number.isFinite(expiryMs) ||
+    expiryMs <= Date.now()
   ) {
     return undefined;
   }
