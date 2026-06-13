@@ -70,4 +70,16 @@ describe("app repository", () => {
     expect(store.getConfig).toHaveBeenCalledOnce();
     expect(store.listWechatOrderLogs).toHaveBeenCalledWith(20);
   });
+
+  it("exposes clear temporary MariaDB stubs for access methods", async () => {
+    const repository = createMariaDbAppRepository({} as MariaDbStateStore);
+
+    await expect(repository.bootstrapStatus()).rejects.toThrow(
+      /MariaDB access repository is not implemented/i
+    );
+    await expect(repository.listUsers({
+      page: 1,
+      pageSize: 20
+    })).rejects.toThrow(/MariaDB access repository is not implemented/i);
+  });
 });
