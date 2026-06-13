@@ -11,6 +11,15 @@ import type {
   Person,
   Ticket
 } from "../domain/types";
+import type {
+  Account,
+  AccountCredential,
+  AccountRole,
+  AccountSession,
+  AuthBootstrapState,
+  Role,
+  RolePermission
+} from "../domain/access-control";
 import { normalizeKeywordGroups } from "../domain/keyword-config";
 import { defaultConfig, type AppConfig } from "../seed";
 import { normalizeAutoAcceptanceConfig } from "../services/auto-acceptance-service";
@@ -25,6 +34,13 @@ export type AppState = {
   conversations?: Conversation[];
   pendingWorkOrderSessions?: PendingWorkOrderSession[];
   outboundMessages?: OutboundMessage[];
+  accounts?: Account[];
+  accountCredentials?: AccountCredential[];
+  roles?: Role[];
+  accountRoles?: AccountRole[];
+  rolePermissions?: RolePermission[];
+  accountSessions?: AccountSession[];
+  authBootstrap?: AuthBootstrapState | null;
   config: AppConfig;
 };
 
@@ -67,6 +83,13 @@ export function initialState(): AppState {
     conversations: [],
     pendingWorkOrderSessions: [],
     outboundMessages: [],
+    accounts: [],
+    accountCredentials: [],
+    roles: [],
+    accountRoles: [],
+    rolePermissions: [],
+    accountSessions: [],
+    authBootstrap: null,
     config: defaultConfig()
   };
 }
@@ -81,6 +104,10 @@ export function parseStoredState(raw: string): AppState {
       parsedConfig.messageIntegrations?.length ? parsedConfig.messageIntegrations : defaults.messageIntegrations,
       wxautoMcp
     );
+    const userGroups = (parsedConfig.userGroups?.length ? parsedConfig.userGroups : defaults.userGroups)?.map((group) => ({
+      ...group,
+      canAdmin: group.canAdmin ?? false
+    }));
     return {
       ...parsed,
       messageRecords: parsed.messageRecords ?? [],
@@ -89,12 +116,19 @@ export function parseStoredState(raw: string): AppState {
       conversations: parsed.conversations ?? [],
       pendingWorkOrderSessions: parsed.pendingWorkOrderSessions ?? [],
       outboundMessages: parsed.outboundMessages ?? [],
+      accounts: parsed.accounts ?? [],
+      accountCredentials: parsed.accountCredentials ?? [],
+      roles: parsed.roles ?? [],
+      accountRoles: parsed.accountRoles ?? [],
+      rolePermissions: parsed.rolePermissions ?? [],
+      accountSessions: parsed.accountSessions ?? [],
+      authBootstrap: parsed.authBootstrap ?? null,
       config: {
         ...defaults,
         ...parsedConfig,
         messageIntegrations,
         wxautoMcp,
-        userGroups: parsedConfig.userGroups?.length ? parsedConfig.userGroups : defaults.userGroups,
+        userGroups,
         keywordGroups: normalizeKeywordGroups(parsedConfig.keywordGroups?.length ? parsedConfig.keywordGroups : defaults.keywordGroups),
         autoAcceptance: normalizeAutoAcceptanceConfig(parsedConfig.autoAcceptance)
       }

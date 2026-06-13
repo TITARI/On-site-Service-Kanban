@@ -6,6 +6,38 @@ describe("file store", () => {
     expect(() => parseStoredState("{ broken json")).toThrow("状态文件损坏");
   });
 
+  it("normalizes RBAC collections and administrator flags in legacy state", () => {
+    const state = parseStoredState(JSON.stringify({
+      booths: [],
+      tickets: [],
+      config: {
+        userGroups: [
+          {
+            id: "legacy",
+            name: "旧分组",
+            description: "没有管理员权限字段",
+            canClaim: true,
+            canProcess: false,
+            canAccept: false,
+            enabled: true
+          }
+        ]
+      }
+    }));
+
+    expect(state.messageRecords).toEqual([]);
+    expect(state.accounts).toEqual([]);
+    expect(state.accountCredentials).toEqual([]);
+    expect(state.roles).toEqual([]);
+    expect(state.accountRoles).toEqual([]);
+    expect(state.rolePermissions).toEqual([]);
+    expect(state.accountSessions).toEqual([]);
+    expect(state.authBootstrap).toBeNull();
+    expect(state.config.userGroups).toEqual([
+      expect.objectContaining({ id: "legacy", canAdmin: false })
+    ]);
+  });
+
   it("retries transient EPERM failures when replacing the state file", async () => {
     vi.resetModules();
     const mkdir = vi.fn().mockResolvedValue(undefined);

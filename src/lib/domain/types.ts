@@ -9,6 +9,7 @@ export type UserGroup = {
   canClaim: boolean;
   canProcess: boolean;
   canAccept: boolean;
+  canAdmin: boolean;
   enabled: boolean;
 };
 
@@ -69,7 +70,9 @@ export type Person = {
   name: string;
   phone: string;
   role: PersonRole;
+  groupId?: string;
   groupName: string;
+  groupLocked?: boolean;
   nameConflict?: { attemptedName: string; observedAt: string };
   boothScope?: string[];
   enabled: boolean;

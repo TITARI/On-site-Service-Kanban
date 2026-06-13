@@ -1,10 +1,12 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 describe("initial MariaDB schema", () => {
   const schema = readFileSync(path.join(process.cwd(), "db", "migrations", "001_initial_schema.sql"), "utf-8");
   const keywordRuleSetSchema = readFileSync(path.join(process.cwd(), "db", "migrations", "002_keyword_rule_sets.sql"), "utf-8");
+  const rbacSchemaPath = path.join(process.cwd(), "db", "migrations", "003_user_rbac_management.sql");
+  const rbacSchema = existsSync(rbacSchemaPath) ? readFileSync(rbacSchemaPath, "utf-8") : "";
 
   it("creates the core tables required by the database design", () => {
     [
@@ -55,5 +57,35 @@ describe("initial MariaDB schema", () => {
     expect(keywordRuleSetSchema).toContain("INSERT IGNORE INTO keyword_terms");
     expect(keywordRuleSetSchema).toContain("uniq_keyword_term_per_rule_set");
     expect(keywordRuleSetSchema).toContain("idx_keyword_match_logs_message");
+  });
+
+  it("adds the account and RBAC management tables", () => {
+    [
+      "accounts",
+      "account_credentials",
+      "roles",
+      "account_roles",
+      "permissions",
+      "role_permissions",
+      "account_sessions",
+      "auth_bootstrap_state"
+    ].forEach((table) => {
+      expect(rbacSchema).toContain(`CREATE TABLE IF NOT EXISTS ${table}`);
+    });
+  });
+
+  it("deduplicates chat identities before enforcing one identity per person and platform", () => {
+    expect(rbacSchema).toContain("uniq_chat_identity_person_platform");
+  });
+
+  it("seeds the fixed permission codes", () => {
+    [
+      "ticket.claim",
+      "ticket.process",
+      "ticket.accept",
+      "admin.access"
+    ].forEach((permissionCode) => {
+      expect(rbacSchema).toContain(permissionCode);
+    });
   });
 });

@@ -18,15 +18,18 @@ export type AppConfig = {
 
 export function defaultUserGroups(): UserGroup[] {
   return [
-    { id: "business", name: "业务组", description: "业务人员负责最终验收和展商反馈闭环。", canClaim: false, canProcess: false, canAccept: true, enabled: true },
-    { id: "organizer", name: "主场组", description: "主场运营负责现场统筹、复核和验收。", canClaim: false, canProcess: false, canAccept: true, enabled: true },
-    { id: "builder", name: "搭建组", description: "搭建人员可认领工单，并提交处理内容和现场照片。", canClaim: true, canProcess: true, canAccept: false, enabled: true }
+    { id: "business", name: "业务组", description: "业务人员负责最终验收和展商反馈闭环。", canClaim: false, canProcess: false, canAccept: true, canAdmin: false, enabled: true },
+    { id: "organizer", name: "主场组", description: "主场运营负责现场统筹、复核和验收。", canClaim: false, canProcess: false, canAccept: true, canAdmin: false, enabled: true },
+    { id: "builder", name: "搭建组", description: "搭建人员可认领工单，并提交处理内容和现场照片。", canClaim: true, canProcess: true, canAccept: false, canAdmin: false, enabled: true }
   ];
 }
 
 export function userGroupsOf(config: AppConfig): UserGroup[] {
   const groups = config.userGroups?.filter((group) => group.enabled) ?? [];
-  return groups.length > 0 ? groups : defaultUserGroups();
+  return (groups.length > 0 ? groups : defaultUserGroups()).map((group) => ({
+    ...group,
+    canAdmin: group.canAdmin ?? false
+  }));
 }
 
 export function defaultMessageIntegrations(): MessageIntegrationConfig[] {
