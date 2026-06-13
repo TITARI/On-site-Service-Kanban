@@ -6,6 +6,7 @@ import {
   type Account,
   type AccountCredential,
   type AccountSession,
+  type AccessAuditLogEntry,
   type AdminLoginRecord,
   type AuthenticatedActor,
   type BootstrapAdminInput,
@@ -18,17 +19,6 @@ import {
   type UserQuery
 } from "../domain/access-control";
 import type { Person, PersonRole, UserGroup } from "../domain/types";
-
-export type AccessAuditLogEntry = {
-  id: string;
-  actorId?: string;
-  actorName: string;
-  action: string;
-  targetType: string;
-  targetId?: string;
-  detail: Record<string, unknown>;
-  createdAt: string;
-};
 
 type AccessState = AppState & {
   people: NonNullable<AppState["people"]>;
@@ -46,6 +36,7 @@ type AccessState = AppState & {
 const ISO_DATE_PATTERN =
   /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?(Z|[+-]\d{2}:\d{2})$/;
 const SECRET_KEY_PATTERN = /password|token|secret/i;
+const SESSION_TOKEN_HASH_PATTERN = /^[a-f0-9]{64}$/;
 
 function nowIso() {
   return new Date().toISOString();
@@ -125,12 +116,9 @@ export function normalizeAccessState(state: AppState): AccessState {
   state.accountRoles ??= [];
   state.rolePermissions ??= [];
   state.accountSessions ??= [];
-  const mutable = state as AppState & {
-    auditLogs?: AccessAuditLogEntry[];
-  };
-  mutable.auditLogs ??= [];
+  state.auditLogs ??= [];
   state.authBootstrap ??= {};
-  return mutable as AccessState;
+  return state as AccessState;
 }
 
 function groupsOf(state: AppState) {
@@ -253,19 +241,20 @@ function audit(
   detail: Record<string, unknown>,
   actor?: AuthenticatedActor
 ) {
-  state.auditLogs.push({
+  const entry: AccessAuditLogEntry = {
     id: stableId(
       "audit",
       `${action}:${targetType}:${targetId ?? ""}:${nowIso()}:${randomUUID()}`
     ),
-    actorId: actor?.accountId,
     actorName: actor?.name ?? "system",
     action,
     targetType,
     targetId,
     detail: sanitizeAuditValue(detail) as Record<string, unknown>,
     createdAt: nowIso()
-  });
+  };
+  if (actor) entry.actorId = actor.accountId;
+  state.auditLogs.push(entry);
 }
 
 function ensureSingleAccountRole(
@@ -559,7 +548,11 @@ export function createAccountSessionInState(
   if (Date.parse(expiresAt) <= Date.now()) {
     throw new Error("Session expiresAt must be in the future");
   }
-  if (!tokenHash.trim()) throw new Error("Session token hash is required");
+  if (!SESSION_TOKEN_HASH_PATTERN.test(tokenHash)) {
+    throw new Error(
+      "Session token hash must be a lowercase 64-character hexadecimal SHA-256 digest"
+    );
+  }
   if (
     state.accountSessions.some(
       (session) => session.tokenHash === tokenHash
@@ -698,10 +691,6 @@ export function recordAdminLoginFailureInState(
 
   credential.failedAttempts += 1;
   if (lockedUntil) credential.lockedUntil = lockedUntil;
-  const account = state.accounts.find((item) => item.id === accountId);
-  const actor = account
-    ? actorForAccount(state, account, "admin")
-    : undefined;
   audit(
     state,
     "admin.login.failure",
@@ -710,8 +699,7 @@ export function recordAdminLoginFailureInState(
     {
       failedAttempts: credential.failedAttempts,
       lockedUntil: credential.lockedUntil
-    },
-    actor
+    }
   );
 }
 

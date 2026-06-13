@@ -7,22 +7,13 @@ import type {
 import type { Ticket, UserGroup } from "@/lib/domain/types";
 import { createFileAppRepository } from "@/lib/repositories/app-repository";
 import { verifyPassword } from "@/lib/services/password-service";
+import {
+  createSessionToken,
+  sessionTokenHash
+} from "@/lib/services/session-service";
 import { defaultConfig } from "@/lib/seed";
 
-type AccessAuditLogEntry = {
-  id: string;
-  actorId?: string;
-  actorName: string;
-  action: string;
-  targetType: string;
-  targetId?: string;
-  detail: Record<string, unknown>;
-  createdAt: string;
-};
-
-type AccessTestState = AppState & {
-  auditLogs?: AccessAuditLogEntry[];
-};
+type AccessTestState = AppState;
 
 const groups: UserGroup[] = [
   {
@@ -82,27 +73,31 @@ function accessState(): AccessTestState {
   };
 }
 
-function memoryStore(initial = accessState(), atomic = true) {
+function memoryStore(initial = accessState()) {
   let current = structuredClone(initial);
+  let updateQueue = Promise.resolve();
   const store = {
     readState: async () => structuredClone(current) as AppState,
-    writeState: async (state: AppState) => {
-      current = structuredClone(state) as AccessTestState;
+    updateState: <T>(operation: (state: AppState) => Promise<T> | T) => {
+      const queued = updateQueue.then(async () => {
+        const draft = structuredClone(current);
+        const result = await operation(draft);
+        current = draft;
+        return result;
+      });
+      updateQueue = queued.then(() => undefined, () => undefined);
+      return queued;
     },
-    updateState: atomic
-      ? async <T>(operation: (state: AppState) => Promise<T> | T) => {
-          const draft = structuredClone(current);
-          const result = await operation(draft);
-          current = draft;
-          return result;
-        }
-      : undefined,
     mutate: (operation: (state: AccessTestState) => void) => {
       operation(current);
     },
     snapshot: () => structuredClone(current)
   };
   return store;
+}
+
+function testSessionHash(label: string) {
+  return sessionTokenHash(`access-file-repository:${label}`);
 }
 
 function deferred() {
@@ -149,7 +144,6 @@ function controllableAtomicStore(initial: AccessTestState) {
   let updateQueue = Promise.resolve();
   let controlsEnabled = false;
   let autoPausedInUpdate = false;
-  let autoPausedInWrite = false;
   let autoReleased = false;
   const autoPaused = deferred();
   const releaseAuto = deferred();
@@ -162,17 +156,6 @@ function controllableAtomicStore(initial: AccessTestState) {
 
   return {
     readState: async () => structuredClone(current) as AppState,
-    writeState: async (state: AppState) => {
-      const closesTicket =
-        current.tickets[0]?.status !== "已关闭" &&
-        state.tickets[0]?.status === "已关闭";
-      if (controlsEnabled && closesTicket) {
-        autoPausedInWrite = true;
-        autoPaused.resolve();
-        await releaseAuto.promise;
-      }
-      current = structuredClone(state) as AccessTestState;
-    },
     updateState: <T>(operation: (state: AppState) => Promise<T> | T) => {
       if (controlsEnabled && autoPausedInUpdate) {
         releasePausedAuto();
@@ -190,9 +173,6 @@ function controllableAtomicStore(initial: AccessTestState) {
           await releaseAuto.promise;
         }
         current = draft as AccessTestState;
-        if (controlsEnabled && autoPausedInWrite) {
-          releasePausedAuto();
-        }
         return result;
       });
       updateQueue = queued.then(() => undefined, () => undefined);
@@ -386,10 +366,11 @@ describe("file access repository", () => {
     const store = memoryStore();
     const repository = createFileAppRepository(store);
     const { actor } = await createMobile(repository);
+    const tokenHash = testSessionHash("persisted permissions");
     await repository.createAccountSession(
       actor.accountId,
       "mobile",
-      "persisted-token-hash",
+      tokenHash,
       "2099-01-01T00:00:00.000Z"
     );
 
@@ -405,7 +386,7 @@ describe("file access repository", () => {
     });
 
     await expect(
-      repository.resolveAccountSession("persisted-token-hash", "mobile")
+      repository.resolveAccountSession(tokenHash, "mobile")
     ).resolves.toMatchObject({
       actor: {
         permissions: ["ticket.claim", "ticket.process"]
@@ -416,38 +397,74 @@ describe("file access repository", () => {
       state.rolePermissions = [];
     });
     await expect(
-      repository.resolveAccountSession("persisted-token-hash", "mobile")
+      repository.resolveAccountSession(tokenHash, "mobile")
     ).resolves.toMatchObject({
       actor: { permissions: [] }
     });
+  });
+
+  it("rejects non-canonical session token hashes without echoing them", async () => {
+    const store = memoryStore();
+    const repository = createFileAppRepository(store);
+    const { actor } = await createMobile(repository);
+    const canonicalHash = testSessionHash("canonical validation");
+    const invalidHashes = [
+      createSessionToken(),
+      "g".repeat(64),
+      canonicalHash.slice(0, -1),
+      "A".repeat(64)
+    ];
+
+    for (const invalidHash of invalidHashes) {
+      let error: unknown;
+      try {
+        await repository.createAccountSession(
+          actor.accountId,
+          "mobile",
+          invalidHash,
+          "2099-01-01T00:00:00.000Z"
+        );
+      } catch (caught) {
+        error = caught;
+      }
+
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toMatch(/session token hash/i);
+      expect((error as Error).message).not.toContain(invalidHash);
+    }
+
+    expect(store.snapshot().accountSessions).toEqual([]);
   });
 
   it("stores hash-only sessions and validates type, expiry, revocation, and auth version", async () => {
     const store = memoryStore();
     const repository = createFileAppRepository(store);
     const { actor } = await createMobile(repository);
+    const rawToken = "raw-session-token";
+    const tokenHash = sessionTokenHash(rawToken);
     const session = await repository.createAccountSession(
       actor.accountId,
       "mobile",
-      "hash-only-value",
+      tokenHash,
       "2099-01-01T00:00:00.000Z"
     );
 
     expect(session).toMatchObject({
       accountId: actor.accountId,
       sessionType: "mobile",
-      tokenHash: "hash-only-value",
+      tokenHash,
       authVersion: 1
     });
-    expect(JSON.stringify(store.snapshot())).not.toContain("raw-session-token");
+    expect(JSON.stringify(store.snapshot())).not.toContain(rawToken);
+    expect(JSON.stringify(store.snapshot().auditLogs)).not.toContain(tokenHash);
     await expect(
-      repository.resolveAccountSession("hash-only-value", "mobile")
+      repository.resolveAccountSession(tokenHash, "mobile")
     ).resolves.toMatchObject({
       session: { id: session.id },
       actor: { accountId: actor.accountId }
     });
     await expect(
-      repository.resolveAccountSession("hash-only-value", "admin")
+      repository.resolveAccountSession(tokenHash, "admin")
     ).resolves.toBeUndefined();
 
     store.mutate((state) => {
@@ -457,7 +474,7 @@ describe("file access repository", () => {
       if (stored) stored.expiresAt = "2000-01-01T00:00:00.000Z";
     });
     await expect(
-      repository.resolveAccountSession("hash-only-value", "mobile")
+      repository.resolveAccountSession(tokenHash, "mobile")
     ).resolves.toBeUndefined();
 
     store.mutate((state) => {
@@ -471,7 +488,7 @@ describe("file access repository", () => {
       if (account) account.authVersion += 1;
     });
     await expect(
-      repository.resolveAccountSession("hash-only-value", "mobile")
+      repository.resolveAccountSession(tokenHash, "mobile")
     ).resolves.toBeUndefined();
   });
 
@@ -479,10 +496,11 @@ describe("file access repository", () => {
     const store = memoryStore();
     const repository = createFileAppRepository(store);
     const { actor } = await createMobile(repository);
+    const tokenHash = testSessionHash("malformed expiry");
     const session = await repository.createAccountSession(
       actor.accountId,
       "mobile",
-      "malformed-expiry-hash",
+      tokenHash,
       "2099-01-01T00:00:00.000Z"
     );
 
@@ -494,7 +512,7 @@ describe("file access repository", () => {
     });
 
     await expect(
-      repository.resolveAccountSession("malformed-expiry-hash", "mobile")
+      repository.resolveAccountSession(tokenHash, "mobile")
     ).resolves.toBeUndefined();
   });
 
@@ -502,15 +520,16 @@ describe("file access repository", () => {
     const store = memoryStore();
     const repository = createFileAppRepository(store);
     const { actor } = await createMobile(repository);
+    const tokenHash = testSessionHash("enabled chain");
     await repository.createAccountSession(
       actor.accountId,
       "mobile",
-      "enabled-chain-hash",
+      tokenHash,
       "2099-01-01T00:00:00.000Z"
     );
 
     await expect(
-      repository.resolveAccountSession("enabled-chain-hash", "mobile")
+      repository.resolveAccountSession(tokenHash, "mobile")
     ).resolves.toBeDefined();
 
     store.mutate((state) => {
@@ -520,7 +539,7 @@ describe("file access repository", () => {
       if (account) account.enabled = false;
     });
     await expect(
-      repository.resolveAccountSession("enabled-chain-hash", "mobile")
+      repository.resolveAccountSession(tokenHash, "mobile")
     ).resolves.toBeUndefined();
 
     store.mutate((state) => {
@@ -530,7 +549,7 @@ describe("file access repository", () => {
       if (account) account.enabled = true;
     });
     await expect(
-      repository.resolveAccountSession("enabled-chain-hash", "mobile")
+      repository.resolveAccountSession(tokenHash, "mobile")
     ).resolves.toBeDefined();
 
     store.mutate((state) => {
@@ -543,7 +562,7 @@ describe("file access repository", () => {
       (item) => item.id === actor.accountId
     )?.enabled).toBe(true);
     await expect(
-      repository.resolveAccountSession("enabled-chain-hash", "mobile")
+      repository.resolveAccountSession(tokenHash, "mobile")
     ).resolves.toBeUndefined();
   });
 
@@ -551,25 +570,27 @@ describe("file access repository", () => {
     const store = memoryStore();
     const repository = createFileAppRepository(store);
     const { actor } = await createMobile(repository);
+    const firstHash = testSessionHash("first revoke");
+    const secondHash = testSessionHash("second revoke");
     await repository.createAccountSession(
       actor.accountId,
       "mobile",
-      "first-hash",
+      firstHash,
       "2099-01-01T00:00:00.000Z"
     );
     await repository.createAccountSession(
       actor.accountId,
       "mobile",
-      "second-hash",
+      secondHash,
       "2099-01-01T00:00:00.000Z"
     );
 
-    await repository.revokeAccountSession("first-hash");
+    await repository.revokeAccountSession(firstHash);
     await expect(
-      repository.resolveAccountSession("first-hash", "mobile")
+      repository.resolveAccountSession(firstHash, "mobile")
     ).resolves.toBeUndefined();
     await expect(
-      repository.resolveAccountSession("second-hash", "mobile")
+      repository.resolveAccountSession(secondHash, "mobile")
     ).resolves.toBeDefined();
 
     const before = store.snapshot().accounts?.[0]?.authVersion ?? 0;
@@ -584,8 +605,47 @@ describe("file access repository", () => {
       (item) => item.accountId === actor.accountId
     ).every((item) => item.authVersion === before)).toBe(true);
     await expect(
-      repository.resolveAccountSession("second-hash", "mobile")
+      repository.resolveAccountSession(secondHash, "mobile")
     ).resolves.toBeUndefined();
+  });
+
+  it("attributes failed admin login audits to the unauthenticated system actor", async () => {
+    const store = memoryStore();
+    const repository = createFileAppRepository(store);
+    const admin = await repository.bootstrapAdmin({
+      legacyPassword: "legacy-secret",
+      name: "Root Admin",
+      phone: "13700137000",
+      password: "StrongPass123!",
+      group: { mode: "existing", groupId: "admin" }
+    });
+    const credentialHash = store.snapshot().accountCredentials?.find(
+      (credential) => credential.accountId === admin.accountId
+    )?.passwordHash;
+    store.mutate((state) => {
+      state.auditLogs = [];
+    });
+
+    await repository.recordAdminLoginFailure(
+      admin.accountId,
+      "2099-01-01T00:00:00.000Z"
+    );
+
+    const [entry] = store.snapshot().auditLogs ?? [];
+    expect(entry).toMatchObject({
+      actorName: "system",
+      action: "admin.login.failure",
+      targetType: "account",
+      targetId: admin.accountId,
+      detail: {
+        failedAttempts: 1,
+        lockedUntil: "2099-01-01T00:00:00.000Z"
+      }
+    });
+    expect(entry).not.toHaveProperty("actorId");
+    expect(credentialHash).toBeTruthy();
+    expect(JSON.stringify(entry)).not.toContain(credentialHash as string);
+    expect(JSON.stringify(entry)).not.toContain("StrongPass123!");
   });
 
   it("handles admin login records, lock counters, and successful login state", async () => {
@@ -742,6 +802,7 @@ describe("file access repository", () => {
     for (const user of created) {
       expect(user.accountId).toBe(`account-${user.personId}`);
     }
+    const nameSessionHash = testSessionHash("name update");
     store.mutate((state) => {
       state.chatIdentities?.push({
         id: "chat-alice",
@@ -784,7 +845,7 @@ describe("file access repository", () => {
     await repository.createAccountSession(
       created[0].accountId,
       "mobile",
-      "name-session-hash",
+      nameSessionHash,
       "2099-01-01T00:00:00.000Z"
     );
     const initialVersion = store.snapshot().accounts?.find(
@@ -797,7 +858,7 @@ describe("file access repository", () => {
       (item) => item.id === created[0].accountId
     )?.authVersion).toBe(initialVersion);
     await expect(
-      repository.resolveAccountSession("name-session-hash", "mobile")
+      repository.resolveAccountSession(nameSessionHash, "mobile")
     ).resolves.toBeDefined();
 
     for (const mutation of [
@@ -831,7 +892,7 @@ describe("file access repository", () => {
     expect(auditText).toContain(actor.accountId);
     expect(auditText).toContain(created[0].personId);
     expect(auditText).not.toContain("scrypt$private-password-hash");
-    expect(auditText).not.toContain("name-session-hash");
+    expect(auditText).not.toContain(nameSessionHash);
     expect(auditText).not.toContain("tokenHash");
     expect(auditText).not.toContain("passwordHash");
 
@@ -896,10 +957,11 @@ describe("file access repository", () => {
     const store = memoryStore();
     const repository = createFileAppRepository(store);
     const { actor } = await createMobile(repository);
+    const tokenHash = testSessionHash("config invalidation");
     await repository.createAccountSession(
       actor.accountId,
       "mobile",
-      "config-session-hash",
+      tokenHash,
       "2099-01-01T00:00:00.000Z"
     );
     const before = store.snapshot().accounts?.[0]?.authVersion ?? 0;
@@ -915,7 +977,7 @@ describe("file access repository", () => {
 
     expect(store.snapshot().accounts?.[0]?.authVersion).toBe(before + 1);
     await expect(
-      repository.resolveAccountSession("config-session-hash", "mobile")
+      repository.resolveAccountSession(tokenHash, "mobile")
     ).resolves.toBeUndefined();
   });
 
@@ -950,8 +1012,8 @@ describe("file access repository", () => {
     )?.passwordHash).toBe("scrypt$interleaved-hash");
   });
 
-  it("serializes fallback mutations across repository instances", async () => {
-    const store = memoryStore(accessState(), false);
+  it("serializes mutations through one atomic store across repository instances", async () => {
+    const store = memoryStore();
     const firstRepository = createFileAppRepository(store);
     const secondRepository = createFileAppRepository(store);
     const { actor } = await createMobile(firstRepository);

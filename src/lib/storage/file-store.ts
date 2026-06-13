@@ -1,50 +1,13 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import type {
-  BoothRecord,
-  ChatIdentity,
-  Conversation,
-  InboundMessageRecord,
-  OutboundMessage,
-  PendingWorkOrderSession,
-  Person,
-  Ticket
-} from "../domain/types";
-import type {
-  Account,
-  AccountCredential,
-  AccountRole,
-  AccountSession,
-  AuthBootstrapState,
-  Role,
-  RolePermission
-} from "../domain/access-control";
+import type { AppState } from "../domain/app-state";
 import { normalizeKeywordGroups } from "../domain/keyword-config";
 import { defaultConfig, type AppConfig } from "../seed";
 import { normalizeAutoAcceptanceConfig } from "../services/auto-acceptance-service";
 import { normalizeWxautoMcpConfig, syncWxautoMcpMessageIntegration } from "../integrations/wxauto/config";
-import type { AccessAuditLogEntry } from "../services/access-state-service";
 
-export type AppState = {
-  booths: BoothRecord[];
-  tickets: Ticket[];
-  messageRecords: InboundMessageRecord[];
-  people?: Person[];
-  chatIdentities?: ChatIdentity[];
-  conversations?: Conversation[];
-  pendingWorkOrderSessions?: PendingWorkOrderSession[];
-  outboundMessages?: OutboundMessage[];
-  accounts?: Account[];
-  accountCredentials?: AccountCredential[];
-  roles?: Role[];
-  accountRoles?: AccountRole[];
-  rolePermissions?: RolePermission[];
-  accountSessions?: AccountSession[];
-  auditLogs?: AccessAuditLogEntry[];
-  authBootstrap?: AuthBootstrapState | null;
-  config: AppConfig;
-};
+export type { AppState } from "../domain/app-state";
 
 const dataDir = path.join(process.cwd(), "data");
 const dataFile = path.join(dataDir, "app-state.json");

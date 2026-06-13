@@ -27,8 +27,7 @@ import { runAutoAcceptanceForState } from "../services/auto-acceptance-service";
 import { normalizeKeywordGroups } from "../domain/keyword-config";
 import {
   readState as readJsonState,
-  updateState as updateJsonState,
-  writeState as writeJsonState
+  updateState as updateJsonState
 } from "../storage/file-store";
 import { hashPassword } from "../services/password-service";
 import {
@@ -110,8 +109,7 @@ export type AppRepository = {
 
 type StateFileRepository = {
   readState(): Promise<AppState>;
-  writeState(state: AppState): Promise<void>;
-  updateState?<T>(operation: (state: AppState) => Promise<T> | T): Promise<T>;
+  updateState<T>(operation: (state: AppState) => Promise<T> | T): Promise<T>;
 };
 
 type AutoAcceptanceStore = MariaDbStateStore & {
@@ -143,34 +141,22 @@ function stateCollections(state: AppState): NormalizedAppState {
   return state as NormalizedAppState;
 }
 
-const fallbackUpdateQueues = new WeakMap<StateFileRepository, Promise<void>>();
-
 function createStateUpdater(store: StateFileRepository) {
-  if (store.updateState) {
-    return <T>(operation: (state: AppState) => Promise<T> | T) => (
-      store.updateState?.((state) => operation(stateCollections(state))) as Promise<T>
+  if (typeof store.updateState !== "function") {
+    throw new Error(
+      "Atomic updateState is required for the file app repository"
     );
   }
 
-  return <T>(operation: (state: AppState) => Promise<T> | T) => {
-    const previous = fallbackUpdateQueues.get(store) ?? Promise.resolve();
-    const queued = previous.catch(() => undefined).then(async () => {
-      const state = stateCollections(await store.readState());
-      const result = await operation(state);
-      await store.writeState(state);
-      return result;
-    });
-    fallbackUpdateQueues.set(
-      store,
-      queued.then(() => undefined, () => undefined)
-    );
-    return queued;
-  };
+  return <T>(operation: (state: AppState) => Promise<T> | T) => (
+    store.updateState((state) =>
+      operation(stateCollections(state))
+    )
+  );
 }
 
 export function createFileAppRepository(store: StateFileRepository = {
   readState: readJsonState,
-  writeState: writeJsonState,
   updateState: updateJsonState
 }): AppRepository {
   const updateState = createStateUpdater(store);

@@ -39,7 +39,9 @@ describe("app repository", () => {
     const appState = state();
     const repository = createFileAppRepository({
       readState: vi.fn(async () => appState),
-      writeState: vi.fn(async () => undefined)
+      updateState: vi.fn(async <T>(
+        operation: (state: AppState) => Promise<T> | T
+      ) => operation(appState))
     });
 
     await expect(repository.adminBootstrap()).resolves.toEqual({
@@ -53,6 +55,15 @@ describe("app repository", () => {
       outboundMessages: [],
       config: appState.config
     });
+  });
+
+  it("rejects custom file stores without an atomic updateState", () => {
+    expect(() => createFileAppRepository({
+      readState: vi.fn(async () => state()),
+      writeState: vi.fn(async () => undefined)
+    } as unknown as Parameters<typeof createFileAppRepository>[0])).toThrow(
+      /updateState.*required/i
+    );
   });
 
   it("delegates repository methods to the MariaDB state store", async () => {
