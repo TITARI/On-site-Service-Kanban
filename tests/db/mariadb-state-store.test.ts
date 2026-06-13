@@ -1,9 +1,33 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MariaDbStateStore } from "@/lib/db/mariadb-state-store";
 import type { DatabaseConnection } from "@/lib/db/connection";
 import type { AppState } from "@/lib/domain/app-state";
 import type { UserGroup } from "@/lib/domain/types";
 import { defaultConfig } from "@/lib/seed";
+
+const databaseMocks = vi.hoisted(() => {
+  let connection: DatabaseConnection;
+  return {
+    getDatabasePool: vi.fn(() => connection),
+    setConnection: (next: DatabaseConnection) => {
+      connection = next;
+    },
+    withDatabaseTransaction: vi.fn(async <T>(
+      operation: (connection: DatabaseConnection) => Promise<T>
+    ) => operation(connection))
+  };
+});
+
+vi.mock("@/lib/db/connection", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/db/connection")>(
+    "@/lib/db/connection"
+  );
+  return {
+    ...actual,
+    getDatabasePool: databaseMocks.getDatabasePool,
+    withDatabaseTransaction: databaseMocks.withDatabaseTransaction
+  };
+});
 
 function rowDate() {
   return new Date("2026-06-04T01:00:00.000Z");
@@ -147,6 +171,10 @@ function recordingConnection() {
 }
 
 describe("MariaDbStateStore", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
   it("loads admin bootstrap records from MariaDB tables", async () => {
     const data = await new MariaDbStateStore().adminBootstrap(fakeConnection());
 
@@ -210,6 +238,144 @@ describe("MariaDbStateStore", () => {
 
     const inserts = calls.filter((call) => call.sql.includes("INSERT INTO user_groups"));
     expect(inserts.map((call) => call.params[6])).toEqual([true, false]);
+  });
+
+  it("wraps access mutations in a database transaction", async () => {
+    const { calls, connection } = recordingConnection();
+    databaseMocks.setConnection(connection);
+
+    await new MariaDbStateStore().revokeAccountSessions("account-person-1");
+
+    expect(databaseMocks.withDatabaseTransaction).toHaveBeenCalledOnce();
+    expect(calls.some((call) =>
+      call.sql.includes("auth_version = auth_version + 1")
+    )).toBe(true);
+    expect(calls.some((call) =>
+      call.sql.includes("UPDATE account_sessions")
+    )).toBe(true);
+  });
+
+  it("synchronizes access roles in the same transaction as saveConfig", async () => {
+    const { calls, connection } = recordingConnection();
+    databaseMocks.setConnection(connection);
+    const config = defaultConfig();
+    config.userGroups = [{
+      id: "builder",
+      name: "Builder",
+      description: "",
+      canClaim: true,
+      canProcess: true,
+      canAccept: false,
+      canAdmin: false,
+      enabled: true
+    }];
+
+    await new MariaDbStateStore().saveConfig(config);
+
+    expect(databaseMocks.withDatabaseTransaction).toHaveBeenCalledOnce();
+    const roleInsert = calls.find((call) => call.sql.includes("INSERT INTO roles"));
+    expect(roleInsert?.params.slice(0, 3)).toEqual([
+      "role-builder",
+      "Builder",
+      "builder"
+    ]);
+    expect(calls.some((call) =>
+      call.sql.includes("INSERT INTO role_permissions") &&
+      call.params.includes("ticket.process")
+    )).toBe(true);
+  });
+
+  it("synchronizes default access roles when saved config omits user groups", async () => {
+    const { calls, connection } = recordingConnection();
+    databaseMocks.setConnection(connection);
+    const config = defaultConfig();
+    delete config.userGroups;
+
+    await new MariaDbStateStore().saveConfig(config);
+
+    expect(calls.some((call) =>
+      call.sql.includes("INSERT INTO roles") &&
+      call.params.includes("role-builder")
+    )).toBe(true);
+  });
+
+  it("synchronizes access roles while writing imported state", async () => {
+    const { calls, connection } = recordingConnection();
+    const config = defaultConfig();
+    config.userGroups = [{
+      id: "admin",
+      name: "Administrators",
+      description: "",
+      canClaim: false,
+      canProcess: false,
+      canAccept: false,
+      canAdmin: true,
+      enabled: true
+    }];
+
+    await new MariaDbStateStore().writeState(
+      writableState({ config }),
+      connection
+    );
+
+    expect(calls.some((call) =>
+      call.sql.includes("INSERT INTO roles") &&
+      call.params.includes("role-admin")
+    )).toBe(true);
+    expect(calls.some((call) =>
+      call.sql.includes("INSERT INTO role_permissions") &&
+      call.params.includes("admin.access")
+    )).toBe(true);
+  });
+
+  it("persists bootstrap group changes into versioned app config", async () => {
+    const calls: Array<{ sql: string; params: unknown[] }> = [];
+    const connection = {
+      execute: vi.fn(async (sql: string, params: unknown[] = []) => {
+        calls.push({ sql, params });
+        if (sql.includes("FROM user_groups") && sql.includes("ORDER BY id")) {
+          return [[{
+            id: "admin",
+            name: "Administrators",
+            description: "",
+            can_claim: 0,
+            can_process: 0,
+            can_accept: 0,
+            can_admin: 1,
+            enabled: 1
+          }]];
+        }
+        if (sql.includes("WHERE a.id = ?") && sql.includes("permission_code")) {
+          return [[{
+            account_id: "account-person-admin",
+            person_id: "person-admin",
+            person_name: "Root Admin",
+            phone: "13700137000",
+            group_id: "admin",
+            group_name: "Administrators",
+            permission_code: "admin.access"
+          }]];
+        }
+        if (sql.trimStart().startsWith("SELECT")) return [[]];
+        return [{ affectedRows: 1 }];
+      })
+    } as unknown as DatabaseConnection;
+    databaseMocks.setConnection(connection);
+
+    await new MariaDbStateStore().bootstrapAdmin({
+      legacyPassword: "legacy-secret",
+      name: "Root Admin",
+      phone: "13700137000",
+      password: "StrongPass123!",
+      group: { mode: "existing", groupId: "admin" }
+    });
+
+    const configInsert = calls.find((call) =>
+      call.sql.includes("INSERT INTO app_config_versions")
+    );
+    expect(configInsert).toBeDefined();
+    expect(String(configInsert?.params[2])).toContain('"id":"admin"');
+    expect(String(configInsert?.params[2])).toContain('"canAdmin":true');
   });
 
   it("persists auto acceptance and queues business and processing notifications", async () => {

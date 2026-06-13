@@ -116,12 +116,6 @@ type AutoAcceptanceStore = MariaDbStateStore & {
   runAutoAcceptance?: (now?: Date) => Promise<void>;
 };
 
-function mariaAccessNotImplemented<T>(): Promise<T> {
-  return Promise.reject(
-    new Error("MariaDB access repository is not implemented yet")
-  );
-}
-
 type NormalizedAppState = AppState & {
   people: NonNullable<AppState["people"]>;
   chatIdentities: NonNullable<AppState["chatIdentities"]>;
@@ -335,24 +329,44 @@ export function createMariaDbAppRepository(store: AutoAcceptanceStore = new Mari
     claimOutboundMessages: (limit) => store.claimOutboundMessages(limit),
     markOutboundMessage: (messageId, status, error) => store.markOutboundMessage(messageId, status, error),
     listWechatOrderLogs: (limit = 100) => store.listWechatOrderLogs(limit),
-    upsertMobileAccount: () => mariaAccessNotImplemented(),
-    createAccountSession: () => mariaAccessNotImplemented(),
-    resolveAccountSession: () => mariaAccessNotImplemented(),
-    revokeAccountSession: () => mariaAccessNotImplemented(),
-    revokeAccountSessions: () => mariaAccessNotImplemented(),
-    adminLoginRecord: () => mariaAccessNotImplemented(),
-    recordAdminLoginFailure: () => mariaAccessNotImplemented(),
-    recordAdminLoginSuccess: () => mariaAccessNotImplemented(),
-    bootstrapStatus: () => mariaAccessNotImplemented(),
-    bootstrapAdmin: () => mariaAccessNotImplemented(),
-    listUsers: () => mariaAccessNotImplemented(),
-    getUser: () => mariaAccessNotImplemented(),
-    createUser: () => mariaAccessNotImplemented(),
-    updateUser: () => mariaAccessNotImplemented(),
-    setUserEnabled: () => mariaAccessNotImplemented(),
-    deleteUser: () => mariaAccessNotImplemented(),
-    setUserPassword: () => mariaAccessNotImplemented(),
-    syncAccessRoles: () => mariaAccessNotImplemented()
+    upsertMobileAccount: (input) => store.upsertMobileAccount(input),
+    createAccountSession: (accountId, type, tokenHash, expiresAt) => (
+      store.createAccountSession(accountId, type, tokenHash, expiresAt)
+    ),
+    resolveAccountSession: (tokenHash, type) => (
+      store.resolveAccountSession(tokenHash, type)
+    ),
+    revokeAccountSession: (tokenHash) => (
+      store.revokeAccountSession(tokenHash)
+    ),
+    revokeAccountSessions: (accountId) => (
+      store.revokeAccountSessions(accountId)
+    ),
+    adminLoginRecord: (phone) => store.adminLoginRecord(phone),
+    recordAdminLoginFailure: (accountId, lockedUntil) => (
+      store.recordAdminLoginFailure(accountId, lockedUntil)
+    ),
+    recordAdminLoginSuccess: (accountId) => (
+      store.recordAdminLoginSuccess(accountId)
+    ),
+    bootstrapStatus: () => store.bootstrapStatus(),
+    bootstrapAdmin: (input) => store.bootstrapAdmin(input),
+    listUsers: (query) => store.listUsers(query),
+    getUser: (userId) => store.getUser(userId),
+    createUser: (input, actor) => store.createUser(input, actor),
+    updateUser: (userId, input, actor) => (
+      store.updateUser(userId, input, actor)
+    ),
+    setUserEnabled: (userId, enabled, actor) => (
+      store.setUserEnabled(userId, enabled, actor)
+    ),
+    deleteUser: (userId, actor) => store.deleteUser(userId, actor),
+    setUserPassword: (userId, passwordHash, actor) => (
+      store.setUserPassword(userId, passwordHash, actor)
+    ),
+    syncAccessRoles: (userGroups, actor) => (
+      store.syncAccessRoles(userGroups, actor)
+    )
   };
 }
 

@@ -22,6 +22,14 @@ import type { TicketSummary } from "../domain/ticket-summary";
 import { defaultConfig, type AppConfig } from "../seed";
 import { normalizeWxautoMcpConfig, syncWxautoMcpMessageIntegration } from "../integrations/wxauto/config";
 import type { AppState } from "../domain/app-state";
+import type {
+  AuthenticatedActor,
+  BootstrapAdminInput,
+  MobileAccountInput,
+  SessionType,
+  UserMutation,
+  UserQuery
+} from "../domain/access-control";
 import { createTicketService, type SubmitTicketInput } from "../services/ticket-service";
 import { processWechatWatchtowerMessage, type WatchtowerResult } from "../services/wechat-watchtower-service";
 import {
@@ -32,7 +40,30 @@ import {
   normalizeAutoAcceptanceConfig
 } from "../services/auto-acceptance-service";
 import type { IntakeMessageInput } from "../services/message-intake-service";
+import { hashPassword } from "../services/password-service";
 import { getDatabasePool, type DatabaseConnection, withDatabaseTransaction } from "./connection";
+import {
+  adminLoginRecord as readAdminLoginRecord,
+  bootstrapAdmin as bootstrapAdminAccess,
+  bootstrapStatus as readBootstrapStatus,
+  createAccountSession as createAccessAccountSession,
+  createUser as createAccessUser,
+  deleteUser as deleteAccessUser,
+  getUser as readAccessUser,
+  listUsers as listAccessUsers,
+  readAccessGroups,
+  recordAccessRolesSync,
+  recordAdminLoginFailure as writeAdminLoginFailure,
+  recordAdminLoginSuccess as writeAdminLoginSuccess,
+  resolveAccountSession as resolveAccessAccountSession,
+  revokeAccountSession as revokeAccessAccountSession,
+  revokeAccountSessions as revokeAccessAccountSessions,
+  setUserEnabled as setAccessUserEnabled,
+  setUserPassword as setAccessUserPassword,
+  syncAccessRoles as syncDatabaseAccessRoles,
+  updateUser as updateAccessUser,
+  upsertMobileAccount as upsertAccessMobileAccount
+} from "./mariadb-access-store";
 
 type Row = RowDataPacket & Record<string, unknown>;
 type SqlValue = string | number | boolean | Date | null;
@@ -1504,8 +1535,13 @@ export class MariaDbStateStore {
   }
 
   async saveConfig(config: AppConfig) {
+    const normalized = mergedConfig(config);
     await withDatabaseTransaction(async (connection) => {
-      await replaceConfigTables(connection, config);
+      await replaceConfigTables(connection, normalized);
+      await syncDatabaseAccessRoles(
+        connection,
+        normalized.userGroups ?? []
+      );
     });
     return config;
   }
@@ -1654,10 +1690,16 @@ export class MariaDbStateStore {
   async writeState(state: AppState, connection?: DatabaseConnection) {
     const write = async (target: DatabaseConnection) => {
       const now = new Date();
+      const config = mergedConfig(state.config);
       await clearStateTables(target);
-      await writeConfig(target, state.config, now);
+      await writeConfig(target, config, now);
       await writeBooths(target, state.booths, now);
       await writePeople(target, state.people ?? [], now);
+      await syncDatabaseAccessRoles(
+        target,
+        config.userGroups ?? [],
+        now
+      );
       await writeChatIdentities(target, state.chatIdentities ?? [], now);
       await writeConversations(target, state.conversations ?? [], now);
       await writeTickets(target, state.tickets, now);
@@ -1709,6 +1751,174 @@ export class MariaDbStateStore {
           now
         ]
       );
+    });
+  }
+
+  async upsertMobileAccount(input: MobileAccountInput) {
+    return await withDatabaseTransaction(async (connection) => (
+      upsertAccessMobileAccount(
+        connection,
+        await latestConfig(connection),
+        input
+      )
+    ));
+  }
+
+  async createAccountSession(
+    accountId: string,
+    type: SessionType,
+    tokenHash: string,
+    expiresAt: string
+  ) {
+    return await withDatabaseTransaction(async (connection) => (
+      createAccessAccountSession(
+        connection,
+        accountId,
+        type,
+        tokenHash,
+        expiresAt
+      )
+    ));
+  }
+
+  async resolveAccountSession(
+    tokenHash: string,
+    type: SessionType
+  ) {
+    return await resolveAccessAccountSession(
+      getDatabasePool(),
+      tokenHash,
+      type
+    );
+  }
+
+  async revokeAccountSession(tokenHash: string) {
+    await withDatabaseTransaction(async (connection) => {
+      await revokeAccessAccountSession(connection, tokenHash);
+    });
+  }
+
+  async revokeAccountSessions(accountId: string) {
+    await withDatabaseTransaction(async (connection) => {
+      await revokeAccessAccountSessions(connection, accountId);
+    });
+  }
+
+  async adminLoginRecord(phone: string) {
+    return await readAdminLoginRecord(getDatabasePool(), phone);
+  }
+
+  async recordAdminLoginFailure(
+    accountId: string,
+    lockedUntil?: string
+  ) {
+    await withDatabaseTransaction(async (connection) => {
+      await writeAdminLoginFailure(connection, accountId, lockedUntil);
+    });
+  }
+
+  async recordAdminLoginSuccess(accountId: string) {
+    await withDatabaseTransaction(async (connection) => {
+      await writeAdminLoginSuccess(connection, accountId);
+    });
+  }
+
+  async bootstrapStatus() {
+    return await readBootstrapStatus(getDatabasePool());
+  }
+
+  async bootstrapAdmin(input: BootstrapAdminInput) {
+    if (!input.legacyPassword.trim()) {
+      throw new Error("Legacy password is required");
+    }
+    const passwordHash = await hashPassword(input.password);
+    return await withDatabaseTransaction(async (connection) => {
+      const actor = await bootstrapAdminAccess(
+        connection,
+        input,
+        passwordHash
+      );
+      const config = {
+        ...await latestConfig(connection),
+        userGroups: await readAccessGroups(connection)
+      };
+      await replaceConfigTables(connection, config);
+      await syncDatabaseAccessRoles(
+        connection,
+        config.userGroups ?? []
+      );
+      return actor;
+    });
+  }
+
+  async listUsers(query: UserQuery) {
+    return await listAccessUsers(getDatabasePool(), query);
+  }
+
+  async getUser(userId: string) {
+    return await readAccessUser(getDatabasePool(), userId);
+  }
+
+  async createUser(
+    input: UserMutation,
+    actor: AuthenticatedActor
+  ) {
+    return await withDatabaseTransaction(async (connection) => (
+      createAccessUser(connection, input, actor)
+    ));
+  }
+
+  async updateUser(
+    userId: string,
+    input: Partial<UserMutation>,
+    actor: AuthenticatedActor
+  ) {
+    return await withDatabaseTransaction(async (connection) => (
+      updateAccessUser(connection, userId, input, actor)
+    ));
+  }
+
+  async setUserEnabled(
+    userId: string,
+    enabled: boolean,
+    actor: AuthenticatedActor
+  ) {
+    return await withDatabaseTransaction(async (connection) => (
+      setAccessUserEnabled(connection, userId, enabled, actor)
+    ));
+  }
+
+  async deleteUser(
+    userId: string,
+    actor: AuthenticatedActor
+  ) {
+    await withDatabaseTransaction(async (connection) => {
+      await deleteAccessUser(connection, userId, actor);
+    });
+  }
+
+  async setUserPassword(
+    userId: string,
+    passwordHash: string,
+    actor: AuthenticatedActor
+  ) {
+    await withDatabaseTransaction(async (connection) => {
+      await setAccessUserPassword(
+        connection,
+        userId,
+        passwordHash,
+        actor
+      );
+    });
+  }
+
+  async syncAccessRoles(
+    userGroups: UserGroup[],
+    actor?: AuthenticatedActor
+  ) {
+    await withDatabaseTransaction(async (connection) => {
+      await syncDatabaseAccessRoles(connection, userGroups);
+      await recordAccessRolesSync(connection, userGroups, actor);
     });
   }
 
