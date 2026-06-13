@@ -6,8 +6,21 @@ export const SESSION_COOKIE_NAMES = {
   admin: "board_admin_session"
 } as const;
 
+const SESSION_TOKEN_BYTES = 32;
+const SESSION_TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/;
+
+function isCanonicalSessionToken(token: string): boolean {
+  if (!SESSION_TOKEN_PATTERN.test(token)) return false;
+
+  const decoded = Buffer.from(token, "base64url");
+  return (
+    decoded.length === SESSION_TOKEN_BYTES &&
+    decoded.toString("base64url") === token
+  );
+}
+
 export function createSessionToken(): string {
-  return randomBytes(32).toString("base64url");
+  return randomBytes(SESSION_TOKEN_BYTES).toString("base64url");
 }
 
 export function sessionTokenHash(token: string): string {
@@ -22,6 +35,8 @@ export function requestSessionToken(
   if (!cookieHeader) return undefined;
 
   const expectedName = SESSION_COOKIE_NAMES[type];
+  let token: string | undefined;
+
   for (const segment of cookieHeader.split(";")) {
     const separatorIndex = segment.indexOf("=");
     if (separatorIndex < 0) continue;
@@ -29,15 +44,13 @@ export function requestSessionToken(
     const name = segment.slice(0, separatorIndex).trim();
     if (name !== expectedName) continue;
 
-    const value = segment.slice(separatorIndex + 1).trim();
-    try {
-      return decodeURIComponent(value);
-    } catch {
-      return value;
-    }
+    if (token !== undefined) return undefined;
+    token = segment.slice(separatorIndex + 1).trim();
   }
 
-  return undefined;
+  return token !== undefined && isCanonicalSessionToken(token)
+    ? token
+    : undefined;
 }
 
 export function sessionCookie(

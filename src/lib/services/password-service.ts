@@ -13,6 +13,7 @@ export const PARALLELIZATION = 1;
 const SALT_LENGTH = 16;
 const SALT_TEXT_LENGTH = 22;
 const KEY_TEXT_LENGTH = 86;
+const MAX_PASSWORD_BYTES = 1024;
 const BASE64URL_PATTERN = /^[A-Za-z0-9_-]+$/;
 const HASH_PARAMETER_PREFIX = [
   "scrypt",
@@ -74,6 +75,9 @@ export async function hashPassword(password: string): Promise<string> {
   if (password.length < 10) {
     throw new Error("后台密码至少需要10位");
   }
+  if (Buffer.byteLength(password, "utf8") > MAX_PASSWORD_BYTES) {
+    throw new Error("后台密码不能超过1024字节");
+  }
 
   const salt = randomBytes(SALT_LENGTH);
   const key = await deriveKey(password, salt, SCRYPT_OPTIONS);
@@ -91,31 +95,28 @@ export async function verifyPassword(
   password: string,
   encoded: string
 ): Promise<boolean> {
-  try {
-    if (encoded.length > MAX_ENCODED_LENGTH) return false;
+  if (Buffer.byteLength(password, "utf8") > MAX_PASSWORD_BYTES) return false;
+  if (encoded.length > MAX_ENCODED_LENGTH) return false;
 
-    const parts = encoded.split("$");
-    if (
-      parts.length !== 6 ||
-      parts[0] !== "scrypt" ||
-      parts[1] !== String(COST) ||
-      parts[2] !== String(BLOCK_SIZE) ||
-      parts[3] !== String(PARALLELIZATION)
-    ) {
-      return false;
-    }
-
-    const salt = decodeBase64url(parts[4], SALT_TEXT_LENGTH, SALT_LENGTH);
-    const expectedKey = decodeBase64url(
-      parts[5],
-      KEY_TEXT_LENGTH,
-      KEY_LENGTH
-    );
-    if (!salt || !expectedKey) return false;
-
-    const actualKey = await deriveKey(password, salt, SCRYPT_OPTIONS);
-    return timingSafeEqual(actualKey, expectedKey);
-  } catch {
+  const parts = encoded.split("$");
+  if (
+    parts.length !== 6 ||
+    parts[0] !== "scrypt" ||
+    parts[1] !== String(COST) ||
+    parts[2] !== String(BLOCK_SIZE) ||
+    parts[3] !== String(PARALLELIZATION)
+  ) {
     return false;
   }
+
+  const salt = decodeBase64url(parts[4], SALT_TEXT_LENGTH, SALT_LENGTH);
+  const expectedKey = decodeBase64url(
+    parts[5],
+    KEY_TEXT_LENGTH,
+    KEY_LENGTH
+  );
+  if (!salt || !expectedKey) return false;
+
+  const actualKey = await deriveKey(password, salt, SCRYPT_OPTIONS);
+  return timingSafeEqual(actualKey, expectedKey);
 }

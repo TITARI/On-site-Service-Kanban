@@ -1,8 +1,10 @@
 import { createHook } from "node:async_hooks";
-import { describe, expect, it } from "vitest";
+import { createRequire, syncBuiltinESMExports } from "node:module";
+import { describe, expect, it, vi } from "vitest";
 import { hashPassword, verifyPassword } from "@/lib/services/password-service";
 
 const PASSWORD = "StrongPass123!";
+const MAX_PASSWORD_BYTES = 1024;
 const CANONICAL_SALT = Buffer.alloc(16, 1).toString("base64url");
 const CANONICAL_KEY = Buffer.alloc(64, 2).toString("base64url");
 
@@ -15,6 +17,26 @@ function makeNoncanonical(value: string) {
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
   const lastIndex = alphabet.indexOf(value.at(-1) ?? "");
   return `${value.slice(0, -1)}${alphabet[lastIndex + 1]}`;
+}
+
+async function countScryptRequests(
+  operation: () => Promise<void>
+): Promise<number> {
+  let scryptRequests = 0;
+  const hook = createHook({
+    init(_asyncId, type) {
+      if (type === "SCRYPTREQUEST") scryptRequests += 1;
+    }
+  });
+
+  hook.enable();
+  try {
+    await operation();
+  } finally {
+    hook.disable();
+  }
+
+  return scryptRequests;
 }
 
 describe("password service", () => {
@@ -46,6 +68,38 @@ describe("password service", () => {
 
   it("rejects passwords shorter than ten characters", async () => {
     await expect(hashPassword("Short123!")).rejects.toThrow("后台密码至少需要10位");
+  });
+
+  it("rejects an oversized multibyte password before hashing", async () => {
+    const password = "密".repeat(342);
+
+    expect(password.length).toBeLessThan(MAX_PASSWORD_BYTES);
+    expect(Buffer.byteLength(password, "utf8")).toBeGreaterThan(
+      MAX_PASSWORD_BYTES
+    );
+
+    const scryptRequests = await countScryptRequests(async () => {
+      await expect(hashPassword(password)).rejects.toThrow(
+        "后台密码不能超过1024字节"
+      );
+    });
+
+    expect(scryptRequests).toBe(0);
+  });
+
+  it("rejects an oversized authentication password before deriving a key", async () => {
+    const password = "密".repeat(342);
+
+    expect(password.length).toBeLessThan(MAX_PASSWORD_BYTES);
+    expect(Buffer.byteLength(password, "utf8")).toBeGreaterThan(
+      MAX_PASSWORD_BYTES
+    );
+
+    const scryptRequests = await countScryptRequests(async () => {
+      await expect(verifyPassword(password, encodedHash())).resolves.toBe(false);
+    });
+
+    expect(scryptRequests).toBe(0);
   });
 
   it.each([
@@ -89,20 +143,42 @@ describe("password service", () => {
       encodedHash(CANONICAL_SALT, makeNoncanonical(CANONICAL_KEY))
     ]
   ])("rejects %s before deriving a key", async (_description, encoded) => {
-    let scryptRequests = 0;
-    const hook = createHook({
-      init(_asyncId, type) {
-        if (type === "SCRYPTREQUEST") scryptRequests += 1;
-      }
+    const scryptRequests = await countScryptRequests(async () => {
+      await expect(verifyPassword(PASSWORD, encoded)).resolves.toBe(false);
     });
 
-    hook.enable();
-    try {
-      await expect(verifyPassword(PASSWORD, encoded)).resolves.toBe(false);
-    } finally {
-      hook.disable();
-    }
-
     expect(scryptRequests).toBe(0);
+  });
+
+  it("propagates an operational scrypt failure for a canonical hash", async () => {
+    const failure = new Error("scrypt unavailable");
+    const scrypt = vi.fn((...args: unknown[]) => {
+      const callback = args.at(-1) as (
+        error: Error,
+        derivedKey: Buffer
+      ) => void;
+      queueMicrotask(() => callback(failure, Buffer.alloc(0)));
+    });
+    const crypto = createRequire(import.meta.url)("node:crypto") as {
+      scrypt: typeof import("node:crypto").scrypt;
+    };
+    const originalScrypt = crypto.scrypt;
+
+    crypto.scrypt = scrypt as unknown as typeof crypto.scrypt;
+    syncBuiltinESMExports();
+    vi.resetModules();
+    try {
+      const { verifyPassword: verifyWithFailingScrypt } =
+        await import("@/lib/services/password-service");
+
+      await expect(
+        verifyWithFailingScrypt(PASSWORD, encodedHash())
+      ).rejects.toBe(failure);
+      expect(scrypt).toHaveBeenCalledOnce();
+    } finally {
+      crypto.scrypt = originalScrypt;
+      syncBuiltinESMExports();
+      vi.resetModules();
+    }
   });
 });
