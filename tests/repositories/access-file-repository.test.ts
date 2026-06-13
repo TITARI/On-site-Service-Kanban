@@ -145,8 +145,10 @@ describe("file access repository", () => {
       permissions: ["ticket.claim", "ticket.process"],
       sessionType: "mobile"
     });
-    expect(firstPersonId).toMatch(/^person-/);
-    expect(firstAccountId).toMatch(/^account-/);
+    expect(firstPersonId).toBe(
+      "person-ppQvl3HWfzQDTS8ZJpiO0_rTvxtOfO25ox8xOY3qQ7w"
+    );
+    expect(firstAccountId).toBe(`account-${firstPersonId}`);
     expect(firstSnapshot.accountRoles).toEqual([
       expect.objectContaining({
         accountId: firstAccountId,
@@ -164,6 +166,8 @@ describe("file access repository", () => {
       accountId: firstAccountId,
       groupId: "business"
     });
+    expect(store.snapshot().people).toHaveLength(1);
+    expect(store.snapshot().accounts).toHaveLength(1);
 
     await repository.updateUser(
       firstPersonId,
@@ -226,7 +230,7 @@ describe("file access repository", () => {
     });
   });
 
-  it("stores hash-only sessions and validates type, expiry, revocation, enabled chain, and auth version", async () => {
+  it("stores hash-only sessions and validates type, expiry, revocation, and auth version", async () => {
     const store = memoryStore();
     const repository = createFileAppRepository(store);
     const { actor } = await createMobile(repository);
@@ -269,20 +273,6 @@ describe("file access repository", () => {
         (item) => item.id === session.id
       );
       if (stored) stored.expiresAt = "2099-01-01T00:00:00.000Z";
-      const person = state.people?.find(
-        (item) => item.id === actor.personId
-      );
-      if (person) person.enabled = false;
-    });
-    await expect(
-      repository.resolveAccountSession("hash-only-value", "mobile")
-    ).resolves.toBeUndefined();
-
-    store.mutate((state) => {
-      const person = state.people?.find(
-        (item) => item.id === actor.personId
-      );
-      if (person) person.enabled = true;
       const account = state.accounts?.find(
         (item) => item.id === actor.accountId
       );
@@ -290,6 +280,55 @@ describe("file access repository", () => {
     });
     await expect(
       repository.resolveAccountSession("hash-only-value", "mobile")
+    ).resolves.toBeUndefined();
+  });
+
+  it("rejects sessions independently when the account or person is disabled", async () => {
+    const store = memoryStore();
+    const repository = createFileAppRepository(store);
+    const { actor } = await createMobile(repository);
+    await repository.createAccountSession(
+      actor.accountId,
+      "mobile",
+      "enabled-chain-hash",
+      "2099-01-01T00:00:00.000Z"
+    );
+
+    await expect(
+      repository.resolveAccountSession("enabled-chain-hash", "mobile")
+    ).resolves.toBeDefined();
+
+    store.mutate((state) => {
+      const account = state.accounts?.find(
+        (item) => item.id === actor.accountId
+      );
+      if (account) account.enabled = false;
+    });
+    await expect(
+      repository.resolveAccountSession("enabled-chain-hash", "mobile")
+    ).resolves.toBeUndefined();
+
+    store.mutate((state) => {
+      const account = state.accounts?.find(
+        (item) => item.id === actor.accountId
+      );
+      if (account) account.enabled = true;
+    });
+    await expect(
+      repository.resolveAccountSession("enabled-chain-hash", "mobile")
+    ).resolves.toBeDefined();
+
+    store.mutate((state) => {
+      const person = state.people?.find(
+        (item) => item.id === actor.personId
+      );
+      if (person) person.enabled = false;
+    });
+    expect(store.snapshot().accounts?.find(
+      (item) => item.id === actor.accountId
+    )?.enabled).toBe(true);
+    await expect(
+      repository.resolveAccountSession("enabled-chain-hash", "mobile")
     ).resolves.toBeUndefined();
   });
 
@@ -408,6 +447,7 @@ describe("file access repository", () => {
       password: "StrongPass123!",
       group: { mode: "existing", groupId: "admin" }
     });
+    expect(admin.accountId).toBe(`account-${admin.personId}`);
 
     await expect(existingRepository.bootstrapStatus()).resolves.toEqual({
       required: false
@@ -440,6 +480,7 @@ describe("file access repository", () => {
       password: "StrongPass123!",
       group: { mode: "create", name: "New Admin Group" }
     });
+    expect(created.accountId).toBe(`account-${created.personId}`);
     expect(created.permissions).toContain("admin.access");
     expect(createStore.snapshot().config.userGroups).toEqual(
       expect.arrayContaining([
@@ -482,6 +523,9 @@ describe("file access repository", () => {
     const created = [];
     for (const input of inputs) {
       created.push(await repository.createUser(input, actor));
+    }
+    for (const user of created) {
+      expect(user.accountId).toBe(`account-${user.personId}`);
     }
     store.mutate((state) => {
       state.chatIdentities?.push({

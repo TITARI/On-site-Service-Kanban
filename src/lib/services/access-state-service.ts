@@ -55,8 +55,8 @@ function stableId(prefix: string, value: string) {
   return `${prefix}-${createHash("sha256").update(value).digest("base64url")}`;
 }
 
-function createIdentityId(prefix: "person" | "account", seed: string) {
-  return stableId(prefix, `${seed}:${randomUUID()}`);
+function createPersonId(phone: string) {
+  return stableId("person", phone);
 }
 
 function accessRoleId(groupId: string) {
@@ -450,8 +450,8 @@ function createPersonAndAccount(
   }
 
   const group = enabledGroup(state, input.groupId);
-  const personId = createIdentityId("person", phone);
-  const accountId = createIdentityId("account", personId);
+  const personId = createPersonId(phone);
+  const accountId = `account-${personId}`;
   const person: Person = {
     id: personId,
     name,
