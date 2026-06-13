@@ -9,11 +9,16 @@ import {
 
 describe("session service", () => {
   it("creates a URL-safe opaque token", () => {
-    expect(createSessionToken()).toMatch(/^[A-Za-z0-9_-]{40,}$/);
+    const token = createSessionToken();
+
+    expect(token).toMatch(/^[A-Za-z0-9_-]{40,}$/);
+    expect(Buffer.from(token, "base64url")).toHaveLength(32);
   });
 
   it("hashes session tokens as SHA-256 hex", () => {
-    expect(sessionTokenHash("opaque-token")).toMatch(/^[a-f0-9]{64}$/);
+    expect(sessionTokenHash("opaque-token")).toBe(
+      "84d3f23da9b5f51b3269566eff05d3fb23607eeef89567f9cd280b90ca0dbc5c"
+    );
   });
 
   it("creates a non-secure mobile session cookie", () => {

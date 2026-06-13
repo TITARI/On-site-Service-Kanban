@@ -11,7 +11,21 @@ export const BLOCK_SIZE = 8;
 export const PARALLELIZATION = 1;
 
 const SALT_LENGTH = 16;
+const SALT_TEXT_LENGTH = 22;
+const KEY_TEXT_LENGTH = 86;
 const BASE64URL_PATTERN = /^[A-Za-z0-9_-]+$/;
+const HASH_PARAMETER_PREFIX = [
+  "scrypt",
+  COST,
+  BLOCK_SIZE,
+  PARALLELIZATION
+].join("$");
+const MAX_ENCODED_LENGTH =
+  HASH_PARAMETER_PREFIX.length +
+  1 +
+  SALT_TEXT_LENGTH +
+  1 +
+  KEY_TEXT_LENGTH;
 const SCRYPT_OPTIONS: ScryptOptions = {
   cost: COST,
   blockSize: BLOCK_SIZE,
@@ -34,19 +48,23 @@ function deriveKey(
   });
 }
 
-function parsePositiveSafeInteger(value: string): number | undefined {
-  if (!/^[1-9]\d*$/.test(value)) return undefined;
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed) || !Number.isSafeInteger(parsed) || parsed <= 0) {
+function decodeBase64url(
+  value: string,
+  encodedLength: number,
+  decodedLength: number
+): Buffer | undefined {
+  if (
+    value.length !== encodedLength ||
+    !BASE64URL_PATTERN.test(value)
+  ) {
     return undefined;
   }
-  return parsed;
-}
 
-function decodeBase64url(value: string): Buffer | undefined {
-  if (!BASE64URL_PATTERN.test(value)) return undefined;
   const decoded = Buffer.from(value, "base64url");
-  if (decoded.length === 0 || decoded.toString("base64url") !== value) {
+  if (
+    decoded.length !== decodedLength ||
+    decoded.toString("base64url") !== value
+  ) {
     return undefined;
   }
   return decoded;
@@ -74,29 +92,28 @@ export async function verifyPassword(
   encoded: string
 ): Promise<boolean> {
   try {
-    const parts = encoded.split("$");
-    if (parts.length !== 6 || parts[0] !== "scrypt") return false;
+    if (encoded.length > MAX_ENCODED_LENGTH) return false;
 
-    const cost = parsePositiveSafeInteger(parts[1]);
-    const blockSize = parsePositiveSafeInteger(parts[2]);
-    const parallelization = parsePositiveSafeInteger(parts[3]);
+    const parts = encoded.split("$");
     if (
-      cost !== COST ||
-      blockSize !== BLOCK_SIZE ||
-      parallelization !== PARALLELIZATION
+      parts.length !== 6 ||
+      parts[0] !== "scrypt" ||
+      parts[1] !== String(COST) ||
+      parts[2] !== String(BLOCK_SIZE) ||
+      parts[3] !== String(PARALLELIZATION)
     ) {
       return false;
     }
 
-    const salt = decodeBase64url(parts[4]);
-    const expectedKey = decodeBase64url(parts[5]);
-    if (!salt || !expectedKey || expectedKey.length !== KEY_LENGTH) return false;
+    const salt = decodeBase64url(parts[4], SALT_TEXT_LENGTH, SALT_LENGTH);
+    const expectedKey = decodeBase64url(
+      parts[5],
+      KEY_TEXT_LENGTH,
+      KEY_LENGTH
+    );
+    if (!salt || !expectedKey) return false;
 
-    const actualKey = await deriveKey(password, salt, {
-      cost,
-      blockSize,
-      parallelization
-    });
+    const actualKey = await deriveKey(password, salt, SCRYPT_OPTIONS);
     return timingSafeEqual(actualKey, expectedKey);
   } catch {
     return false;
