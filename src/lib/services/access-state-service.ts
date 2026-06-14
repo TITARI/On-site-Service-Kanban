@@ -36,6 +36,7 @@ type AccessState = AppState & {
 const ISO_DATE_PATTERN =
   /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?(Z|[+-]\d{2}:\d{2})$/;
 const SECRET_KEY_PATTERN = /password|token|secret/i;
+const SAFE_AUDIT_KEY_PATTERN = /^tokenCount$/i;
 const SESSION_TOKEN_HASH_PATTERN = /^[a-f0-9]{64}$/;
 
 function nowIso() {
@@ -54,7 +55,7 @@ function accessRoleId(groupId: string) {
   return `role-${groupId}`;
 }
 
-function normalizedIsoDate(value: string, field: string) {
+export function normalizeStrictIsoDate(value: string, field: string) {
   const match = ISO_DATE_PATTERN.exec(value);
   if (!match) throw new Error(`${field} must be a valid ISO date string`);
 
@@ -221,13 +222,20 @@ function authorizationFingerprint(state: AccessState, account: Account) {
   });
 }
 
-function sanitizeAuditValue(value: unknown): unknown {
+export function sanitizeAuditValue(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(sanitizeAuditValue);
-  if (typeof value !== "object" || value === null) return value;
+  if (value instanceof Date || typeof value !== "object" || value === null) {
+    return value;
+  }
 
   const sanitized: Record<string, unknown> = {};
   for (const [key, item] of Object.entries(value)) {
-    if (SECRET_KEY_PATTERN.test(key)) continue;
+    if (
+      !SAFE_AUDIT_KEY_PATTERN.test(key) &&
+      SECRET_KEY_PATTERN.test(key)
+    ) {
+      continue;
+    }
     sanitized[key] = sanitizeAuditValue(item);
   }
   return sanitized;
@@ -544,7 +552,7 @@ export function createAccountSessionInState(
   if (!account || !actorForAccount(state, account, type)) {
     throw new Error("Account is not allowed to create this session");
   }
-  const expiresAt = normalizedIsoDate(expiresAtInput, "expiresAt");
+  const expiresAt = normalizeStrictIsoDate(expiresAtInput, "expiresAt");
   if (Date.parse(expiresAt) <= Date.now()) {
     throw new Error("Session expiresAt must be in the future");
   }
@@ -683,7 +691,7 @@ export function recordAdminLoginFailureInState(
   const state = normalizeAccessState(stateInput);
   const lockedUntil = lockedUntilInput === undefined
     ? undefined
-    : normalizedIsoDate(lockedUntilInput, "lockedUntil");
+    : normalizeStrictIsoDate(lockedUntilInput, "lockedUntil");
   const credential = state.accountCredentials.find(
     (item) => item.accountId === accountId
   );

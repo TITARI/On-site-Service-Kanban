@@ -285,6 +285,99 @@ describe("MariaDbStateStore", () => {
     )).toBe(true);
   });
 
+  it("persists public access role groups and merged config in one transaction", async () => {
+    const currentConfig = {
+      ...defaultConfig(),
+      autoAcceptance: {
+        enabled: true,
+        timeoutMinutes: 45
+      }
+    };
+    let latestConfigJson = JSON.stringify(currentConfig);
+    const calls: Array<{ sql: string; params: unknown[] }> = [];
+    const connection = {
+      execute: vi.fn(async (sql: string, params: unknown[] = []) => {
+        calls.push({ sql, params });
+        if (sql.includes("FROM app_config_versions")) {
+          return [[{ config_json: latestConfigJson }]];
+        }
+        if (sql.includes("INSERT INTO app_config_versions")) {
+          latestConfigJson = String(params[2]);
+          return [{ affectedRows: 1 }];
+        }
+        if (sql.trimStart().startsWith("SELECT")) return [[]];
+        return [{ affectedRows: 1 }];
+      })
+    } as unknown as DatabaseConnection;
+    databaseMocks.setConnection(connection);
+    const store = new MariaDbStateStore();
+    const groups: UserGroup[] = [{
+      id: "admin",
+      name: "Administrators",
+      description: "Current administrators",
+      canClaim: false,
+      canProcess: false,
+      canAccept: false,
+      canAdmin: true,
+      enabled: true
+    }];
+
+    await store.syncAccessRoles(groups, {
+      accountId: "account-admin",
+      personId: "person-admin",
+      name: "Root Admin",
+      phone: "13700137000",
+      groupId: "admin",
+      groupName: "Administrators",
+      permissions: ["admin.access"],
+      sessionType: "admin"
+    });
+
+    expect(databaseMocks.withDatabaseTransaction).toHaveBeenCalledOnce();
+    const groupWrite = calls.find((call) =>
+      call.sql.includes("INSERT INTO user_groups")
+    );
+    expect(groupWrite?.params.slice(0, 8)).toEqual([
+      "admin",
+      "Administrators",
+      "Current administrators",
+      false,
+      false,
+      false,
+      true,
+      true
+    ]);
+    const groupDelete = calls.find((call) =>
+      call.sql.trim() === "DELETE FROM user_groups"
+    );
+    expect(groupDelete?.params).toEqual([]);
+    const configInsert = calls.find((call) =>
+      call.sql.includes("INSERT INTO app_config_versions")
+    );
+    expect(configInsert).toBeDefined();
+    const persistedConfig = JSON.parse(String(configInsert?.params[2]));
+    expect(persistedConfig.userGroups).toEqual(groups);
+    expect(persistedConfig.autoAcceptance).toEqual({
+      enabled: true,
+      timeoutMinutes: 45
+    });
+    await expect(store.getConfig(connection)).resolves.toMatchObject({
+      userGroups: groups,
+      autoAcceptance: {
+        enabled: true,
+        timeoutMinutes: 45
+      }
+    });
+    expect(calls.some((call) =>
+      call.sql.includes("DELETE FROM issue_types") ||
+      call.sql.includes("DELETE FROM message_integrations") ||
+      call.sql.includes("DELETE FROM keyword_groups")
+    )).toBe(false);
+    expect(calls.some((call) =>
+      call.sql.includes("INSERT INTO audit_logs")
+    )).toBe(true);
+  });
+
   it("synchronizes default access roles when saved config omits user groups", async () => {
     const { calls, connection } = recordingConnection();
     databaseMocks.setConnection(connection);

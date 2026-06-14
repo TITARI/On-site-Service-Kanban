@@ -3,6 +3,8 @@ import type { DatabaseConnection } from "@/lib/db/connection";
 import type { AuthenticatedActor } from "@/lib/domain/access-control";
 import type { UserGroup } from "@/lib/domain/types";
 import { defaultConfig } from "@/lib/seed";
+import { initialState } from "@/lib/storage/file-store";
+import { syncAccessRolesInState } from "@/lib/services/access-state-service";
 import {
   createUser,
   createAccountSession,
@@ -615,6 +617,21 @@ describe("MariaDB access store", () => {
     });
   });
 
+  it("does not revoke sessions or audit when the account does not exist", async () => {
+    const now = new Date("2026-06-14T03:15:00.000Z");
+    const { calls, connection } = recordingConnection((sql) => (
+      sql.includes("UPDATE accounts")
+        ? { affectedRows: 0 }
+        : { affectedRows: 1 }
+    ));
+
+    await revokeAccountSessions(connection, "missing-account", now);
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0].sql).toContain("UPDATE accounts");
+    expect(calls[0].params).toEqual([now, "missing-account"]);
+  });
+
   it("revokes one session by canonical hash and audits no token material", async () => {
     const now = new Date("2026-06-14T03:30:00.000Z");
     const { calls, connection } = recordingConnection((sql) => {
@@ -701,47 +718,69 @@ describe("MariaDB access store", () => {
     expect(audit?.params[3]).toBe("admin.login.success");
   });
 
-  it("recursively sanitizes secret keys before writing audit JSON", async () => {
-    const nestedId = {
+  it("uses the same recursive secret sanitizer for JSON and MariaDB audits", async () => {
+    const auditPayload = {
       safe: "kept",
       password: "plain-password",
       PasswordHash: "stored-password-hash",
       nested: {
-        TOKEN: "raw-token",
+        refreshToken: "refresh-token",
+        accessToken: "access-token",
         tokenHash: "stored-token-hash",
+        clientSecretKey: "client-secret",
+        confirmationSecret: "confirmation-secret",
+        apiSecret: "api-secret",
+        tokenCount: 4,
+        observedAt: new Date("2026-06-14T04:30:00.000Z"),
         list: [{
-          secret: "nested-secret",
-          ConfirmationSecret: "confirmation-secret",
-          passwordHint: "kept-hint",
+          rotatedPasswordHash: "rotated-password-hash",
           value: "kept-value"
         }]
       }
     };
     const { calls, connection } = recordingConnection();
-
-    await recordAccessRolesSync(connection, [{
+    const state = initialState();
+    const groups = [{
       ...accessGroups()[0],
-      id: nestedId as unknown as string
-    }]);
+      id: auditPayload as unknown as string
+    }];
+
+    syncAccessRolesInState(state, groups);
+    await recordAccessRolesSync(connection, groups);
 
     const audit = calls.find((call) =>
       call.sql.includes("INSERT INTO audit_logs")
     );
-    const detail = JSON.parse(String(audit?.params[6]));
-    expect(detail).toEqual({
+    const databaseDetail = JSON.parse(String(audit?.params[6]));
+    const jsonDetail = JSON.parse(JSON.stringify(state.auditLogs?.[0].detail));
+    const expected = {
       groupIds: [{
         safe: "kept",
         nested: {
+          tokenCount: 4,
+          observedAt: "2026-06-14T04:30:00.000Z",
           list: [{
-            passwordHint: "kept-hint",
             value: "kept-value"
           }]
         }
       }]
-    });
-    expect(String(audit?.params[6])).not.toMatch(
-      /plain-password|stored-password-hash|raw-token|stored-token-hash|nested-secret|confirmation-secret/
-    );
+    };
+    expect(jsonDetail).toEqual(expected);
+    expect(databaseDetail).toEqual(expected);
+    const serialized = JSON.stringify({ jsonDetail, databaseDetail });
+    for (const secret of [
+      "plain-password",
+      "stored-password-hash",
+      "refresh-token",
+      "access-token",
+      "stored-token-hash",
+      "client-secret",
+      "confirmation-secret",
+      "api-secret",
+      "rotated-password-hash"
+    ]) {
+      expect(serialized).not.toContain(secret);
+    }
   });
 
   it("sets a password without exposing it in audit detail and invalidates sessions", async () => {
@@ -1140,5 +1179,73 @@ describe("MariaDB access store", () => {
     expect(calls[1].params.slice(-2)).toEqual([10, 10]);
     expect(calls.every((call) => !call.sql.includes(search))).toBe(true);
     expect(calls.some((call) => call.params.includes(`%${search.toLowerCase()}%`))).toBe(true);
+  });
+
+  it("searches chat identity identifiers with a parameterized EXISTS", async () => {
+    const search = "WXID-ONLY%' OR 1=1 --";
+    const { calls, connection } = recordingConnection((sql) => {
+      if (sql.includes("COUNT(*) AS total")) return [{ total: 1 }];
+      return sql.includes("paged_users") ? [userDetailRow({
+        identity_platform: "wechat",
+        identity_id: "identity-1",
+        external_user_id: "wxid-only",
+        identity_display_name: "Identity Only"
+      })] : [];
+    });
+
+    const result = await listUsers(connection, {
+      search,
+      page: 1,
+      pageSize: 20
+    });
+
+    expect(result.total).toBe(1);
+    expect(result.users).toHaveLength(1);
+    for (const call of calls) {
+      expect(call.sql).not.toContain(search);
+      expect(call.sql).toContain("EXISTS");
+      expect(call.sql).toContain("FROM chat_identities");
+      expect(call.sql).toContain("LOWER");
+      expect(call.sql).toContain("external_user_id");
+      expect(call.sql).toContain("display_name");
+      expect(call.sql).toContain("platform");
+    }
+    const pattern = `%${search.toLowerCase()}%`;
+    expect(calls[0].params).toEqual([pattern, pattern]);
+    expect(calls[1].params).toEqual([pattern, pattern, 20, 0]);
+  });
+
+  it.each([
+    "2026-02-30T00:00:00.000Z",
+    "2099-01-01T00:00:00",
+    "January 1, 2099"
+  ])("rejects non-strict session expiry %s before SQL mutation", async (expiresAt) => {
+    const { calls, connection } = recordingConnection();
+
+    await expect(createAccountSession(
+      connection,
+      "account-person-1",
+      "mobile",
+      tokenHash,
+      expiresAt
+    )).rejects.toThrow(/valid ISO date string/i);
+
+    expect(calls).toEqual([]);
+  });
+
+  it.each([
+    "2026-02-30T00:00:00.000Z",
+    "2099-01-01T00:00:00",
+    "January 1, 2099"
+  ])("rejects non-strict lockedUntil %s before SQL mutation", async (lockedUntil) => {
+    const { calls, connection } = recordingConnection();
+
+    await expect(recordAdminLoginFailure(
+      connection,
+      "account-admin",
+      lockedUntil
+    )).rejects.toThrow(/valid ISO date string/i);
+
+    expect(calls).toEqual([]);
   });
 });

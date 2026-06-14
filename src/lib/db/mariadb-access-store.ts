@@ -18,15 +18,17 @@ import {
 } from "../domain/access-control";
 import type { PersonRole, UserGroup } from "../domain/types";
 import type { AppConfig } from "../seed";
-import { normalizeMobilePhone } from "../services/access-state-service";
+import {
+  normalizeMobilePhone,
+  normalizeStrictIsoDate,
+  sanitizeAuditValue
+} from "../services/access-state-service";
 import type { DatabaseConnection } from "./connection";
 
 type Row = RowDataPacket & Record<string, unknown>;
 type SqlValue = string | number | boolean | Date | null;
 
 const SESSION_TOKEN_HASH_PATTERN = /^[a-f0-9]{64}$/;
-const AUDIT_SECRET_KEY_PATTERN =
-  /^(password|passwordHash|token|tokenHash|secret|confirmationSecret)$/i;
 
 async function rows<T extends Row>(
   connection: DatabaseConnection,
@@ -79,11 +81,7 @@ function canonicalSessionHash(tokenHash: string) {
 }
 
 function futureDate(value: string, field: string) {
-  const timestamp = Date.parse(value);
-  if (!Number.isFinite(timestamp)) {
-    throw new Error(`${field} must be a valid date`);
-  }
-  const date = new Date(timestamp);
+  const date = new Date(normalizeStrictIsoDate(value, field));
   if (date.getTime() <= Date.now()) {
     throw new Error(`${field} must be in the future`);
   }
@@ -92,11 +90,7 @@ function futureDate(value: string, field: string) {
 
 function optionalDate(value: string | undefined, field: string) {
   if (value === undefined) return null;
-  const timestamp = Date.parse(value);
-  if (!Number.isFinite(timestamp)) {
-    throw new Error(`${field} must be a valid date`);
-  }
-  return new Date(timestamp);
+  return new Date(normalizeStrictIsoDate(value, field));
 }
 
 function roleId(groupId: string) {
@@ -113,20 +107,6 @@ function roleForGroup(group: UserGroup): PersonRole {
 function orderedPermissions(values: Iterable<unknown>) {
   const granted = new Set(values);
   return PERMISSION_CODES.filter((code) => granted.has(code));
-}
-
-function sanitizeAuditValue(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(sanitizeAuditValue);
-  if (value instanceof Date || typeof value !== "object" || value === null) {
-    return value;
-  }
-
-  const sanitized: Record<string, unknown> = {};
-  for (const [key, item] of Object.entries(value)) {
-    if (AUDIT_SECRET_KEY_PATTERN.test(key)) continue;
-    sanitized[key] = sanitizeAuditValue(item);
-  }
-  return sanitized;
 }
 
 function actorFromRows(
@@ -794,13 +774,14 @@ export async function revokeAccountSessions(
   accountId: string,
   now = new Date()
 ): Promise<void> {
-  await execute(
+  const accountUpdate = await execute(
     connection,
     `UPDATE accounts
      SET auth_version = auth_version + 1, updated_at = ?
      WHERE id = ?`,
     [now, accountId]
   );
+  if (accountUpdate.affectedRows < 1) return;
   const sessionUpdate = await execute(
     connection,
     `UPDATE account_sessions
@@ -1163,10 +1144,22 @@ function userFilter(query: UserQuery): UserFilter {
   const params: SqlValue[] = [];
   const search = query.search?.trim().toLowerCase();
   if (search) {
-    clauses.push(
-      "LOWER(CONCAT_WS(' ', p.name, p.phone, COALESCE(g.name, ''))) LIKE ?"
-    );
-    params.push(`%${search}%`);
+    clauses.push(`(
+      LOWER(CONCAT_WS(' ', p.name, p.phone, COALESCE(g.name, ''))) LIKE ?
+      OR EXISTS (
+        SELECT 1
+        FROM chat_identities search_ci
+        WHERE search_ci.person_id = p.id
+          AND LOWER(CONCAT_WS(
+            ' ',
+            search_ci.external_user_id,
+            search_ci.display_name,
+            search_ci.platform
+          )) LIKE ?
+      )
+    )`);
+    const pattern = `%${search}%`;
+    params.push(pattern, pattern);
   }
   if (query.groupId !== undefined) {
     clauses.push("p.group_id = ?");

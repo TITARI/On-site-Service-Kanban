@@ -134,7 +134,7 @@ function mergedConfig(config?: Partial<AppConfig>): AppConfig {
     aiModels: incoming.aiModels?.length ? incoming.aiModels : defaults.aiModels,
     messageIntegrations,
     wxautoMcp,
-    userGroups: incoming.userGroups?.length ? incoming.userGroups : defaults.userGroups,
+    userGroups: incoming.userGroups ?? defaults.userGroups,
     keywordGroups: normalizeKeywordGroups(incoming.keywordGroups?.length ? incoming.keywordGroups : defaults.keywordGroups),
     aiPromptTemplates: promptConfig.aiPromptTemplates,
     aiPromptDefaults: promptConfig.aiPromptDefaults,
@@ -745,10 +745,12 @@ async function writeBooths(connection: DatabaseConnection, booths: BoothRecord[]
   }
 }
 
-async function writeConfig(connection: DatabaseConnection, config: AppConfig, now: Date) {
-  const normalized = mergedConfig(config);
-
-  for (const group of normalized.userGroups ?? []) {
+async function writeUserGroups(
+  connection: DatabaseConnection,
+  groups: UserGroup[],
+  now: Date
+) {
+  for (const group of groups) {
     await execute(
       connection,
       `INSERT INTO user_groups (
@@ -757,6 +759,54 @@ async function writeConfig(connection: DatabaseConnection, config: AppConfig, no
       [group.id, group.name, group.description, group.canClaim, group.canProcess, group.canAccept, group.canAdmin ?? false, group.enabled, now, now]
     );
   }
+}
+
+async function replaceUserGroups(
+  connection: DatabaseConnection,
+  groups: UserGroup[],
+  now: Date
+) {
+  await execute(connection, "DELETE FROM user_groups");
+  await writeUserGroups(connection, groups, now);
+}
+
+async function writeConfigVersion(
+  connection: DatabaseConnection,
+  config: AppConfig,
+  now: Date,
+  actor?: AuthenticatedActor,
+  changeSummary = "Repository state sync"
+) {
+  const normalized = mergedConfig(config);
+  const serialized = json(normalized);
+  const [latest] = await rows<Row>(
+    connection,
+    "SELECT config_json FROM app_config_versions ORDER BY created_at DESC LIMIT 1"
+  );
+  if (latest && json(parseJsonValue(latest.config_json, {})) === serialized) return;
+
+  const timestamp = now.toISOString();
+  await execute(
+    connection,
+    `INSERT INTO app_config_versions (
+      id, version, config_json, operator_id, operator_name, change_summary, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [
+      stableId("config", timestamp),
+      timestamp,
+      serialized,
+      actor?.accountId ?? "system",
+      actor?.name ?? "system",
+      changeSummary,
+      now
+    ]
+  );
+}
+
+async function writeConfig(connection: DatabaseConnection, config: AppConfig, now: Date) {
+  const normalized = mergedConfig(config);
+
+  await writeUserGroups(connection, normalized.userGroups ?? [], now);
 
   for (const issue of normalized.issueTypes) {
     await execute(
@@ -889,29 +939,7 @@ async function writeConfig(connection: DatabaseConnection, config: AppConfig, no
     }
   }
 
-  const serialized = json(normalized);
-  const [latest] = await rows<Row>(
-    connection,
-    "SELECT config_json FROM app_config_versions ORDER BY created_at DESC LIMIT 1"
-  );
-  if (latest && json(parseJsonValue(latest.config_json, {})) === serialized) return;
-
-  const timestamp = now.toISOString();
-  await execute(
-    connection,
-    `INSERT INTO app_config_versions (
-      id, version, config_json, operator_id, operator_name, change_summary, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    [
-      stableId("config", timestamp),
-      timestamp,
-      serialized,
-      "system",
-      "system",
-      "Repository state sync",
-      now
-    ]
-  );
+  await writeConfigVersion(connection, normalized, now);
 }
 
 async function writePeople(connection: DatabaseConnection, people: Person[], now: Date) {
@@ -1917,7 +1945,20 @@ export class MariaDbStateStore {
     actor?: AuthenticatedActor
   ) {
     await withDatabaseTransaction(async (connection) => {
-      await syncDatabaseAccessRoles(connection, userGroups);
+      const now = new Date();
+      const config = {
+        ...await latestConfig(connection),
+        userGroups: userGroups.map((group) => ({ ...group }))
+      };
+      await replaceUserGroups(connection, userGroups, now);
+      await syncDatabaseAccessRoles(connection, userGroups, now);
+      await writeConfigVersion(
+        connection,
+        config,
+        now,
+        actor,
+        "Access roles sync"
+      );
       await recordAccessRolesSync(connection, userGroups, actor);
     });
   }
