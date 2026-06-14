@@ -768,6 +768,164 @@ describe("file access repository", () => {
     );
   });
 
+  it.each([
+    ["wx-external-only"],
+    ["PUBLIC ALIAS ALPHA"],
+    ["corp-external-only"],
+    ["ENTERPRISE ALIAS BETA"],
+    ["WECHAT"],
+    ["WECOM"]
+  ])("searches linked chat identity values without duplicating users for %s", async (search) => {
+    const store = memoryStore();
+    const repository = createFileAppRepository(store);
+    const user = await repository.createUser({
+      name: "Identity Holder",
+      phone: "13800138000",
+      groupId: "builder",
+      groupLocked: false,
+      enabled: true
+    }, adminActor());
+    store.mutate((state) => {
+      state.chatIdentities = [
+        {
+          id: "chat-wechat",
+          platform: "wechat",
+          externalUserId: "WX-EXTERNAL-ONLY",
+          displayName: "Public Alias Alpha",
+          personId: user.personId,
+          firstSeenAt: "2026-01-01T00:00:00.000Z",
+          lastSeenAt: "2026-01-01T00:00:00.000Z"
+        },
+        {
+          id: "chat-wecom",
+          platform: "wecom",
+          externalUserId: "CORP-EXTERNAL-ONLY",
+          displayName: "Enterprise Alias Beta",
+          personId: user.personId,
+          firstSeenAt: "2026-01-01T00:00:00.000Z",
+          lastSeenAt: "2026-01-01T00:00:00.000Z"
+        },
+        {
+          id: "chat-unlinked",
+          platform: "wechat",
+          externalUserId: "UNLINKED-ONLY",
+          displayName: "Unlinked Alias",
+          firstSeenAt: "2026-01-01T00:00:00.000Z",
+          lastSeenAt: "2026-01-01T00:00:00.000Z"
+        }
+      ];
+    });
+
+    await expect(repository.listUsers({
+      search,
+      page: 1,
+      pageSize: 20
+    })).resolves.toEqual({
+      total: 1,
+      users: [expect.objectContaining({ personId: user.personId })]
+    });
+    await expect(repository.listUsers({
+      search: "unlinked-only",
+      page: 1,
+      pageSize: 20
+    })).resolves.toEqual({
+      total: 0,
+      users: []
+    });
+  });
+
+  it("allows unrelated updates and disabling a user in a disabled group", async () => {
+    const store = memoryStore();
+    const repository = createFileAppRepository(store);
+    const user = await repository.createUser({
+      name: "Disabled Group User",
+      phone: "13800138000",
+      groupId: "builder",
+      groupLocked: false,
+      enabled: true
+    }, adminActor());
+    store.mutate((state) => {
+      const group = state.config.userGroups?.find(
+        (item) => item.id === "builder"
+      );
+      if (group) group.enabled = false;
+    });
+
+    await expect(repository.updateUser(user.personId, {
+      name: "Renamed While Disabled",
+      phone: "13900139000",
+      groupLocked: true,
+      enabled: false
+    }, adminActor())).resolves.toMatchObject({
+      name: "Renamed While Disabled",
+      phone: "13900139000",
+      groupId: "builder",
+      groupName: "Builder",
+      groupLocked: true,
+      enabled: false
+    });
+  });
+
+  it("rejects enabling a user whose effective group is disabled", async () => {
+    const store = memoryStore();
+    const repository = createFileAppRepository(store);
+    const user = await repository.createUser({
+      name: "Disabled User",
+      phone: "13800138000",
+      groupId: "builder",
+      groupLocked: false,
+      enabled: false
+    }, adminActor());
+    store.mutate((state) => {
+      const group = state.config.userGroups?.find(
+        (item) => item.id === "builder"
+      );
+      if (group) group.enabled = false;
+    });
+
+    await expect(
+      repository.setUserEnabled(user.personId, true, adminActor())
+    ).rejects.toThrow(/group.*disabled|missing/i);
+    expect(store.snapshot().people?.find(
+      (person) => person.id === user.personId
+    )?.enabled).toBe(false);
+    expect(store.snapshot().accounts?.find(
+      (account) => account.id === user.accountId
+    )?.enabled).toBe(false);
+  });
+
+  it("allows moving and enabling a user in one mutation to an enabled group", async () => {
+    const store = memoryStore();
+    const repository = createFileAppRepository(store);
+    const user = await repository.createUser({
+      name: "Moving User",
+      phone: "13800138000",
+      groupId: "builder",
+      groupLocked: false,
+      enabled: false
+    }, adminActor());
+    store.mutate((state) => {
+      const group = state.config.userGroups?.find(
+        (item) => item.id === "builder"
+      );
+      if (group) group.enabled = false;
+    });
+
+    await expect(repository.updateUser(user.personId, {
+      groupId: "business",
+      enabled: true
+    }, adminActor())).resolves.toMatchObject({
+      groupId: "business",
+      groupName: "Business",
+      enabled: true
+    });
+    expect(store.snapshot().accountRoles?.filter(
+      (assignment) => assignment.accountId === user.accountId
+    )).toEqual([
+      expect.objectContaining({ roleId: "role-business" })
+    ]);
+  });
+
   it("supports user CRUD, filters, pagination, auth invalidation, and secret-safe audits", async () => {
     const store = memoryStore();
     const repository = createFileAppRepository(store);

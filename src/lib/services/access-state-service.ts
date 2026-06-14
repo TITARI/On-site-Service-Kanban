@@ -924,9 +924,19 @@ export function listUsersFromState(
     return person ? [userItem(state, person, account)] : [];
   }).filter((item) => {
     const bound = Object.keys(item.identities).length > 0;
+    const searchValues = [
+      item.name,
+      item.phone,
+      item.groupName,
+      ...Object.entries(item.identities).flatMap(
+        ([platform, identity]) => identity
+          ? [platform, identity.externalUserId, identity.displayName]
+          : []
+      )
+    ];
     return (
       !search ||
-      [item.name, item.phone, item.groupName].some((value) =>
+      searchValues.some((value) =>
         value.toLowerCase().includes(search)
       )
     ) &&
@@ -994,6 +1004,15 @@ export function updateUserInState(
   const person = account ? personForAccount(state, account) : undefined;
   if (!account || !person) throw new Error("User was not found");
 
+  const groupChanged =
+    input.groupId !== undefined &&
+    input.groupId !== person.groupId;
+  const targetGroup = groupChanged || input.enabled === true
+    ? enabledGroup(
+        state,
+        groupChanged ? input.groupId as string : person.groupId ?? ""
+      )
+    : undefined;
   const at = nowIso();
   const changes: Record<string, unknown> = {};
   let invalidate = false;
@@ -1012,8 +1031,8 @@ export function updateUserInState(
       invalidate = true;
     }
   }
-  if (input.groupId !== undefined && input.groupId !== person.groupId) {
-    const group = enabledGroup(state, input.groupId);
+  if (groupChanged && targetGroup) {
+    const group = targetGroup;
     changes.groupId = { from: person.groupId, to: group.id };
     person.groupId = group.id;
     person.groupName = group.name;
