@@ -25,6 +25,8 @@ type Row = RowDataPacket & Record<string, unknown>;
 type SqlValue = string | number | boolean | Date | null;
 
 const SESSION_TOKEN_HASH_PATTERN = /^[a-f0-9]{64}$/;
+const AUDIT_SECRET_KEY_PATTERN =
+  /^(password|passwordHash|token|tokenHash|secret|confirmationSecret)$/i;
 
 async function rows<T extends Row>(
   connection: DatabaseConnection,
@@ -113,6 +115,20 @@ function orderedPermissions(values: Iterable<unknown>) {
   return PERMISSION_CODES.filter((code) => granted.has(code));
 }
 
+function sanitizeAuditValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sanitizeAuditValue);
+  if (value instanceof Date || typeof value !== "object" || value === null) {
+    return value;
+  }
+
+  const sanitized: Record<string, unknown> = {};
+  for (const [key, item] of Object.entries(value)) {
+    if (AUDIT_SECRET_KEY_PATTERN.test(key)) continue;
+    sanitized[key] = sanitizeAuditValue(item);
+  }
+  return sanitized;
+}
+
 function actorFromRows(
   actorRows: Row[],
   sessionType: SessionType
@@ -137,7 +153,7 @@ function actorFromRows(
   };
 }
 
-async function readActor(
+async function readAuthorizedAccount(
   connection: DatabaseConnection,
   accountId: string,
   sessionType: SessionType
@@ -146,6 +162,7 @@ async function readActor(
     connection,
     `SELECT
        a.id AS account_id,
+       a.auth_version,
        p.id AS person_id,
        p.name AS person_name,
        p.phone,
@@ -167,7 +184,21 @@ async function readActor(
      ORDER BY rp.permission_code`,
     [accountId]
   );
-  return actorFromRows(actorRows, sessionType);
+  const actor = actorFromRows(actorRows, sessionType);
+  if (!actor) return undefined;
+  return {
+    actor,
+    authVersion: Number(actorRows[0].auth_version)
+  };
+}
+
+async function readActor(
+  connection: DatabaseConnection,
+  accountId: string,
+  sessionType: SessionType
+) {
+  return (await readAuthorizedAccount(connection, accountId, sessionType))
+    ?.actor;
 }
 
 async function writeAudit(
@@ -191,7 +222,7 @@ async function writeAudit(
       action,
       targetType,
       targetId ?? null,
-      JSON.stringify(detail),
+      JSON.stringify(sanitizeAuditValue(detail)),
       now
     ]
   );
@@ -480,12 +511,19 @@ export async function upsertMobileAccount(
 ): Promise<{ actor: AuthenticatedActor }> {
   const phone = normalizeMobilePhone(input.phone);
   const name = nonEmptyName(input.name);
-  const submittedGroup = enabledConfigGroup(config, input.groupId);
+  const existing = await findAccountPersonByPhone(connection, phone);
+  const existingGroupId = existing?.group_id
+    ? String(existing.group_id)
+    : undefined;
+  const selectedGroupId = existing && bool(existing.group_locked)
+    ? existingGroupId
+    : input.groupId;
+  if (!selectedGroupId) throw new Error("Mobile account has no user group");
+  const selectedGroup = enabledConfigGroup(config, selectedGroupId);
   const groups = config.userGroups ?? [];
   const now = new Date();
   await syncAccessRoles(connection, groups, now);
 
-  const existing = await findAccountPersonByPhone(connection, phone);
   let personId: string;
   let accountId: string;
   let created = false;
@@ -504,9 +542,9 @@ export async function upsertMobileAccount(
         personId,
         name,
         phone,
-        roleForGroup(submittedGroup),
-        submittedGroup.id,
-        submittedGroup.name,
+        roleForGroup(selectedGroup),
+        selectedGroup.id,
+        selectedGroup.name,
         false,
         null,
         null,
@@ -526,7 +564,7 @@ export async function upsertMobileAccount(
     await synchronizeAccountRole(
       connection,
       accountId,
-      submittedGroup.id,
+      selectedGroup.id,
       now
     );
   } else {
@@ -549,15 +587,7 @@ export async function upsertMobileAccount(
       }
     }
 
-    const existingGroupId = existing.group_id
-      ? String(existing.group_id)
-      : undefined;
-    const nextGroupId = bool(existing.group_locked)
-      ? existingGroupId
-      : submittedGroup.id;
-    if (!nextGroupId) throw new Error("Mobile account has no user group");
-    const group = enabledConfigGroup(config, nextGroupId);
-    const groupChanged = existingGroupId !== group.id;
+    const groupChanged = existingGroupId !== selectedGroup.id;
 
     await execute(
       connection,
@@ -568,9 +598,9 @@ export async function upsertMobileAccount(
       [
         name,
         phone,
-        roleForGroup(group),
-        group.id,
-        group.name,
+        roleForGroup(selectedGroup),
+        selectedGroup.id,
+        selectedGroup.name,
         now,
         personId
       ]
@@ -582,7 +612,12 @@ export async function upsertMobileAccount(
        WHERE id = ?`,
       [phone, now, now, accountId]
     );
-    await synchronizeAccountRole(connection, accountId, group.id, now);
+    await synchronizeAccountRole(
+      connection,
+      accountId,
+      selectedGroup.id,
+      now
+    );
     if (groupChanged) {
       await invalidateAccount(connection, accountId, now);
     }
@@ -615,12 +650,14 @@ export async function createAccountSession(
 ): Promise<AccountSession> {
   const tokenHash = canonicalSessionHash(tokenHashInput);
   const expiresAt = futureDate(expiresAtInput, "Session expiresAt");
-  const [account] = await rows<Row>(
+  const authorized = await readAuthorizedAccount(
     connection,
-    "SELECT id, auth_version FROM accounts WHERE id = ? LIMIT 1",
-    [accountId]
+    accountId,
+    type
   );
-  if (!account) throw new Error("Account was not found");
+  if (!authorized) {
+    throw new Error("Account is not allowed to create this session");
+  }
 
   const now = new Date();
   const session: AccountSession = {
@@ -628,7 +665,7 @@ export async function createAccountSession(
     accountId,
     sessionType: type,
     tokenHash,
-    authVersion: Number(account.auth_version),
+    authVersion: authorized.authVersion,
     expiresAt: expiresAt.toISOString(),
     lastSeenAt: now.toISOString(),
     createdAt: now.toISOString()
@@ -764,7 +801,7 @@ export async function revokeAccountSessions(
      WHERE id = ?`,
     [now, accountId]
   );
-  await execute(
+  const sessionUpdate = await execute(
     connection,
     `UPDATE account_sessions
      SET revoked_at = ?
@@ -776,7 +813,7 @@ export async function revokeAccountSessions(
     "sessions.revoke",
     "account",
     accountId,
-    { accountId },
+    { accountId, revokedCount: sessionUpdate.affectedRows },
     undefined,
     now
   );
@@ -1136,8 +1173,10 @@ function userFilter(query: UserQuery): UserFilter {
     params.push(query.groupId);
   }
   if (query.enabled !== undefined) {
-    clauses.push("p.enabled = ? AND a.enabled = ?");
-    params.push(query.enabled, query.enabled);
+    const effectiveEnabled = "(p.enabled = true AND a.enabled = true)";
+    clauses.push(query.enabled
+      ? effectiveEnabled
+      : `NOT ${effectiveEnabled}`);
   }
   if (query.admin !== undefined) {
     clauses.push(`${query.admin ? "" : "NOT "}EXISTS (
@@ -1398,12 +1437,15 @@ async function accountPersonForUpdate(
        p.id AS person_id,
        p.name AS person_name,
        p.phone,
+       p.role,
        p.group_id,
        p.group_name_snapshot,
        p.group_locked,
-       p.enabled AS person_enabled
+       p.enabled AS person_enabled,
+       g.enabled AS group_enabled
      FROM accounts a
      JOIN people p ON p.id = a.person_id
+     LEFT JOIN user_groups g ON g.id = p.group_id
      WHERE a.id = ? OR p.id = ?
      LIMIT 1
      FOR UPDATE`,
@@ -1422,12 +1464,27 @@ export async function updateUser(
   const current = await accountPersonForUpdate(connection, userId);
   const accountId = String(current.account_id);
   const personId = String(current.person_id);
+  const currentLoginName = String(current.login_name);
+  const currentName = String(current.person_name);
   const currentPhone = String(current.phone);
+  const currentRole = String(current.role) as PersonRole;
   const currentGroupId = String(current.group_id ?? "");
+  const currentGroupName = String(current.group_name_snapshot ?? "");
+  const currentGroupLocked = bool(current.group_locked);
+  const currentPersonEnabled = bool(current.person_enabled);
+  const currentAccountEnabled = bool(current.account_enabled);
+  const currentEnabled = currentPersonEnabled && currentAccountEnabled;
   const nextPhone = input.phone === undefined
     ? currentPhone
     : normalizeMobilePhone(input.phone);
-  if (nextPhone !== currentPhone) {
+  const nextLoginName = input.phone === undefined
+    ? currentLoginName
+    : nextPhone;
+  const phoneChanged = input.phone !== undefined && (
+    nextPhone !== currentPhone ||
+    nextLoginName !== currentLoginName
+  );
+  if (phoneChanged) {
     const [duplicate] = await rows<Row>(
       connection,
       `SELECT id
@@ -1440,25 +1497,60 @@ export async function updateUser(
       throw new Error("Mobile phone is already assigned to another user");
     }
   }
-  const nextGroupId = input.groupId ?? currentGroupId;
-  const group = await readEnabledGroup(connection, nextGroupId);
+  const groupChanged =
+    input.groupId !== undefined &&
+    input.groupId !== currentGroupId;
+  const group = groupChanged
+    ? await readEnabledGroup(connection, input.groupId as string)
+    : undefined;
+  if (
+    input.enabled === true &&
+    !groupChanged &&
+    !bool(current.group_enabled)
+  ) {
+    throw new Error("User group is disabled or missing");
+  }
+  const nextGroupId = group?.id ?? currentGroupId;
+  const nextRole = group ? roleForGroup(group) : currentRole;
+  const nextGroupName = group?.name ?? currentGroupName;
   const nextName = input.name === undefined
-    ? String(current.person_name)
+    ? currentName
     : nonEmptyName(input.name);
-  const nextEnabled = input.enabled ?? (
-    bool(current.person_enabled) && bool(current.account_enabled)
+  const nextPersonEnabled = input.enabled ?? currentPersonEnabled;
+  const nextAccountEnabled = input.enabled ?? currentAccountEnabled;
+  const nextEnabled = nextPersonEnabled && nextAccountEnabled;
+  const nextGroupLocked = input.groupLocked ?? currentGroupLocked;
+  const enabledChanged = input.enabled !== undefined && (
+    currentPersonEnabled !== input.enabled ||
+    currentAccountEnabled !== input.enabled
   );
-  const nextGroupLocked = input.groupLocked ?? bool(current.group_locked);
   const invalidate =
-    nextPhone !== currentPhone ||
-    nextGroupId !== currentGroupId ||
-    input.enabled !== undefined &&
-      (
-        bool(current.person_enabled) !== nextEnabled ||
-        bool(current.account_enabled) !== nextEnabled
-      );
+    phoneChanged ||
+    groupChanged ||
+    enabledChanged;
+  const changes: Record<string, { from: unknown; to: unknown }> = {};
+  if (nextName !== currentName) {
+    changes.name = { from: currentName, to: nextName };
+  }
+  if (phoneChanged) {
+    changes.phone = { from: currentPhone, to: nextPhone };
+  }
+  if (groupChanged) {
+    changes.groupId = { from: currentGroupId, to: nextGroupId };
+  }
+  if (nextGroupLocked !== currentGroupLocked) {
+    changes.groupLocked = {
+      from: currentGroupLocked,
+      to: nextGroupLocked
+    };
+  }
+  if (enabledChanged) {
+    changes.enabled = { from: currentEnabled, to: nextEnabled };
+  }
   const now = new Date();
-  await ensureGroupRole(connection, group, now);
+  if (group) {
+    await ensureGroupRole(connection, group, now);
+  }
   await execute(
     connection,
     `UPDATE people
@@ -1468,11 +1560,11 @@ export async function updateUser(
     [
       nextName,
       nextPhone,
-      roleForGroup(group),
-      group.id,
-      group.name,
+      nextRole,
+      nextGroupId,
+      nextGroupName,
       nextGroupLocked,
-      nextEnabled,
+      nextPersonEnabled,
       now,
       personId
     ]
@@ -1482,9 +1574,11 @@ export async function updateUser(
     `UPDATE accounts
      SET login_name = ?, enabled = ?, updated_at = ?
      WHERE id = ?`,
-    [nextPhone, nextEnabled, now, accountId]
+    [nextLoginName, nextAccountEnabled, now, accountId]
   );
-  await synchronizeAccountRole(connection, accountId, group.id, now);
+  if (group) {
+    await synchronizeAccountRole(connection, accountId, group.id, now);
+  }
   if (invalidate) {
     await invalidateAccount(connection, accountId, now);
   }
@@ -1495,13 +1589,7 @@ export async function updateUser(
     personId,
     {
       accountId,
-      changes: {
-        name: nextName,
-        phone: nextPhone,
-        groupId: nextGroupId,
-        groupLocked: nextGroupLocked,
-        enabled: nextEnabled
-      },
+      changes,
       authInvalidated: invalidate
     },
     actor,

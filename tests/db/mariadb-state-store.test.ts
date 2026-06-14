@@ -376,6 +376,27 @@ describe("MariaDbStateStore", () => {
     expect(configInsert).toBeDefined();
     expect(String(configInsert?.params[2])).toContain('"id":"admin"');
     expect(String(configInsert?.params[2])).toContain('"canAdmin":true');
+    expect(databaseMocks.withDatabaseTransaction).toHaveBeenCalledOnce();
+  });
+
+  it("propagates bootstrap transaction helper failures without issuing writes", async () => {
+    const { connection } = recordingConnection();
+    databaseMocks.setConnection(connection);
+    const transactionError = new Error("transaction rolled back");
+    databaseMocks.withDatabaseTransaction.mockRejectedValueOnce(
+      transactionError
+    );
+
+    await expect(new MariaDbStateStore().bootstrapAdmin({
+      legacyPassword: "legacy-secret",
+      name: "Root Admin",
+      phone: "13700137000",
+      password: "StrongPass123!",
+      group: { mode: "existing", groupId: "admin" }
+    })).rejects.toBe(transactionError);
+
+    expect(databaseMocks.withDatabaseTransaction).toHaveBeenCalledOnce();
+    expect(connection.execute).not.toHaveBeenCalled();
   });
 
   it("persists auto acceptance and queues business and processing notifications", async () => {
