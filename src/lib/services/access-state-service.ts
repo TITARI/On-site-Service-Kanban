@@ -1210,6 +1210,9 @@ function userDeletionHistoryForAccount(
   personId: string,
   accountId: string
 ) {
+  state.messageRecords ??= [];
+  state.pendingWorkOrderSessions ??= [];
+  state.outboundMessages ??= [];
   const identityIds = new Set(
     state.chatIdentities
       .filter((identity) => identity.personId === personId)

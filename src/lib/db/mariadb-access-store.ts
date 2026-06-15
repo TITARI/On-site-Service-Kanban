@@ -1615,7 +1615,7 @@ async function assertMutationKeepsLastAdmin(
   ) {
     return;
   }
-  if (await countUsableAdmins(connection, personId) < 1) {
+  if (await usableAdminCount(connection) <= 1) {
     throw new Error("At least one usable admin account is required");
   }
 }
@@ -1901,8 +1901,11 @@ export async function deleteUser(
   const accountId = String(current.account_id);
   const personId = String(current.person_id);
   if (
+    bool(current.account_enabled) &&
+    bool(current.person_enabled) &&
+    String(current.role) === "admin" &&
     await isTargetUsableAdmin(connection, accountId) &&
-    await countUsableAdmins(connection, personId) < 1
+    await usableAdminCount(connection) <= 1
   ) {
     throw new Error("At least one usable admin account is required");
   }

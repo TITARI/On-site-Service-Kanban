@@ -2,7 +2,10 @@ import { NextResponse } from "next/server";
 import { requireAdminAccess } from "@/lib/api/admin-guard";
 import { badRequest, errorMessage, parseJson } from "@/lib/api/errors";
 import { getAppRepository } from "@/lib/repositories/app-repository";
-import { resolveRequestActor } from "@/lib/services/auth-service";
+import {
+  authErrorResponse,
+  resolveRequestActor
+} from "@/lib/services/auth-service";
 import {
   UserAdminConflictError,
   UserAdminNotFoundError,
@@ -17,9 +20,20 @@ export type RouteContext = {
 export async function adminActorOrResponse(request: Request) {
   const unauthorized = await requireAdminAccess(request);
   if (unauthorized) return { response: unauthorized };
-  return {
-    actor: await resolveRequestActor(request, "admin", "admin.access")
-  };
+
+  try {
+    return {
+      actor: await resolveRequestActor(request, "admin", "admin.access")
+    };
+  } catch (error) {
+    const response = authErrorResponse(error);
+    return {
+      response: NextResponse.json(
+        { message: response.message },
+        { status: response.status }
+      )
+    };
+  }
 }
 
 export function userAdminService() {

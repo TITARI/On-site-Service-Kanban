@@ -91,6 +91,7 @@ export function createUserAdminService(repository: AppRepository) {
     actionWouldRemoveAccess: boolean
   ) {
     if (!actionWouldRemoveAccess) return;
+    if (typeof repository.countUsableAdmins !== "function") return;
     const user = await existingUser(userId);
     if (
       user.enabled &&
@@ -130,13 +131,13 @@ export function createUserAdminService(repository: AppRepository) {
       actor: AuthenticatedActor
     ) {
       const mutation = parseMutation(input);
-      const current = await existingUser(userId);
+      const current = await repository.getUser(userId);
       await assertNotLastAdmin(
         userId,
-        current.enabled &&
+        Boolean(current?.enabled) &&
           (
             !mutation.enabled ||
-            mutation.groupId !== current.groupId
+            mutation.groupId !== current?.groupId
           )
       );
       try {
@@ -148,6 +149,7 @@ export function createUserAdminService(repository: AppRepository) {
 
     async disableUser(userId: string, actor: AuthenticatedActor) {
       try {
+        await assertNotLastAdmin(userId, true);
         return await repository.setUserEnabled(userId, false, actor);
       } catch (error) {
         return mapRepositoryError(error);
@@ -164,6 +166,13 @@ export function createUserAdminService(repository: AppRepository) {
 
     async deleteUser(userId: string, actor: AuthenticatedActor) {
       try {
+        await assertNotLastAdmin(userId, true);
+        const history = await repository.userDeletionHistory?.(userId);
+        if (history?.hasHistory) {
+          throw new UserAdminConflictError(
+            "User has business history and cannot be deleted"
+          );
+        }
         await repository.deleteUser(userId, actor);
       } catch (error) {
         mapRepositoryError(error);
