@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   KeyRound,
   Pencil,
@@ -121,30 +121,35 @@ export function AdminUsersPanel({
   const [passwordError, setPasswordError] = useState<string | null>(null);
   const [actionErrors, setActionErrors] = useState<Record<string, string>>({});
   const [password, setPassword] = useState("");
+  const latestListRequestId = useRef(0);
 
   const enabledGroups = useMemo(() => groups.filter((group) => group.enabled), [groups]);
   const inheritedPermissions = useMemo(
     () => {
-      const groupPermissions = permissionsForGroup(groups.find((group) => group.id === draft.groupId));
-      return groupPermissions.length > 0 ? groupPermissions : editor?.user?.permissions ?? [];
+      const group = groups.find((item) => item.id === draft.groupId);
+      return group ? permissionsForGroup(group) : editor?.user?.permissions ?? [];
     },
     [draft.groupId, editor?.user, groups]
   );
   const canSetPassword = inheritedPermissions.includes("admin.access");
 
   async function loadUsers(nextFilters = appliedFilters) {
+    const requestId = latestListRequestId.current + 1;
+    latestListRequestId.current = requestId;
     setLoading(true);
     setListError(null);
     try {
       const response = await fetch(usersUrl(nextFilters), { cache: "no-store" });
       if (!response.ok) throw new Error(await responseMessage(response, "用户列表加载失败"));
       const payload = await response.json() as UserPayload;
+      if (requestId !== latestListRequestId.current) return;
       setUsers(payload.users ?? []);
       setTotal(payload.total ?? payload.users?.length ?? 0);
     } catch (error) {
+      if (requestId !== latestListRequestId.current) return;
       setListError(error instanceof Error ? error.message : "用户列表加载失败");
     } finally {
-      setLoading(false);
+      if (requestId === latestListRequestId.current) setLoading(false);
     }
   }
 

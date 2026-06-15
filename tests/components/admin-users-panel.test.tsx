@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { AdminUsersPanel } from "@/components/admin-users-panel";
 import type { UserGroup } from "@/lib/domain/types";
@@ -27,6 +27,17 @@ const groups: UserGroup[] = [
     enabled: true
   }
 ];
+
+const viewerGroup: UserGroup = {
+  id: "viewer",
+  name: "观察组",
+  description: "只保留人员档案",
+  canClaim: false,
+  canProcess: false,
+  canAccept: false,
+  canAdmin: false,
+  enabled: true
+};
 
 function user(overrides: Partial<UserListItem> = {}): UserListItem {
   return {
@@ -83,7 +94,7 @@ describe("AdminUsersPanel", () => {
 
     expect(await screen.findByText("张三")).not.toBeNull();
     await userDriver.type(screen.getByLabelText("搜索姓名或手机号"), "13800138000");
-    await userDriver.click(screen.getByRole("button", { name: "筛选用户" }));
+    fireEvent.submit(screen.getByLabelText("搜索姓名或手机号").closest("form") as HTMLFormElement);
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
       expect.stringContaining("/api/admin/users?"),
@@ -154,5 +165,83 @@ describe("AdminUsersPanel", () => {
 
     expect(await within(passwordSection as HTMLElement).findByText(passwordError)).not.toBeNull();
     expect(within(mainEditorForm as HTMLElement).queryByText(passwordError)).toBeNull();
+  });
+
+  it("ignores stale user list responses after a newer filtered response completes", async () => {
+    const requests: Array<{
+      url: string;
+      resolve: (response: Response) => void;
+    }> = [];
+    const fetchMock = vi.fn((input: RequestInfo | URL) => new Promise<Response>((resolve) => {
+      requests.push({ url: String(input), resolve });
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    const userDriver = userEvent.setup();
+
+    render(<AdminUsersPanel groups={groups} />);
+
+    await waitFor(() => expect(requests).toHaveLength(1));
+    await userDriver.type(screen.getByLabelText("搜索姓名或手机号"), "13800138000");
+    fireEvent.submit(screen.getByLabelText("搜索姓名或手机号").closest("form") as HTMLFormElement);
+    await waitFor(() => expect(requests).toHaveLength(2));
+
+    await act(async () => {
+      requests[1].resolve(new Response(JSON.stringify({
+        users: [user()],
+        total: 1,
+        page: 1,
+        pageSize: 20
+      }), { status: 200 }));
+    });
+    expect(await screen.findByText("张三")).not.toBeNull();
+
+    await act(async () => {
+      requests[0].resolve(new Response(JSON.stringify({
+        users: [user({
+          personId: "person-old",
+          accountId: "account-person-old",
+          name: "李四",
+          phone: "13900139000"
+        })],
+        total: 1,
+        page: 1,
+        pageSize: 20
+      }), { status: 200 }));
+    });
+
+    expect(screen.getByText("张三")).not.toBeNull();
+    expect(screen.queryByText("李四")).toBeNull();
+  });
+
+  it("hides password actions when an admin user is moved to a no-permission group", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.startsWith("/api/admin/users")) {
+        return new Response(JSON.stringify({
+          users: [user({
+            groupId: "admin",
+            groupName: "管理员",
+            permissions: ["admin.access"],
+            hasPassword: true
+          })],
+          total: 1,
+          page: 1,
+          pageSize: 20
+        }), { status: 200 });
+      }
+      throw new Error(`Unexpected request ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const userDriver = userEvent.setup();
+
+    render(<AdminUsersPanel groups={[...groups, viewerGroup]} />);
+
+    await userDriver.click(await screen.findByRole("button", { name: "编辑张三" }));
+    const editor = await screen.findByRole("complementary", { name: "编辑用户张三" });
+    expect(within(editor).getByRole("button", { name: "设置/重置密码" })).not.toBeNull();
+
+    await userDriver.selectOptions(within(editor).getByLabelText("用户分组"), "viewer");
+
+    expect(within(editor).queryByRole("button", { name: "设置/重置密码" })).toBeNull();
   });
 });
