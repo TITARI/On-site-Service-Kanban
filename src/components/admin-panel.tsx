@@ -13,9 +13,11 @@ import {
   Sparkles,
   TriangleAlert,
   Users,
+  UsersRound,
   type LucideIcon
 } from "lucide-react";
 import * as XLSX from "xlsx";
+import { AdminUsersPanel } from "@/components/admin-users-panel";
 import { AI_PROVIDER_PRESETS, aiPromptDefaultsOf, aiPromptTemplatesOf, copyAiPromptTemplate, providerPresetFor } from "@/lib/domain/ai-config";
 import { keywordRuleSetsOf, normalizeKeywordGroups } from "@/lib/domain/keyword-config";
 import type { AiPromptDefaults, AiPromptScenario, AiPromptTemplate, AiProviderPresetId, BoothRecord, ChatIdentity, Conversation, InboundMessageRecord, KeywordGroup, KeywordRuleSet, KeywordTerm, OutboundMessage, PendingWorkOrderSession, Person, WxautoMcpConfig } from "@/lib/domain/types";
@@ -147,7 +149,7 @@ type AiModelListState = {
   error?: string;
 };
 
-export type AdminView = "all" | "workbench" | "logs" | "work-order-settings" | "exhibition-data" | "system";
+export type AdminView = "all" | "workbench" | "logs" | "users" | "work-order-settings" | "exhibition-data" | "system";
 
 export type WechatOrderLog = {
   id: string;
@@ -170,6 +172,7 @@ const ADMIN_NAV_ITEMS: Array<{
 }> = [
   { view: "workbench", label: "后台工作台", href: "/admin", icon: Gauge, group: "daily" },
   { view: "logs", label: "微信下单日志", href: "/admin/logs", icon: FileClock, group: "daily" },
+  { view: "users", label: "用户与权限", href: "/admin/users", icon: UsersRound, group: "manage" },
   { view: "work-order-settings", label: "工单设置", href: "/admin/work-order-settings", icon: ClipboardList, group: "manage" },
   { view: "exhibition-data", label: "展览数据", href: "/admin/exhibition-data", icon: Database, group: "manage" },
   { view: "system", label: "系统配置", href: "/admin/system", icon: Settings, group: "manage" }
@@ -188,6 +191,7 @@ function adminViewLabel(view: AdminView) {
 
 function adminViewDescription(view: AdminView) {
   if (view === "logs") return "查看微信/企微消息分析、建单、匹配和待确认记录。";
+  if (view === "users") return "维护后台用户、移动端人员账号、分组权限和登录凭据。";
   if (view === "work-order-settings") return "维护用户分组、问题类型和工单识别规则。";
   if (view === "exhibition-data") return "查看展位主数据状态并承接导入校验。";
   if (view === "system") return "维护 AI 接口、微信/企微 MCP 和系统级配置。";
@@ -1153,6 +1157,9 @@ export function AdminConfigCenter({
             {recentLogs.length === 0 && <p className="admin-empty-note">暂无微信下单日志</p>}
           </div>
         </div>
+      )}
+      {view === "users" && (
+        <AdminUsersPanel groups={groups} onRefresh={onRefresh} />
       )}
       {(showAll || view === "work-order-settings") && (
         <div className="work-order-settings-grid" role="region" aria-label="工单设置配置台">

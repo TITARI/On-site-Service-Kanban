@@ -26,6 +26,7 @@ type AdminSessionPayload =
   | { authenticated: false; bootstrapRequired: boolean };
 
 function adminTitle(view: AdminView) {
+  if (view === "users") return "用户与权限";
   if (view === "logs") return "微信下单日志";
   if (view === "work-order-settings") return "工单设置";
   if (view === "exhibition-data") return "展览数据";

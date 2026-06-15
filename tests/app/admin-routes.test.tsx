@@ -3,6 +3,7 @@ import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import AdminPage from "@/app/admin/page";
 import AdminLogsPage from "@/app/admin/logs/page";
+import AdminUsersPage from "@/app/admin/users/page";
 import AdminWorkOrderSettingsPage from "@/app/admin/work-order-settings/page";
 import AdminExhibitionDataPage from "@/app/admin/exhibition-data/page";
 import AdminSystemPage from "@/app/admin/system/page";
@@ -134,6 +135,7 @@ describe("admin subroutes", () => {
     expect(await screen.findByRole("heading", { name: "后台工作台" })).not.toBeNull();
     expect(screen.getByRole("navigation", { name: "后台主导航" })).not.toBeNull();
     expect(screen.getByRole("link", { name: "微信下单日志" }).getAttribute("href")).toBe("/admin/logs");
+    expect(screen.getByRole("link", { name: "用户与权限" }).getAttribute("href")).toBe("/admin/users");
     expect(screen.getByRole("link", { name: "工单设置" }).getAttribute("href")).toBe("/admin/work-order-settings");
     expect(screen.getByRole("link", { name: "展览数据" }).getAttribute("href")).toBe("/admin/exhibition-data");
     expect(screen.getByRole("link", { name: "系统配置" }).getAttribute("href")).toBe("/admin/system");
@@ -144,6 +146,12 @@ describe("admin subroutes", () => {
     expect(screen.getByText("待补全 1")).not.toBeNull();
     expect(screen.getByText("这里没电了，麻烦处理")).not.toBeNull();
     expect(screen.queryByRole("heading", { name: "用户分组" })).toBeNull();
+  });
+
+  it("shows the user management route in backend navigation", async () => {
+    await renderWithSession(<AdminPage />);
+
+    expect(screen.getByRole("link", { name: "用户与权限" }).getAttribute("href")).toBe("/admin/users");
   });
 
   it("renders the WeChat order log route and loads log data", async () => {
@@ -191,6 +199,13 @@ describe("admin subroutes", () => {
     expect(screen.getByRole("button", { name: "保存 wxauto 设置" })).not.toBeNull();
     expect(screen.getByRole("heading", { name: "关键词配置" })).not.toBeNull();
     expect(screen.getByRole("button", { name: "保存关键词配置" })).not.toBeNull();
+
+    cleanup();
+    localStorage.clear();
+    vi.unstubAllGlobals();
+    await renderWithSession(<AdminUsersPage />);
+    expect((await screen.findAllByRole("heading", { name: "用户与权限" })).length).toBeGreaterThan(0);
+    expect(screen.getByRole("region", { name: "用户与权限管理" })).not.toBeNull();
   });
 
   it("loads the sidebar log badge count from the log API on management pages", async () => {
