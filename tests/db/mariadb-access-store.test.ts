@@ -9,6 +9,7 @@ import {
   createUser,
   createAccountSession,
   deleteUser,
+  getUser,
   listUsers,
   recordAccessRolesSync,
   recordAdminLoginFailure,
@@ -1438,6 +1439,65 @@ describe("MariaDB access store", () => {
     expect(calls[1].params.slice(-2)).toEqual([10, 10]);
     expect(calls.every((call) => !call.sql.includes(search))).toBe(true);
     expect(calls.some((call) => call.params.includes(`%${search.toLowerCase()}%`))).toBe(true);
+  });
+
+  it("filters admin users by effective enabled group and matching enabled role", async () => {
+    const { calls, connection } = recordingConnection((sql) => (
+      sql.includes("COUNT(*) AS total") ? [{ total: 0 }] : []
+    ));
+
+    await listUsers(connection, {
+      admin: true,
+      page: 1,
+      pageSize: 20
+    });
+
+    expect(calls).toHaveLength(2);
+    for (const call of calls) {
+      expect(call.sql).toContain("JOIN roles filter_r");
+      expect(call.sql).toContain("filter_r.enabled = true");
+      expect(call.sql).toContain("filter_r.source_group_id = p.group_id");
+      expect(call.sql).toContain("JOIN user_groups filter_g");
+      expect(call.sql).toContain("filter_g.enabled = true");
+    }
+  });
+
+  it("derives user detail permissions from effective enabled group and matching enabled role", async () => {
+    const { calls, connection } = recordingConnection((sql) => {
+      if (sql.includes("COUNT(*) AS total")) return [{ total: 1 }];
+      return sql.includes("paged_users")
+        ? [userDetailRow({ permission_code: null })]
+        : [];
+    });
+
+    const result = await listUsers(connection, {
+      page: 1,
+      pageSize: 20
+    });
+
+    expect(result.users[0]?.permissions).toEqual([]);
+    const detailSql = calls[1].sql;
+    expect(detailSql).toContain("LEFT JOIN roles r");
+    expect(detailSql).toContain("r.enabled = true");
+    expect(detailSql).toContain("r.source_group_id = p.group_id");
+    expect(detailSql).toContain("LEFT JOIN role_permissions rp");
+    expect(detailSql).toContain("g.enabled = true");
+  });
+
+  it("derives getUser permissions from effective enabled group and matching enabled role", async () => {
+    const { calls, connection } = recordingConnection(() => [
+      userDetailRow({ permission_code: null })
+    ]);
+
+    const result = await getUser(connection, "person-1");
+
+    expect(result?.permissions).toEqual([]);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].sql).toContain("LEFT JOIN roles r");
+    expect(calls[0].sql).toContain("r.enabled = true");
+    expect(calls[0].sql).toContain("r.source_group_id = p.group_id");
+    expect(calls[0].sql).toContain("LEFT JOIN role_permissions rp");
+    expect(calls[0].sql).toContain("g.enabled = true");
   });
 
   it("searches chat identity identifiers with a parameterized EXISTS", async () => {

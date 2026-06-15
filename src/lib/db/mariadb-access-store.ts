@@ -1256,7 +1256,14 @@ function userFilter(query: UserQuery): UserFilter {
     clauses.push(`${query.admin ? "" : "NOT "}EXISTS (
       SELECT 1
       FROM account_roles filter_ar
-      JOIN role_permissions filter_rp ON filter_rp.role_id = filter_ar.role_id
+      JOIN roles filter_r
+        ON filter_r.id = filter_ar.role_id
+       AND filter_r.enabled = true
+       AND filter_r.source_group_id = p.group_id
+      JOIN user_groups filter_g
+        ON filter_g.id = p.group_id
+       AND filter_g.enabled = true
+      JOIN role_permissions filter_rp ON filter_rp.role_id = filter_r.id
       WHERE filter_ar.account_id = a.id
         AND filter_rp.permission_code = 'admin.access'
     )`);
@@ -1381,7 +1388,11 @@ export async function listUsers(
      JOIN accounts a ON a.person_id = p.id
      LEFT JOIN user_groups g ON g.id = p.group_id
      LEFT JOIN account_roles ar ON ar.account_id = a.id
-     LEFT JOIN roles r ON r.id = ar.role_id AND r.source_group_id = p.group_id
+     LEFT JOIN roles r
+       ON r.id = ar.role_id
+      AND r.source_group_id = p.group_id
+      AND r.enabled = true
+      AND g.enabled = true
      LEFT JOIN role_permissions rp ON rp.role_id = r.id
      LEFT JOIN account_credentials c ON c.account_id = a.id
      LEFT JOIN chat_identities ci ON ci.person_id = p.id
@@ -1405,7 +1416,11 @@ export async function getUser(
      JOIN accounts a ON a.person_id = p.id
      LEFT JOIN user_groups g ON g.id = p.group_id
      LEFT JOIN account_roles ar ON ar.account_id = a.id
-     LEFT JOIN roles r ON r.id = ar.role_id AND r.source_group_id = p.group_id
+     LEFT JOIN roles r
+       ON r.id = ar.role_id
+      AND r.source_group_id = p.group_id
+      AND r.enabled = true
+      AND g.enabled = true
      LEFT JOIN role_permissions rp ON rp.role_id = r.id
      LEFT JOIN account_credentials c ON c.account_id = a.id
      LEFT JOIN chat_identities ci ON ci.person_id = p.id

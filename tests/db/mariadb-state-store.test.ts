@@ -421,6 +421,81 @@ describe("MariaDbStateStore", () => {
     )).toBe(true);
   });
 
+  it("replaces RBAC state and synthesizes stable accounts for imported people", async () => {
+    const { calls, connection } = recordingConnection();
+    const config = defaultConfig();
+    config.userGroups = [{
+      id: "builder",
+      name: "Builder",
+      description: "",
+      canClaim: true,
+      canProcess: true,
+      canAccept: false,
+      canAdmin: false,
+      enabled: true
+    }];
+
+    await new MariaDbStateStore().writeState(
+      writableState({
+        config,
+        people: [{
+          id: "person-imported",
+          name: "Imported User",
+          phone: "13800138099",
+          role: "handler",
+          groupId: "builder",
+          groupName: "Builder",
+          groupLocked: false,
+          enabled: true,
+          createdAt: "2026-06-14T00:00:00.000Z",
+          updatedAt: "2026-06-14T00:00:00.000Z"
+        }]
+      }),
+      connection
+    );
+
+    const deleteIndex = (table: string) => calls.findIndex((call) =>
+      call.sql.trim() === `DELETE FROM ${table}`
+    );
+    const peopleDeleteIndex = deleteIndex("people");
+    const groupDeleteIndex = deleteIndex("user_groups");
+
+    for (const table of [
+      "account_sessions",
+      "account_credentials",
+      "account_roles",
+      "role_permissions",
+      "auth_bootstrap_state",
+      "accounts",
+      "roles"
+    ]) {
+      const index = deleteIndex(table);
+      expect(index, `${table} should be cleared`).toBeGreaterThanOrEqual(0);
+      expect(index, `${table} should be cleared before people`).toBeLessThan(peopleDeleteIndex);
+      expect(index, `${table} should be cleared before user_groups`).toBeLessThan(groupDeleteIndex);
+    }
+
+    const accountInsert = calls.find((call) =>
+      call.sql.includes("INSERT INTO accounts")
+    );
+    expect(accountInsert?.params.slice(0, 5)).toEqual([
+      "account-person-imported",
+      "person-imported",
+      "13800138099",
+      true,
+      1
+    ]);
+
+    const roleLink = calls.find((call) =>
+      call.sql.includes("INSERT INTO account_roles") &&
+      call.params.includes("account-person-imported")
+    );
+    expect(roleLink?.params.slice(0, 2)).toEqual([
+      "account-person-imported",
+      "role-builder"
+    ]);
+  });
+
   it("persists bootstrap group changes into versioned app config", async () => {
     const calls: Array<{ sql: string; params: unknown[] }> = [];
     const connection = {

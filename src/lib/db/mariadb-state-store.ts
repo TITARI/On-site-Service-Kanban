@@ -681,6 +681,13 @@ async function readOutboundMessages(connection: DatabaseConnection): Promise<Out
 
 async function clearStateTables(connection: DatabaseConnection) {
   for (const table of [
+    "account_sessions",
+    "account_credentials",
+    "account_roles",
+    "role_permissions",
+    "auth_bootstrap_state",
+    "accounts",
+    "roles",
     "ticket_feedback_users",
     "ticket_replies",
     "ticket_timeline",
@@ -709,6 +716,38 @@ async function clearStateTables(connection: DatabaseConnection) {
     "user_groups"
   ]) {
     await execute(connection, `DELETE FROM ${table}`);
+  }
+}
+
+async function writeImportedAccessAccounts(
+  connection: DatabaseConnection,
+  people: Person[],
+  now: Date
+) {
+  for (const person of people) {
+    await execute(
+      connection,
+      `INSERT INTO accounts (
+        id, person_id, login_name, enabled, auth_version, last_login_at, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        `account-${person.id}`,
+        person.id,
+        person.phone,
+        person.enabled,
+        1,
+        null,
+        dateOrNull(person.createdAt) ?? now,
+        dateOrNull(person.updatedAt) ?? now
+      ]
+    );
+    if (!person.groupId) continue;
+    await execute(
+      connection,
+      `INSERT INTO account_roles (account_id, role_id, created_at)
+       VALUES (?, ?, ?)`,
+      [`account-${person.id}`, `role-${person.groupId}`, now]
+    );
   }
 }
 
@@ -1728,6 +1767,7 @@ export class MariaDbStateStore {
         config.userGroups ?? [],
         now
       );
+      await writeImportedAccessAccounts(target, state.people ?? [], now);
       await writeChatIdentities(target, state.chatIdentities ?? [], now);
       await writeConversations(target, state.conversations ?? [], now);
       await writeTickets(target, state.tickets, now);
