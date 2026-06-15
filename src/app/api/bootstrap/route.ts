@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { requireAdminAccess } from "@/lib/api/admin-guard";
 import { createFileAppRepository, getAppRepository, type AppRepository } from "@/lib/repositories/app-repository";
 import { stripConfigSecrets } from "@/lib/services/config-service";
 import type { StorageMode } from "@/lib/db/storage-mode";
@@ -118,6 +119,9 @@ export async function GET(request: Request) {
       ...storagePayload(result.storage)
     });
   }
+
+  const unauthorized = await requireAdminAccess(request);
+  if (unauthorized) return unauthorized;
 
   const result = await loadWithJsonFallback(
     async (repository) => {

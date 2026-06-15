@@ -1,12 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { defaultConfig, type AppConfig } from "@/lib/seed";
 import type { AppRepository } from "@/lib/repositories/app-repository";
+import { SESSION_COOKIE_NAMES } from "@/lib/services/session-service";
+
+const ADMIN_TOKEN = Buffer.alloc(32, 2).toString("base64url");
 
 const store = vi.hoisted(() => ({
   config: undefined as AppConfig | undefined,
   getConfig: vi.fn(),
   saveKeywordGroups: vi.fn(),
-  listWechatOrderLogs: vi.fn()
+  listWechatOrderLogs: vi.fn(),
+  resolveAccountSession: vi.fn()
 }));
 
 vi.mock("@/lib/repositories/app-repository", () => ({
@@ -14,12 +18,48 @@ vi.mock("@/lib/repositories/app-repository", () => ({
     kind: "mariadb",
     getConfig: store.getConfig,
     saveKeywordGroups: store.saveKeywordGroups,
-    listWechatOrderLogs: store.listWechatOrderLogs
+    listWechatOrderLogs: store.listWechatOrderLogs,
+    resolveAccountSession: store.resolveAccountSession
   } as unknown as AppRepository)
 }));
 
 function freshConfig() {
   return defaultConfig();
+}
+
+function adminRequest(url: string, init: RequestInit = {}) {
+  return new Request(url, {
+    ...init,
+    headers: {
+      Cookie: `${SESSION_COOKIE_NAMES.admin}=${ADMIN_TOKEN}`,
+      ...init.headers
+    }
+  });
+}
+
+function adminSession() {
+  return {
+    actor: {
+      accountId: "account-admin",
+      personId: "person-admin",
+      name: "Admin",
+      phone: "13800138000",
+      groupId: "group-admin",
+      groupName: "Admins",
+      permissions: ["admin.access"],
+      sessionType: "admin"
+    },
+    session: {
+      id: "session-admin",
+      accountId: "account-admin",
+      sessionType: "admin",
+      tokenHash: "hash",
+      authVersion: 1,
+      expiresAt: new Date(Date.now() + 86_400_000).toISOString(),
+      lastSeenAt: new Date().toISOString(),
+      createdAt: new Date().toISOString()
+    }
+  };
 }
 
 describe("admin database-backed routes", () => {
@@ -28,16 +68,18 @@ describe("admin database-backed routes", () => {
     store.getConfig.mockReset();
     store.saveKeywordGroups.mockReset();
     store.listWechatOrderLogs.mockReset();
+    store.resolveAccountSession.mockReset();
     store.getConfig.mockImplementation(async () => store.config!);
     store.saveKeywordGroups.mockImplementation(async (keywordGroups) => {
       store.config = { ...store.config!, keywordGroups };
       return keywordGroups;
     });
+    store.resolveAccountSession.mockResolvedValue(adminSession());
   });
 
   it("reads and saves keyword groups through the repository", async () => {
     const route = await import("@/app/api/admin/keywords/route");
-    const getResponse = await route.GET();
+    const getResponse = await route.GET(adminRequest("http://localhost/api/admin/keywords"));
     await expect(getResponse.json()).resolves.toEqual({ keywordGroups: store.config!.keywordGroups });
 
     const nextKeywordGroups = [
@@ -59,8 +101,9 @@ describe("admin database-backed routes", () => {
       }
     ];
 
-    const putResponse = await route.PUT(new Request("http://localhost/api/admin/keywords", {
+    const putResponse = await route.PUT(adminRequest("http://localhost/api/admin/keywords", {
       method: "PUT",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ keywordGroups: nextKeywordGroups })
     }));
 
@@ -110,8 +153,9 @@ describe("admin database-backed routes", () => {
       }
     ];
 
-    const putResponse = await route.PUT(new Request("http://localhost/api/admin/keywords", {
+    const putResponse = await route.PUT(adminRequest("http://localhost/api/admin/keywords", {
       method: "PUT",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ keywordGroups: nextKeywordGroups })
     }));
 
@@ -135,7 +179,7 @@ describe("admin database-backed routes", () => {
     ]);
 
     const route = await import("@/app/api/admin/wechat-order-logs/route");
-    const response = await route.GET(new Request("http://localhost/api/admin/wechat-order-logs?limit=20"));
+    const response = await route.GET(adminRequest("http://localhost/api/admin/wechat-order-logs?limit=20"));
 
     await expect(response.json()).resolves.toEqual({
       logs: [

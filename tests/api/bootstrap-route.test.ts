@@ -3,13 +3,17 @@ import { defaultConfig } from "@/lib/seed";
 import type { Ticket } from "@/lib/domain/types";
 import type { AppRepository } from "@/lib/repositories/app-repository";
 import type { AppState } from "@/lib/domain/app-state";
+import { SESSION_COOKIE_NAMES } from "@/lib/services/session-service";
+
+const ADMIN_TOKEN = Buffer.alloc(32, 1).toString("base64url");
 
 const store = vi.hoisted(() => ({
   state: undefined as AppState | undefined,
   runAutoAcceptance: vi.fn(),
   adminBootstrap: vi.fn(),
   mobileBootstrap: vi.fn(),
-  getConfig: vi.fn()
+  getConfig: vi.fn(),
+  resolveAccountSession: vi.fn()
 }));
 
 const fallbackStore = vi.hoisted(() => ({
@@ -33,7 +37,8 @@ vi.mock("@/lib/repositories/app-repository", () => ({
     runAutoAcceptance: store.runAutoAcceptance,
     adminBootstrap: store.adminBootstrap,
     mobileBootstrap: store.mobileBootstrap,
-    getConfig: store.getConfig
+    getConfig: store.getConfig,
+    resolveAccountSession: store.resolveAccountSession
   } as unknown as AppRepository)
 }));
 
@@ -88,6 +93,37 @@ function state(): AppState {
   };
 }
 
+function adminRequest(url = "http://localhost/api/bootstrap") {
+  return new Request(url, {
+    headers: { Cookie: `${SESSION_COOKIE_NAMES.admin}=${ADMIN_TOKEN}` }
+  });
+}
+
+function adminSession() {
+  return {
+    actor: {
+      accountId: "account-admin",
+      personId: "person-admin",
+      name: "Admin",
+      phone: "13800138000",
+      groupId: "group-admin",
+      groupName: "Admins",
+      permissions: ["admin.access"],
+      sessionType: "admin"
+    },
+    session: {
+      id: "session-admin",
+      accountId: "account-admin",
+      sessionType: "admin",
+      tokenHash: "hash",
+      authVersion: 1,
+      expiresAt: new Date(Date.now() + 86_400_000).toISOString(),
+      lastSeenAt: new Date().toISOString(),
+      createdAt: new Date().toISOString()
+    }
+  };
+}
+
 describe("bootstrap route", () => {
   beforeEach(() => {
     store.state = state();
@@ -95,6 +131,7 @@ describe("bootstrap route", () => {
     store.adminBootstrap.mockReset();
     store.mobileBootstrap.mockReset();
     store.getConfig.mockReset();
+    store.resolveAccountSession.mockReset();
     fallbackStore.state = state();
     fallbackStore.runAutoAcceptance.mockReset();
     fallbackStore.adminBootstrap.mockReset();
@@ -107,6 +144,7 @@ describe("bootstrap route", () => {
       config: defaultConfig()
     });
     store.getConfig.mockResolvedValue(defaultConfig());
+    store.resolveAccountSession.mockResolvedValue(adminSession());
     fallbackStore.runAutoAcceptance.mockResolvedValue(undefined);
     fallbackStore.adminBootstrap.mockResolvedValue(fallbackStore.state);
     fallbackStore.mobileBootstrap.mockResolvedValue({
@@ -197,7 +235,7 @@ describe("bootstrap route", () => {
     store.adminBootstrap.mockRejectedValue(Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:3306"), { code: "ECONNREFUSED" }));
     fallbackStore.adminBootstrap.mockRejectedValue(new Error("state file is broken"));
 
-    const response = await route.GET(new Request("http://localhost/api/bootstrap"));
+    const response = await route.GET(adminRequest());
     const payload = await response.json();
 
     expect(response.status).toBe(503);

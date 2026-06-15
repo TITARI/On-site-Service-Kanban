@@ -1,13 +1,18 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { defaultConfig, type AppConfig } from "@/lib/seed";
+import { SESSION_COOKIE_NAMES } from "@/lib/services/session-service";
+
+const ADMIN_TOKEN = Buffer.alloc(32, 3).toString("base64url");
 
 const repositoryMock = vi.hoisted(() => ({
-  getConfig: vi.fn()
+  getConfig: vi.fn(),
+  resolveAccountSession: vi.fn()
 }));
 
 vi.mock("@/lib/repositories/app-repository", () => ({
   getAppRepository: () => ({
-    getConfig: repositoryMock.getConfig
+    getConfig: repositoryMock.getConfig,
+    resolveAccountSession: repositoryMock.resolveAccountSession
   })
 }));
 
@@ -16,7 +21,10 @@ import { POST } from "@/app/api/admin/ai-models/route";
 function request(body: unknown) {
   return new Request("http://localhost/api/admin/ai-models", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      Cookie: `${SESSION_COOKIE_NAMES.admin}=${ADMIN_TOKEN}`
+    },
     body: JSON.stringify(body)
   });
 }
@@ -24,9 +32,35 @@ function request(body: unknown) {
 afterEach(() => {
   vi.unstubAllGlobals();
   repositoryMock.getConfig.mockReset();
+  repositoryMock.resolveAccountSession.mockReset();
 });
 
 describe("admin ai models route", () => {
+  beforeEach(() => {
+    repositoryMock.resolveAccountSession.mockResolvedValue({
+      actor: {
+        accountId: "account-admin",
+        personId: "person-admin",
+        name: "Admin",
+        phone: "13800138000",
+        groupId: "group-admin",
+        groupName: "Admins",
+        permissions: ["admin.access"],
+        sessionType: "admin"
+      },
+      session: {
+        id: "session-admin",
+        accountId: "account-admin",
+        sessionType: "admin",
+        tokenHash: "hash",
+        authVersion: 1,
+        expiresAt: new Date(Date.now() + 86_400_000).toISOString(),
+        lastSeenAt: new Date().toISOString(),
+        createdAt: new Date().toISOString()
+      }
+    });
+  });
+
   it("queries an OpenAI-compatible models endpoint derived from the chat endpoint", async () => {
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({
       data: [

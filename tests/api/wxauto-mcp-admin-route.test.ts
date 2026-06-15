@@ -1,29 +1,68 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppRepository } from "@/lib/repositories/app-repository";
 import { defaultConfig } from "@/lib/seed";
+import { SESSION_COOKIE_NAMES } from "@/lib/services/session-service";
+
+const ADMIN_TOKEN = Buffer.alloc(32, 4).toString("base64url");
 
 const store = vi.hoisted(() => ({
   config: undefined as ReturnType<typeof defaultConfig> | undefined,
   getConfig: vi.fn(),
-  saveConfig: vi.fn()
+  saveConfig: vi.fn(),
+  resolveAccountSession: vi.fn()
 }));
 
 vi.mock("@/lib/repositories/app-repository", () => ({
   getAppRepository: (): AppRepository => ({
     kind: "file",
     getConfig: store.getConfig,
-    saveConfig: store.saveConfig
+    saveConfig: store.saveConfig,
+    resolveAccountSession: store.resolveAccountSession
   } as unknown as AppRepository)
 }));
 
 const route = await import("@/app/api/admin/wxauto-mcp/route");
 
+function get() {
+  return new Request("http://localhost/api/admin/wxauto-mcp", {
+    headers: { Cookie: `${SESSION_COOKIE_NAMES.admin}=${ADMIN_TOKEN}` }
+  });
+}
+
 function put(body: unknown) {
   return new Request("http://localhost/api/admin/wxauto-mcp", {
     method: "PUT",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      Cookie: `${SESSION_COOKIE_NAMES.admin}=${ADMIN_TOKEN}`
+    },
     body: JSON.stringify(body)
   });
+}
+
+function adminSession() {
+  return {
+    actor: {
+      accountId: "account-admin",
+      personId: "person-admin",
+      name: "Admin",
+      phone: "13800138000",
+      groupId: "group-admin",
+      groupName: "Admins",
+      permissions: ["admin.access"],
+      sessionType: "admin"
+    },
+    session: {
+      id: "session-admin",
+      accountId: "account-admin",
+      sessionType: "admin",
+      tokenHash: "hash",
+      authVersion: 1,
+      expiresAt: new Date(Date.now() + 86_400_000).toISOString(),
+      lastSeenAt: new Date().toISOString(),
+      createdAt: new Date().toISOString()
+    }
+  };
 }
 
 beforeEach(() => {
@@ -33,11 +72,12 @@ beforeEach(() => {
     store.config = config;
     return config;
   });
+  store.resolveAccountSession.mockReset().mockResolvedValue(adminSession());
 });
 
 describe("/api/admin/wxauto-mcp", () => {
   it("starts the embedded MCP service and ensures it has a token when the admin page loads", async () => {
-    const response = await route.GET();
+    const response = await route.GET(get());
 
     expect(response.status).toBe(200);
     const body = await response.json();

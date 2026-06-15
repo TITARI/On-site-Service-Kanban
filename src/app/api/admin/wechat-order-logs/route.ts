@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { requireAdminAccess } from "@/lib/api/admin-guard";
 import { getAppRepository } from "@/lib/repositories/app-repository";
 
 function queryLimit(request: Request) {
@@ -9,6 +10,9 @@ function queryLimit(request: Request) {
 }
 
 export async function GET(request: Request) {
+  const unauthorized = await requireAdminAccess(request);
+  if (unauthorized) return unauthorized;
+
   const logs = await getAppRepository().listWechatOrderLogs(queryLimit(request));
   return NextResponse.json({ logs });
 }

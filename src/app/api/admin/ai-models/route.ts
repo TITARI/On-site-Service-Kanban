@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { requireAdminAccess } from "@/lib/api/admin-guard";
 import { badRequest, errorMessage, parseJson } from "@/lib/api/errors";
 import { getAppRepository } from "@/lib/repositories/app-repository";
 
@@ -50,6 +51,9 @@ async function savedApiKeyFor(modelId?: AiModelId) {
 }
 
 export async function POST(request: Request) {
+  const unauthorized = await requireAdminAccess(request);
+  if (unauthorized) return unauthorized;
+
   let payload: { endpoint?: unknown; apiKey?: unknown; modelId?: unknown };
   try {
     payload = await parseJson(request) as { endpoint?: unknown; apiKey?: unknown; modelId?: unknown };

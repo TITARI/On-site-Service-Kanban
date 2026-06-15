@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { requireAdminAccess } from "@/lib/api/admin-guard";
 import { badRequest, errorMessage, parseJson } from "@/lib/api/errors";
 import { parseMasterDataRows } from "@/lib/domain/master-data";
 import { getAppRepository } from "@/lib/repositories/app-repository";
@@ -8,6 +9,9 @@ function requestBody(value: unknown) {
 }
 
 export async function POST(request: Request) {
+  const unauthorized = await requireAdminAccess(request);
+  if (unauthorized) return unauthorized;
+
   let body: unknown;
   try {
     body = await parseJson(request);

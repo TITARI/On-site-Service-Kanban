@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { requireAdminAccess } from "@/lib/api/admin-guard";
 import { badRequest, errorMessage, parseJson } from "@/lib/api/errors";
 import { normalizeKeywordGroups } from "@/lib/domain/keyword-config";
 import { getAppRepository } from "@/lib/repositories/app-repository";
@@ -49,12 +50,18 @@ const payloadSchema = z.object({
   keywordGroups: z.array(keywordGroupSchema)
 });
 
-export async function GET() {
+export async function GET(request: Request) {
+  const unauthorized = await requireAdminAccess(request);
+  if (unauthorized) return unauthorized;
+
   const config = await getAppRepository().getConfig();
   return NextResponse.json({ keywordGroups: normalizeKeywordGroups(config.keywordGroups ?? []) });
 }
 
 export async function PUT(request: Request) {
+  const unauthorized = await requireAdminAccess(request);
+  if (unauthorized) return unauthorized;
+
   let input: z.infer<typeof payloadSchema>;
   try {
     input = payloadSchema.parse(await parseJson(request));
