@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 import type { SessionType } from "@/lib/domain/access-control";
-import { currentUserFromActor } from "@/lib/client/auth";
+import {
+  currentUserFromActor,
+  sessionUserFromActor
+} from "@/lib/client/auth";
+import { getAppRepository } from "@/lib/repositories/app-repository";
 import {
   authErrorResponse,
   resolveRequestActor
@@ -14,10 +18,24 @@ function sessionTypeFromRequest(request: Request): SessionType {
 }
 
 export async function GET(request: Request) {
+  const sessionType = sessionTypeFromRequest(request);
   try {
-    const actor = await resolveRequestActor(request, sessionTypeFromRequest(request));
+    const actor = await resolveRequestActor(request, sessionType);
+    if (sessionType === "admin") {
+      return NextResponse.json({
+        authenticated: true,
+        user: sessionUserFromActor(actor)
+      });
+    }
     return NextResponse.json({ user: currentUserFromActor(actor) });
   } catch (error) {
+    if (sessionType === "admin") {
+      const status = await getAppRepository().bootstrapStatus();
+      return NextResponse.json({
+        authenticated: false,
+        bootstrapRequired: status.required
+      });
+    }
     const response = authErrorResponse(error);
     return NextResponse.json(
       { message: response.message },

@@ -1,5 +1,6 @@
 import type {
   AuthenticatedActor,
+  BootstrapAdminInput,
   MobileAccountInput,
   PermissionCode,
   SessionType
@@ -10,8 +11,14 @@ import {
   requestSessionToken,
   sessionTokenHash
 } from "@/lib/services/session-service";
+import { verifyPassword } from "@/lib/services/password-service";
 
 const MOBILE_SESSION_DAYS = 7;
+const ADMIN_SESSION_DAYS = 1;
+const ADMIN_FAILURE_LOCK_THRESHOLD = 5;
+const ADMIN_LOCKOUT_MINUTES = 15;
+const DEFAULT_ADMIN_BOOTSTRAP_PASSWORD = "admin123";
+const GENERIC_ADMIN_PASSWORD_ERROR = "Invalid phone or password";
 
 export class AuthError extends Error {
   constructor(
@@ -49,6 +56,37 @@ function normalizeName(name: string) {
   return normalized;
 }
 
+function normalizePassword(password: string) {
+  const normalized = String(password ?? "");
+  if (!normalized) throw new AuthError(400, "Password is required");
+  return normalized;
+}
+
+function adminBootstrapPassword(env: NodeJS.ProcessEnv = process.env) {
+  return env.ADMIN_BOOTSTRAP_PASSWORD ?? DEFAULT_ADMIN_BOOTSTRAP_PASSWORD;
+}
+
+async function createAccountSession(
+  repository: AppRepository,
+  actor: AuthenticatedActor,
+  type: SessionType,
+  days: number
+) {
+  const token = createSessionToken();
+  const expiresAt = new Date(Date.now() + days * 24 * 60 * 60 * 1000);
+  try {
+    await repository.createAccountSession(
+      actor.accountId,
+      type,
+      sessionTokenHash(token),
+      expiresAt.toISOString()
+    );
+  } catch (error) {
+    throw domainAuthError(error) ?? error;
+  }
+  return { actor, token, expiresAt };
+}
+
 export async function mobileLogin(
   repository: AppRepository,
   input: MobileAccountInput
@@ -72,19 +110,69 @@ export async function mobileLogin(
   } catch (error) {
     throw domainAuthError(error) ?? error;
   }
-  const token = createSessionToken();
-  const expiresAt = new Date(Date.now() + MOBILE_SESSION_DAYS * 24 * 60 * 60 * 1000);
+  return createAccountSession(repository, actor, "mobile", MOBILE_SESSION_DAYS);
+}
+
+export async function bootstrapFirstAdmin(
+  repository: AppRepository,
+  input: BootstrapAdminInput,
+  env: NodeJS.ProcessEnv = process.env
+): Promise<{ actor: AuthenticatedActor; token: string; expiresAt: Date }> {
+  const status = await repository.bootstrapStatus();
+  if (!status.required) {
+    throw new AuthError(403, "Admin bootstrap has already completed");
+  }
+
+  const legacyPassword = String(input.legacyPassword ?? "");
+  if (legacyPassword !== adminBootstrapPassword(env)) {
+    throw new AuthError(401, "Invalid bootstrap password");
+  }
+
+  let actor: AuthenticatedActor;
   try {
-    await repository.createAccountSession(
-      actor.accountId,
-      "mobile",
-      sessionTokenHash(token),
-      expiresAt.toISOString()
-    );
+    actor = await repository.bootstrapAdmin(input);
   } catch (error) {
     throw domainAuthError(error) ?? error;
   }
-  return { actor, token, expiresAt };
+  return createAccountSession(repository, actor, "admin", ADMIN_SESSION_DAYS);
+}
+
+export async function adminLogin(
+  repository: AppRepository,
+  input: { phone: string; password: string }
+): Promise<{ actor: AuthenticatedActor; token: string; expiresAt: Date }> {
+  const phone = normalizePhone(input.phone);
+  const password = normalizePassword(input.password);
+  const record = await repository.adminLoginRecord(phone);
+  if (!record) {
+    throw new AuthError(401, GENERIC_ADMIN_PASSWORD_ERROR);
+  }
+
+  const lockedUntilMs = record.credential.lockedUntil
+    ? Date.parse(record.credential.lockedUntil)
+    : Number.NaN;
+  if (Number.isFinite(lockedUntilMs) && lockedUntilMs > Date.now()) {
+    throw new AuthError(401, GENERIC_ADMIN_PASSWORD_ERROR);
+  }
+
+  const validPassword = await verifyPassword(
+    password,
+    record.credential.passwordHash
+  );
+  if (!validPassword) {
+    const nextFailures = record.credential.failedAttempts + 1;
+    const lockedUntil = nextFailures >= ADMIN_FAILURE_LOCK_THRESHOLD
+      ? new Date(Date.now() + ADMIN_LOCKOUT_MINUTES * 60 * 1000).toISOString()
+      : undefined;
+    await repository.recordAdminLoginFailure(
+      record.actor.accountId,
+      lockedUntil
+    );
+    throw new AuthError(401, GENERIC_ADMIN_PASSWORD_ERROR);
+  }
+
+  await repository.recordAdminLoginSuccess(record.actor.accountId);
+  return createAccountSession(repository, record.actor, "admin", ADMIN_SESSION_DAYS);
 }
 
 export function resolveRequestActor(

@@ -6,7 +6,6 @@ import AdminLogsPage from "@/app/admin/logs/page";
 import AdminWorkOrderSettingsPage from "@/app/admin/work-order-settings/page";
 import AdminExhibitionDataPage from "@/app/admin/exhibition-data/page";
 import AdminSystemPage from "@/app/admin/system/page";
-import { ADMIN_AUTH_STORAGE_KEY } from "@/lib/client/admin-auth";
 import { defaultConfig } from "@/lib/seed";
 
 const bootstrap = {
@@ -76,9 +75,33 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+function authenticatedSession() {
+  return new Response(JSON.stringify({
+    authenticated: true,
+    user: {
+      id: "person-admin",
+      name: "Admin",
+      phone: "13800138000",
+      role: "admin"
+    }
+  }), { status: 200 });
+}
+
+function unauthenticatedSession() {
+  return new Response(JSON.stringify({
+    authenticated: false,
+    bootstrapRequired: false
+  }), { status: 200 });
+}
+
 function mockBootstrapFetch(extra?: { logs?: unknown[] }) {
   return vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
+    if (url === "/api/auth/session?type=admin") return authenticatedSession();
+    if (url === "/api/admin/auth/login") return authenticatedSession();
+    if (url === "/api/admin/auth/logout") {
+      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    }
     if (url.includes("/api/admin/wxauto-mcp")) {
       return new Response(JSON.stringify({
         wxautoMcp: {
@@ -98,9 +121,9 @@ function mockBootstrapFetch(extra?: { logs?: unknown[] }) {
 }
 
 async function renderWithSession(ui: React.ReactElement, fetchMock = mockBootstrapFetch()) {
-  localStorage.setItem(ADMIN_AUTH_STORAGE_KEY, "active");
   vi.stubGlobal("fetch", fetchMock);
   render(ui);
+  await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/auth/session?type=admin", { cache: "no-store" }));
   await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/bootstrap", { cache: "no-store" }));
 }
 
@@ -200,14 +223,45 @@ describe("admin subroutes", () => {
   });
 
   it("keeps admin login protection on subroutes", async () => {
-    vi.stubGlobal("fetch", vi.fn());
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/auth/session?type=admin") return unauthenticatedSession();
+      if (url === "/api/admin/auth/login") return authenticatedSession();
+      if (url.includes("/api/admin/wxauto-mcp")) {
+        return new Response(JSON.stringify({ wxautoMcp: { enabled: false } }), { status: 200 });
+      }
+      if (url.includes("/api/admin/wechat-order-logs")) {
+        return new Response(JSON.stringify({ logs: [] }), { status: 200 });
+      }
+      return new Response(JSON.stringify(bootstrap), { status: 200 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
     const user = userEvent.setup();
 
     render(<AdminLogsPage />);
 
     expect(await screen.findByText("后台配置登录")).not.toBeNull();
-    await user.type(screen.getByLabelText("后台口令"), "admin123");
+    await user.type(screen.getByLabelText("Admin phone"), "13800138000");
+    await user.type(screen.getByLabelText("Admin password"), "new-password-123");
     await user.click(screen.getByRole("button", { name: "进入后台" }));
-    expect(localStorage.getItem(ADMIN_AUTH_STORAGE_KEY)).toBe("active");
+
+    expect(localStorage.length).toBe(0);
+    expect((await screen.findAllByRole("heading", { name: "微信下单日志" })).length).toBeGreaterThan(0);
+    expect(fetchMock).toHaveBeenCalledWith("/api/admin/auth/login", expect.objectContaining({
+      method: "POST"
+    }));
+  });
+
+  it("logs out through the server and returns to the admin login form", async () => {
+    const fetchMock = mockBootstrapFetch();
+    await renderWithSession(<AdminSystemPage />, fetchMock);
+    const user = userEvent.setup();
+
+    await user.click(await screen.findByRole("button", { name: "退出后台" }));
+
+    expect(await screen.findByText("后台配置登录")).not.toBeNull();
+    expect(fetchMock).toHaveBeenCalledWith("/api/admin/auth/logout", expect.objectContaining({
+      method: "POST"
+    }));
   });
 });

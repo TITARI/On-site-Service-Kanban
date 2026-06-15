@@ -11,8 +11,17 @@ export type CurrentUser = {
   permissions?: Pick<UserGroup, "canClaim" | "canProcess" | "canAccept">;
 };
 
+export type SessionUser = {
+  id: string;
+  name: string;
+  phone: string;
+  role: "member" | "admin";
+  groupId?: string;
+  groupName?: string;
+  permissions?: Pick<UserGroup, "canClaim" | "canProcess" | "canAccept">;
+};
+
 export const AUTH_STORAGE_KEY = "internal-board-current-user";
-export const DEFAULT_ADMIN_PASSWORD = "admin123";
 
 const fallbackPermissions = { canClaim: false, canProcess: false, canAccept: true };
 
@@ -53,8 +62,18 @@ export function currentUserFromActor(actor: AuthenticatedActor): CurrentUser {
   };
 }
 
-export function isAdminPassword(value: string) {
-  return value === DEFAULT_ADMIN_PASSWORD;
+export function sessionUserFromActor(actor: AuthenticatedActor): SessionUser {
+  if (actor.sessionType === "admin") {
+    return {
+      id: actor.personId,
+      name: actor.name,
+      phone: actor.phone,
+      role: "admin",
+      groupId: actor.groupId,
+      groupName: actor.groupName
+    };
+  }
+  return currentUserFromActor(actor);
 }
 
 export function readStoredUser(): CurrentUser | null {
