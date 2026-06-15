@@ -155,6 +155,36 @@ describe("mobile auth routes", () => {
     expect(store.upsertMobileAccount).not.toHaveBeenCalled();
   });
 
+  it("returns 403 when the repository rejects a disabled mobile account", async () => {
+    const route = await import("@/app/api/auth/mobile/login/route");
+    store.upsertMobileAccount.mockRejectedValue(new Error("Mobile account is disabled"));
+
+    const response = await route.POST(jsonRequest(
+      "https://board.example/api/auth/mobile/login",
+      { name: "Alice", phone: "13800138000", groupId: "business" }
+    ));
+    const payload = await response.json();
+
+    expect(response.status).toBe(403);
+    expect(payload.message).toBe("Mobile account is disabled");
+    expect(response.headers.get("set-cookie")).toBeNull();
+  });
+
+  it("returns 403 when the repository rejects mobile session creation", async () => {
+    const route = await import("@/app/api/auth/mobile/login/route");
+    store.createAccountSession.mockRejectedValue(new Error("Account is not allowed to create this session"));
+
+    const response = await route.POST(jsonRequest(
+      "https://board.example/api/auth/mobile/login",
+      { name: "Alice", phone: "13800138000", groupId: "business" }
+    ));
+    const payload = await response.json();
+
+    expect(response.status).toBe(403);
+    expect(payload.message).toBe("Account is not allowed to create this session");
+    expect(response.headers.get("set-cookie")).toBeNull();
+  });
+
   it("resolves the current mobile session from the cookie", async () => {
     const route = await import("@/app/api/auth/session/route");
     const token = Buffer.alloc(32, 3).toString("base64url");
@@ -210,6 +240,26 @@ describe("mobile auth routes", () => {
     expect(payload).toEqual({ ok: true });
     expect(store.revokeAccountSession).toHaveBeenCalledWith(sessionTokenHash(token));
     expect(cookie).toContain(`${SESSION_COOKIE_NAMES.mobile}=`);
+    expect(cookie).toContain("Max-Age=0");
+    expect(cookie).toContain("HttpOnly");
+  });
+
+  it("expires the mobile cookie even when revoking the server session fails", async () => {
+    const route = await import("@/app/api/auth/mobile/logout/route");
+    const token = Buffer.alloc(32, 6).toString("base64url");
+    store.revokeAccountSession.mockRejectedValue(new Error("store unavailable"));
+
+    const response = await route.POST(jsonRequest(
+      "https://board.example/api/auth/mobile/logout",
+      {},
+      `${SESSION_COOKIE_NAMES.mobile}=${token}`
+    ));
+    const payload = await response.json();
+    const cookie = response.headers.get("set-cookie") ?? "";
+
+    expect(response.status).toBe(200);
+    expect(payload).toEqual({ ok: true });
+    expect(store.revokeAccountSession).toHaveBeenCalledWith(sessionTokenHash(token));
     expect(cookie).toContain("Max-Age=0");
     expect(cookie).toContain("HttpOnly");
   });

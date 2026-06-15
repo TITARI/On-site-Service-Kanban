@@ -6,6 +6,8 @@ import type { CurrentUser } from "@/lib/client/auth";
 import { userGroupsOf, type AppConfig } from "@/lib/seed";
 import { StatusMessage } from "./status-message";
 
+const LOGIN_FAILURE_MESSAGE = "登录失败，请稍后重试";
+
 export function LoginPanel({ config, onLogin }: { config: AppConfig; onLogin: (user: CurrentUser) => void }) {
   const [message, setMessage] = useState<string | null>(null);
   const groups = userGroupsOf(config);
@@ -22,18 +24,24 @@ export function LoginPanel({ config, onLogin }: { config: AppConfig; onLogin: (u
       return;
     }
     setMessage(null);
-    const response = await fetch("/api/auth/mobile/login", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name, phone, groupId })
-    });
-    if (!response.ok) {
-      const payload = await response.json().catch(() => ({})) as { message?: string };
-      setMessage(payload.message ?? "鐧诲綍澶辫触");
-      return;
+
+    try {
+      const response = await fetch("/api/auth/mobile/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, phone, groupId })
+      });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({})) as { message?: string };
+        setMessage(payload.message ?? LOGIN_FAILURE_MESSAGE);
+        return;
+      }
+      const payload = await response.json() as { user?: CurrentUser };
+      if (!payload.user) throw new Error("Login response missing user");
+      onLogin(payload.user);
+    } catch {
+      setMessage(LOGIN_FAILURE_MESSAGE);
     }
-    const payload = await response.json() as { user: CurrentUser };
-    onLogin(payload.user);
   }
 
   return (

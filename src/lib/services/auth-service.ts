@@ -31,6 +31,18 @@ export function normalizePhone(phone: string) {
   return normalized;
 }
 
+function domainAuthError(error: unknown): AuthError | undefined {
+  if (!(error instanceof Error)) return undefined;
+  const message = error.message;
+  if (/disabled|not allowed|access chain/i.test(message)) {
+    return new AuthError(403, message);
+  }
+  if (/group|phone|name|required|valid/i.test(message)) {
+    return new AuthError(400, message);
+  }
+  return undefined;
+}
+
 function normalizeName(name: string) {
   const normalized = String(name ?? "").replace(/\s+/g, " ").trim();
   if (!normalized) throw new AuthError(400, "User name is required");
@@ -50,19 +62,28 @@ export async function mobileLogin(
     throw new AuthError(400, "User group is disabled or missing");
   }
 
-  const { actor } = await repository.upsertMobileAccount({
-    name,
-    phone,
-    groupId
-  });
+  let actor: AuthenticatedActor;
+  try {
+    ({ actor } = await repository.upsertMobileAccount({
+      name,
+      phone,
+      groupId
+    }));
+  } catch (error) {
+    throw domainAuthError(error) ?? error;
+  }
   const token = createSessionToken();
   const expiresAt = new Date(Date.now() + MOBILE_SESSION_DAYS * 24 * 60 * 60 * 1000);
-  await repository.createAccountSession(
-    actor.accountId,
-    "mobile",
-    sessionTokenHash(token),
-    expiresAt.toISOString()
-  );
+  try {
+    await repository.createAccountSession(
+      actor.accountId,
+      "mobile",
+      sessionTokenHash(token),
+      expiresAt.toISOString()
+    );
+  } catch (error) {
+    throw domainAuthError(error) ?? error;
+  }
   return { actor, token, expiresAt };
 }
 

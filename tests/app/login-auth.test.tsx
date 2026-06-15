@@ -234,6 +234,60 @@ describe("login and role access", () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
   });
 
+  it("shows an error when member login cannot reach the auth route", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/auth/session?type=mobile") {
+        return new Response(JSON.stringify({ message: "Unauthenticated" }), { status: 401 });
+      }
+      if (url === "/api/bootstrap?scope=login") {
+        return new Response(JSON.stringify({ config }), { status: 200 });
+      }
+      if (url === "/api/auth/mobile/login") {
+        throw new Error("network failed");
+      }
+      return new Response(null, { status: 404 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    const { container } = render(<HomePage />);
+
+    expect(await screen.findByRole("option", { name: "Business" })).not.toBeNull();
+    await user.type(container.querySelector('input[name="name"]')!, "Alice");
+    await user.type(container.querySelector('input[name="phone"]')!, "13800138000");
+    await user.click(container.querySelector('button[type="submit"]')!);
+
+    expect(await screen.findByText("登录失败，请稍后重试")).not.toBeNull();
+    expect(screen.queryByText("A01 Network")).toBeNull();
+  });
+
+  it("shows an error when the auth route returns a malformed success payload", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/auth/session?type=mobile") {
+        return new Response(JSON.stringify({ message: "Unauthenticated" }), { status: 401 });
+      }
+      if (url === "/api/bootstrap?scope=login") {
+        return new Response(JSON.stringify({ config }), { status: 200 });
+      }
+      if (url === "/api/auth/mobile/login") {
+        return new Response("not-json", { status: 200 });
+      }
+      return new Response(null, { status: 404 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    const { container } = render(<HomePage />);
+
+    expect(await screen.findByRole("option", { name: "Business" })).not.toBeNull();
+    await user.type(container.querySelector('input[name="name"]')!, "Alice");
+    await user.type(container.querySelector('input[name="phone"]')!, "13800138000");
+    await user.click(container.querySelector('button[type="submit"]')!);
+
+    expect(await screen.findByText("登录失败，请稍后重试")).not.toBeNull();
+    expect(screen.queryByText("A01 Network")).toBeNull();
+  });
+
   it("posts logout to the mobile auth route and returns to login", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);

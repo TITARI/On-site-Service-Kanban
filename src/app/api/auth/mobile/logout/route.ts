@@ -11,7 +11,11 @@ export const dynamic = "force-dynamic";
 export async function POST(request: Request) {
   const token = requestSessionToken(request, "mobile");
   if (token) {
-    await getAppRepository().revokeAccountSession(sessionTokenHash(token));
+    try {
+      await getAppRepository().revokeAccountSession(sessionTokenHash(token));
+    } catch {
+      // Client logout should still clear the browser cookie if the store is temporarily unavailable.
+    }
   }
 
   return NextResponse.json(
