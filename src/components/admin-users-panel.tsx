@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  Link,
   KeyRound,
   Pencil,
   Plus,
@@ -9,12 +10,13 @@ import {
   Search,
   ShieldCheck,
   Trash2,
+  Unlink,
   UserCheck,
   UserX,
   X
 } from "lucide-react";
 import type { PermissionCode, UserListItem } from "@/lib/domain/access-control";
-import type { UserGroup } from "@/lib/domain/types";
+import type { ChatIdentity, MessageChannel, UserGroup } from "@/lib/domain/types";
 
 type UserPayload = {
   users?: UserListItem[];
@@ -42,6 +44,20 @@ type DraftState = {
   enabled: boolean;
 };
 
+type IdentityDraft = {
+  selectedExternalUserId: string;
+  manualExternalUserId: string;
+  manualDisplayName: string;
+};
+
+type ConflictState = {
+  platform: MessageChannel;
+  token: string;
+  externalUserId: string;
+  displayName?: string;
+  ownerName?: string;
+};
+
 const DEFAULT_FILTERS: FilterState = {
   search: "",
   groupId: "",
@@ -55,6 +71,24 @@ const PERMISSION_LABELS: Record<PermissionCode, string> = {
   "ticket.process": "处理工单",
   "ticket.accept": "验收工单",
   "admin.access": "后台访问"
+};
+
+const PLATFORM_LABELS: Record<MessageChannel, string> = {
+  wechat: "WeChat",
+  wecom: "WeCom"
+};
+
+const EMPTY_IDENTITY_DRAFT: Record<MessageChannel, IdentityDraft> = {
+  wechat: {
+    selectedExternalUserId: "",
+    manualExternalUserId: "",
+    manualDisplayName: ""
+  },
+  wecom: {
+    selectedExternalUserId: "",
+    manualExternalUserId: "",
+    manualDisplayName: ""
+  }
 };
 
 function usersUrl(filters: FilterState) {
@@ -119,6 +153,13 @@ export function AdminUsersPanel({
   const [savingAction, setSavingAction] = useState<string | null>(null);
   const [editorError, setEditorError] = useState<string | null>(null);
   const [passwordError, setPasswordError] = useState<string | null>(null);
+  const [identityDrafts, setIdentityDrafts] = useState<Record<MessageChannel, IdentityDraft>>(EMPTY_IDENTITY_DRAFT);
+  const [availableIdentities, setAvailableIdentities] = useState<Record<MessageChannel, ChatIdentity[]>>({
+    wechat: [],
+    wecom: []
+  });
+  const [identityErrors, setIdentityErrors] = useState<Partial<Record<MessageChannel, string>>>({});
+  const [identityConflict, setIdentityConflict] = useState<ConflictState | null>(null);
   const [actionErrors, setActionErrors] = useState<Record<string, string>>({});
   const [password, setPassword] = useState("");
   const latestListRequestId = useRef(0);
@@ -163,13 +204,143 @@ export function AdminUsersPanel({
     setPassword("");
     setEditorError(null);
     setPasswordError(null);
+    setIdentityDrafts(EMPTY_IDENTITY_DRAFT);
+    setIdentityErrors({});
+    setIdentityConflict(null);
   }
 
   function closeEditor() {
     setEditor(null);
     setEditorError(null);
     setPasswordError(null);
+    setIdentityErrors({});
+    setIdentityConflict(null);
     setPassword("");
+  }
+
+  async function loadChatIdentities(platform: MessageChannel) {
+    try {
+      const response = await fetch(`/api/admin/chat-identities?platform=${platform}`, {
+        cache: "no-store"
+      });
+      if (!response.ok) throw new Error(await responseMessage(response, `${PLATFORM_LABELS[platform]} identities failed to load`));
+      const payload = await response.json() as { identities?: ChatIdentity[] };
+      setAvailableIdentities((current) => ({
+        ...current,
+        [platform]: payload.identities ?? []
+      }));
+    } catch (error) {
+      setIdentityErrors((current) => ({
+        ...current,
+        [platform]: error instanceof Error ? error.message : `${PLATFORM_LABELS[platform]} identities failed to load`
+      }));
+    }
+  }
+
+  useEffect(() => {
+    if (editor?.mode !== "edit") return;
+    void loadChatIdentities("wechat");
+    void loadChatIdentities("wecom");
+  }, [editor?.mode, editor?.user?.personId]);
+
+  function updateIdentityDraft(
+    platform: MessageChannel,
+    changes: Partial<IdentityDraft>
+  ) {
+    setIdentityDrafts((current) => ({
+      ...current,
+      [platform]: {
+        ...current[platform],
+        ...changes
+      }
+    }));
+  }
+
+  function selectedIdentity(platform: MessageChannel) {
+    const selected = identityDrafts[platform].selectedExternalUserId;
+    return availableIdentities[platform].find((identity) => (
+      identity.externalUserId === selected
+    ));
+  }
+
+  async function bindIdentity(platform: MessageChannel, confirmationToken?: string) {
+    if (!editor?.user) return;
+    const draftIdentity = identityDrafts[platform];
+    const discovered = selectedIdentity(platform);
+    const externalUserId = discovered?.externalUserId || draftIdentity.manualExternalUserId.trim();
+    const displayName = discovered?.displayName || draftIdentity.manualDisplayName.trim() || undefined;
+    if (!externalUserId) {
+      setIdentityErrors((current) => ({
+        ...current,
+        [platform]: `Select or enter a ${PLATFORM_LABELS[platform]} external ID`
+      }));
+      return;
+    }
+    setSavingAction(`identity-${platform}`);
+    setIdentityErrors((current) => ({ ...current, [platform]: "" }));
+    try {
+      const response = await fetch(`/api/admin/users/${editor.user.personId}/chat-identities/${platform}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          externalUserId,
+          displayName,
+          ...(confirmationToken ? { confirmationToken } : {})
+        })
+      });
+      if (response.status === 409) {
+        const payload = await response.json() as {
+          code?: string;
+          message?: string;
+          confirmationToken?: string;
+          currentOwner?: { name?: string };
+        };
+        if (payload.code === "IDENTITY_CONFLICT" && payload.confirmationToken) {
+          setIdentityConflict({
+            platform,
+            token: payload.confirmationToken,
+            externalUserId,
+            displayName,
+            ownerName: payload.currentOwner?.name
+          });
+          return;
+        }
+        throw new Error(payload.message ?? `${PLATFORM_LABELS[platform]} binding failed`);
+      }
+      if (!response.ok) throw new Error(await responseMessage(response, `${PLATFORM_LABELS[platform]} binding failed`));
+      setIdentityConflict(null);
+      await loadUsers();
+      await loadChatIdentities(platform);
+      onRefresh?.();
+    } catch (error) {
+      setIdentityErrors((current) => ({
+        ...current,
+        [platform]: error instanceof Error ? error.message : `${PLATFORM_LABELS[platform]} binding failed`
+      }));
+    } finally {
+      setSavingAction(null);
+    }
+  }
+
+  async function unbindIdentity(platform: MessageChannel) {
+    if (!editor?.user) return;
+    setSavingAction(`identity-${platform}-unbind`);
+    setIdentityErrors((current) => ({ ...current, [platform]: "" }));
+    try {
+      const response = await fetch(`/api/admin/users/${editor.user.personId}/chat-identities/${platform}`, {
+        method: "DELETE"
+      });
+      if (!response.ok) throw new Error(await responseMessage(response, `${PLATFORM_LABELS[platform]} unbind failed`));
+      await loadUsers();
+      onRefresh?.();
+    } catch (error) {
+      setIdentityErrors((current) => ({
+        ...current,
+        [platform]: error instanceof Error ? error.message : `${PLATFORM_LABELS[platform]} unbind failed`
+      }));
+    } finally {
+      setSavingAction(null);
+    }
   }
 
   async function saveUser(event: React.FormEvent<HTMLFormElement>) {
@@ -430,6 +601,89 @@ export function AdminUsersPanel({
               {savingAction === "save" ? "保存中..." : "保存用户"}
             </button>
           </form>
+          {editor.mode === "edit" && editor.user && (
+            <div className="admin-user-identities" aria-label="Chat identity bindings">
+              {(["wechat", "wecom"] as MessageChannel[]).map((platform) => {
+                const label = PLATFORM_LABELS[platform];
+                const current = editor.user?.identities[platform];
+                const draftIdentity = identityDrafts[platform];
+                const error = identityErrors[platform];
+                return (
+                  <section className="admin-user-identity-card" key={platform} aria-label={`${label} identity binding`}>
+                    <div className="admin-user-identity-head">
+                      <div>
+                        <strong>{label}</strong>
+                        <span>
+                          {current
+                            ? `Bound to ${current.displayName} (${current.externalUserId})`
+                            : "No current binding"}
+                        </span>
+                      </div>
+                      <button
+                        className="secondary-button icon-button"
+                        type="button"
+                        aria-label={`Unbind ${label} identity`}
+                        title={`Unbind ${label} identity`}
+                        onClick={() => void unbindIdentity(platform)}
+                        disabled={!current || savingAction === `identity-${platform}-unbind`}
+                      >
+                        <Unlink size={15} aria-hidden="true" />
+                      </button>
+                    </div>
+                    <label>
+                      <span>{label} stable identity</span>
+                      <select
+                        aria-label={`${label} stable identity`}
+                        value={draftIdentity.selectedExternalUserId}
+                        onChange={(event) => updateIdentityDraft(platform, {
+                          selectedExternalUserId: event.target.value
+                        })}
+                      >
+                        <option value="">Select discovered identity</option>
+                        {availableIdentities[platform].map((identity) => (
+                          <option key={identity.id} value={identity.externalUserId}>
+                            {identity.displayName} ({identity.externalUserId})
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label>
+                      <span>{label} external ID</span>
+                      <input
+                        aria-label={`${label} external ID`}
+                        value={draftIdentity.manualExternalUserId}
+                        onChange={(event) => updateIdentityDraft(platform, {
+                          manualExternalUserId: event.target.value
+                        })}
+                        placeholder="Manual external user ID"
+                      />
+                    </label>
+                    <label>
+                      <span>{label} display name</span>
+                      <input
+                        aria-label={`${label} display name`}
+                        value={draftIdentity.manualDisplayName}
+                        onChange={(event) => updateIdentityDraft(platform, {
+                          manualDisplayName: event.target.value
+                        })}
+                        placeholder="Optional display name"
+                      />
+                    </label>
+                    <button
+                      className="secondary-button"
+                      type="button"
+                      onClick={() => void bindIdentity(platform)}
+                      disabled={savingAction === `identity-${platform}`}
+                    >
+                      <Link size={15} aria-hidden="true" />
+                      {savingAction === `identity-${platform}` ? "Binding..." : `Bind ${label} identity`}
+                    </button>
+                    {error && <p className="admin-user-action-error" role="alert">{error}</p>}
+                  </section>
+                );
+              })}
+            </div>
+          )}
           {editor.mode === "edit" && editor.user && canSetPassword && (
             <div className="admin-user-password">
               <label>
@@ -444,6 +698,42 @@ export function AdminUsersPanel({
             </div>
           )}
         </aside>
+      )}
+      {identityConflict && (
+        <div className="admin-dialog-backdrop">
+          <section
+            className="admin-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Confirm identity rebind"
+          >
+            <h4>Confirm identity rebind</h4>
+            <p>
+              This {PLATFORM_LABELS[identityConflict.platform]} identity is already bound
+              {identityConflict.ownerName ? ` to ${identityConflict.ownerName}` : " to another user"}.
+              Confirm to move it to the current user.
+            </p>
+            <div className="admin-dialog-actions">
+              <button
+                className="secondary-button"
+                type="button"
+                onClick={() => setIdentityConflict(null)}
+              >
+                Cancel
+              </button>
+              <button
+                className="danger-button"
+                type="button"
+                onClick={() => void bindIdentity(
+                  identityConflict.platform,
+                  identityConflict.token
+                )}
+              >
+                确认换绑
+              </button>
+            </div>
+          </section>
+        </div>
       )}
     </section>
   );

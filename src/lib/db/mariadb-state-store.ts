@@ -44,6 +44,7 @@ import { hashPassword } from "../services/password-service";
 import { getDatabasePool, type DatabaseConnection, withDatabaseTransaction } from "./connection";
 import {
   adminLoginRecord as readAdminLoginRecord,
+  bindChatIdentity as bindAccessChatIdentity,
   bootstrapAdmin as bootstrapAdminAccess,
   bootstrapStatus as readBootstrapStatus,
   createAccountSession as createAccessAccountSession,
@@ -51,6 +52,8 @@ import {
   countUsableAdmins as countAccessUsableAdmins,
   deleteUser as deleteAccessUser,
   getUser as readAccessUser,
+  identityByExternalId as readAccessIdentityByExternalId,
+  listChatIdentities as listAccessChatIdentities,
   listUsers as listAccessUsers,
   readAccessGroups,
   recordAccessRolesSync,
@@ -62,6 +65,7 @@ import {
   setUserEnabled as setAccessUserEnabled,
   setUserPassword as setAccessUserPassword,
   syncAccessRoles as syncDatabaseAccessRoles,
+  unbindChatIdentity as unbindAccessChatIdentity,
   updateUser as updateAccessUser,
   userDeletionHistory as readAccessUserDeletionHistory,
   upsertMobileAccount as upsertAccessMobileAccount
@@ -2394,6 +2398,48 @@ export class MariaDbStateStore {
         "Access roles sync"
       );
       await recordAccessRolesSync(connection, userGroups, actor);
+    });
+  }
+
+  async listChatIdentities(query: {
+    platform?: MessageChannel;
+    stableOnly?: boolean;
+  }) {
+    return await listAccessChatIdentities(getDatabasePool(), query);
+  }
+
+  async identityByExternalId(
+    platform: MessageChannel,
+    externalUserId: string
+  ) {
+    return await readAccessIdentityByExternalId(
+      getDatabasePool(),
+      platform,
+      externalUserId
+    );
+  }
+
+  async bindChatIdentity(
+    input: {
+      userId: string;
+      platform: MessageChannel;
+      externalUserId: string;
+      displayName?: string;
+      confirmedRebind?: boolean;
+    },
+    actor: AuthenticatedActor
+  ) {
+    return await withDatabaseTransaction(async (connection) => (
+      bindAccessChatIdentity(connection, input, actor)
+    ));
+  }
+
+  async unbindChatIdentity(
+    input: { userId: string; platform: MessageChannel },
+    actor: AuthenticatedActor
+  ) {
+    await withDatabaseTransaction(async (connection) => {
+      await unbindAccessChatIdentity(connection, input, actor);
     });
   }
 

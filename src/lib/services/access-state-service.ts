@@ -18,7 +18,7 @@ import {
   type UserMutation,
   type UserQuery
 } from "../domain/access-control";
-import type { Person, PersonRole, UserGroup } from "../domain/types";
+import type { ChatIdentity, MessageChannel, Person, PersonRole, UserGroup } from "../domain/types";
 
 type AccessState = AppState & {
   people: NonNullable<AppState["people"]>;
@@ -1320,6 +1320,146 @@ export function setUserPasswordInState(
     {
       accountId: account.id,
       passwordChanged: true
+    },
+    actor
+  );
+}
+
+export function listChatIdentitiesFromState(
+  stateInput: AppState,
+  query: { platform?: MessageChannel; stableOnly?: boolean }
+) {
+  const state = normalizeAccessState(stateInput);
+  return state.chatIdentities
+    .filter((identity) =>
+      (query.platform === undefined || identity.platform === query.platform) &&
+      (!query.stableOnly || !identity.isTemporary)
+    )
+    .sort((left, right) => (
+      right.lastSeenAt.localeCompare(left.lastSeenAt) ||
+      left.displayName.localeCompare(right.displayName) ||
+      left.id.localeCompare(right.id)
+    ));
+}
+
+export function identityByExternalIdFromState(
+  stateInput: AppState,
+  platform: MessageChannel,
+  externalUserId: string
+) {
+  const state = normalizeAccessState(stateInput);
+  return state.chatIdentities.find((identity) => (
+    identity.platform === platform &&
+    identity.externalUserId === externalUserId
+  ));
+}
+
+export function bindChatIdentityInState(
+  stateInput: AppState,
+  input: {
+    userId: string;
+    platform: MessageChannel;
+    externalUserId: string;
+    displayName?: string;
+    confirmedRebind?: boolean;
+  },
+  actor: AuthenticatedActor
+) {
+  const state = normalizeAccessState(stateInput);
+  const user = getUserFromState(state, input.userId);
+  if (!user) throw new Error("User was not found");
+  const at = nowIso();
+  let identity: ChatIdentity | undefined = state.chatIdentities.find((item) => (
+    item.platform === input.platform &&
+    item.externalUserId === input.externalUserId
+  ));
+  if (!identity) {
+    identity = {
+      id: stableId("chat", `${input.platform}:${input.externalUserId}`),
+      platform: input.platform,
+      externalUserId: input.externalUserId,
+      displayName: input.displayName?.trim() || input.externalUserId,
+      isTemporary: false,
+      firstSeenAt: at,
+      lastSeenAt: at
+    };
+    state.chatIdentities.push(identity);
+  }
+  if (identity.isTemporary) {
+    throw new Error("Temporary identities cannot be bound by administrators");
+  }
+
+  for (const current of state.chatIdentities) {
+    if (
+      current.platform === input.platform &&
+      current.personId === user.personId &&
+      current.id !== identity.id
+    ) {
+      current.personId = undefined;
+      current.verifiedBy = undefined;
+      current.verifiedAt = undefined;
+      current.lastSeenAt = at;
+    }
+  }
+  if (
+    identity.personId &&
+    identity.personId !== user.personId &&
+    !input.confirmedRebind
+  ) {
+    throw new Error("Chat identity is assigned to another user");
+  }
+  identity.personId = user.personId;
+  identity.displayName = input.displayName?.trim() || identity.displayName;
+  identity.verifiedBy = "admin";
+  identity.verifiedAt = at;
+  identity.lastSeenAt = at;
+
+  audit(
+    state,
+    "chat_identity.bind",
+    "chat_identity",
+    identity.id,
+    {
+      personId: user.personId,
+      platform: input.platform,
+      externalUserId: input.externalUserId,
+      confirmedRebind: Boolean(input.confirmedRebind)
+    },
+    actor
+  );
+  return identity;
+}
+
+export function unbindChatIdentityInState(
+  stateInput: AppState,
+  input: { userId: string; platform: MessageChannel },
+  actor: AuthenticatedActor
+) {
+  const state = normalizeAccessState(stateInput);
+  const user = getUserFromState(state, input.userId);
+  if (!user) throw new Error("User was not found");
+  const at = nowIso();
+  const identityIds: string[] = [];
+  for (const identity of state.chatIdentities) {
+    if (
+      identity.personId === user.personId &&
+      identity.platform === input.platform
+    ) {
+      identityIds.push(identity.id);
+      identity.personId = undefined;
+      identity.verifiedBy = undefined;
+      identity.verifiedAt = undefined;
+      identity.lastSeenAt = at;
+    }
+  }
+  audit(
+    state,
+    "chat_identity.unbind",
+    "user",
+    user.personId,
+    {
+      platform: input.platform,
+      identityIds
     },
     actor
   );

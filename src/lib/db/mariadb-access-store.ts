@@ -16,7 +16,7 @@ import {
   type UserMutation,
   type UserQuery
 } from "../domain/access-control";
-import type { PersonRole, UserGroup } from "../domain/types";
+import type { ChatIdentity, MessageChannel, PersonRole, UserGroup } from "../domain/types";
 import type { AppConfig } from "../seed";
 import {
   normalizeMobilePhone,
@@ -63,6 +63,23 @@ function requiredIso(value: unknown) {
   const valueIso = iso(value);
   if (!valueIso) throw new Error("Database date value is invalid");
   return valueIso;
+}
+
+function chatIdentityFromRow(row: Row): ChatIdentity {
+  return {
+    id: String(row.id),
+    platform: String(row.platform) as MessageChannel,
+    externalUserId: String(row.external_user_id),
+    displayName: String(row.display_name),
+    isTemporary: bool(row.is_temporary),
+    personId: row.person_id ? String(row.person_id) : undefined,
+    verifiedBy: row.verified_by
+      ? String(row.verified_by) as ChatIdentity["verifiedBy"]
+      : undefined,
+    verifiedAt: iso(row.verified_at),
+    firstSeenAt: requiredIso(row.first_seen_at),
+    lastSeenAt: requiredIso(row.last_seen_at)
+  };
 }
 
 function nonEmptyName(value: string) {
@@ -2010,6 +2027,238 @@ export async function setUserPassword(
     {
       accountId,
       passwordChanged: true
+    },
+    actor,
+    now
+  );
+}
+
+export async function listChatIdentities(
+  connection: DatabaseConnection,
+  query: { platform?: MessageChannel; stableOnly?: boolean }
+) {
+  const clauses: string[] = [];
+  const params: SqlValue[] = [];
+  if (query.platform) {
+    clauses.push("platform = ?");
+    params.push(query.platform);
+  }
+  if (query.stableOnly) {
+    clauses.push("is_temporary = false");
+  }
+  const identityRows = await rows<Row>(
+    connection,
+    `SELECT *
+     FROM chat_identities
+     ${clauses.length ? `WHERE ${clauses.join(" AND ")}` : ""}
+     ORDER BY last_seen_at DESC, display_name, id`,
+    params
+  );
+  return identityRows.map(chatIdentityFromRow);
+}
+
+export async function identityByExternalId(
+  connection: DatabaseConnection,
+  platform: MessageChannel,
+  externalUserId: string
+) {
+  const [identity] = await rows<Row>(
+    connection,
+    `SELECT *
+     FROM chat_identities
+     WHERE platform = ? AND external_user_id = ?
+     LIMIT 1`,
+    [platform, externalUserId]
+  );
+  return identity ? chatIdentityFromRow(identity) : undefined;
+}
+
+async function userPersonForIdentityMutation(
+  connection: DatabaseConnection,
+  userId: string
+) {
+  const [record] = await rows<Row>(
+    connection,
+    `SELECT p.id AS person_id
+     FROM people p
+     JOIN accounts a ON a.person_id = p.id
+     WHERE p.id = ? OR a.id = ?
+     LIMIT 1
+     FOR UPDATE`,
+    [userId, userId]
+  );
+  if (!record) throw new Error("User was not found");
+  return String(record.person_id);
+}
+
+async function lockedIdentityByExternalId(
+  connection: DatabaseConnection,
+  platform: MessageChannel,
+  externalUserId: string
+) {
+  const [identity] = await rows<Row>(
+    connection,
+    `SELECT *
+     FROM chat_identities
+     WHERE platform = ? AND external_user_id = ?
+     LIMIT 1
+     FOR UPDATE`,
+    [platform, externalUserId]
+  );
+  return identity;
+}
+
+export async function bindChatIdentity(
+  connection: DatabaseConnection,
+  input: {
+    userId: string;
+    platform: MessageChannel;
+    externalUserId: string;
+    displayName?: string;
+    confirmedRebind?: boolean;
+  },
+  actor: AuthenticatedActor
+) {
+  const personId = await userPersonForIdentityMutation(connection, input.userId);
+  const now = new Date();
+  let identity = await lockedIdentityByExternalId(
+    connection,
+    input.platform,
+    input.externalUserId
+  );
+  if (!identity) {
+    const identityId = `chat-${createHash("sha256")
+      .update(`${input.platform}:${input.externalUserId}`)
+      .digest("base64url")}`;
+    await execute(
+      connection,
+      `INSERT INTO chat_identities (
+         id, platform, external_user_id, display_name, is_temporary,
+         person_id, verified_by, verified_at, first_seen_at, last_seen_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        identityId,
+        input.platform,
+        input.externalUserId,
+        input.displayName?.trim() || input.externalUserId,
+        false,
+        null,
+        null,
+        null,
+        now,
+        now
+      ]
+    );
+    identity = await lockedIdentityByExternalId(
+      connection,
+      input.platform,
+      input.externalUserId
+    );
+  }
+  if (!identity) throw new Error("Chat identity was not found");
+  if (bool(identity.is_temporary)) {
+    throw new Error("Temporary identities cannot be bound by administrators");
+  }
+  const identityId = String(identity.id);
+  const fromPersonId = identity.person_id
+    ? String(identity.person_id)
+    : undefined;
+  if (
+    fromPersonId &&
+    fromPersonId !== personId &&
+    !input.confirmedRebind
+  ) {
+    throw new Error("Chat identity is assigned to another user");
+  }
+
+  await execute(
+    connection,
+    `UPDATE chat_identities
+     SET person_id = NULL, verified_by = NULL, verified_at = NULL,
+         last_seen_at = ?
+     WHERE person_id = ? AND platform = ? AND id <> ?`,
+    [now, personId, input.platform, identityId]
+  );
+  if (fromPersonId && fromPersonId !== personId && input.confirmedRebind) {
+    await execute(
+      connection,
+      `UPDATE chat_identities
+       SET person_id = NULL, verified_by = NULL, verified_at = NULL,
+           last_seen_at = ?
+       WHERE id = ? AND person_id = ?`,
+      [now, identityId, fromPersonId]
+    );
+  }
+  await execute(
+    connection,
+    `UPDATE chat_identities
+     SET person_id = ?, display_name = ?, verified_by = 'admin',
+         verified_at = ?, last_seen_at = ?
+     WHERE id = ?`,
+    [
+      personId,
+      input.displayName?.trim() || String(identity.display_name),
+      now,
+      now,
+      identityId
+    ]
+  );
+  await writeAudit(
+    connection,
+    "chat_identity.bind",
+    "chat_identity",
+    identityId,
+    {
+      personId,
+      platform: input.platform,
+      externalUserId: input.externalUserId,
+      fromPersonId,
+      confirmedRebind: Boolean(input.confirmedRebind)
+    },
+    actor,
+    now
+  );
+  const rebound = await identityByExternalId(
+    connection,
+    input.platform,
+    input.externalUserId
+  );
+  if (!rebound) throw new Error("Bound chat identity could not be loaded");
+  return rebound;
+}
+
+export async function unbindChatIdentity(
+  connection: DatabaseConnection,
+  input: { userId: string; platform: MessageChannel },
+  actor: AuthenticatedActor
+) {
+  const personId = await userPersonForIdentityMutation(connection, input.userId);
+  const identityRows = await rows<Row>(
+    connection,
+    `SELECT id
+     FROM chat_identities
+     WHERE person_id = ? AND platform = ?
+     FOR UPDATE`,
+    [personId, input.platform]
+  );
+  const identityIds = identityRows.map((row) => String(row.id));
+  const now = new Date();
+  await execute(
+    connection,
+    `UPDATE chat_identities
+     SET person_id = NULL, verified_by = NULL, verified_at = NULL,
+         last_seen_at = ?
+     WHERE person_id = ? AND platform = ?`,
+    [now, personId, input.platform]
+  );
+  await writeAudit(
+    connection,
+    "chat_identity.unbind",
+    "user",
+    personId,
+    {
+      platform: input.platform,
+      identityIds
     },
     actor,
     now

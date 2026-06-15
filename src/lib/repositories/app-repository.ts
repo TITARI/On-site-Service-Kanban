@@ -1,5 +1,5 @@
 import type { AppState } from "../domain/app-state";
-import type { KeywordGroup, Ticket, UserGroup } from "../domain/types";
+import type { ChatIdentity, KeywordGroup, MessageChannel, Ticket, UserGroup } from "../domain/types";
 import type {
   AccountCredential,
   AccountSession,
@@ -34,11 +34,14 @@ import {
   adminLoginRecordFromState,
   bootstrapAdminInState,
   bootstrapStatusFromState,
+  bindChatIdentityInState,
   createAccountSessionInState,
   createUserInState,
   countUsableAdminsInState,
   deleteUserInState,
   getUserFromState,
+  identityByExternalIdFromState,
+  listChatIdentitiesFromState,
   listUsersFromState,
   normalizeAccessState,
   recordAdminLoginFailureInState,
@@ -50,6 +53,7 @@ import {
   setUserPasswordInState,
   syncAccessRolesInState,
   syncAccessRolesWithoutAuditInState,
+  unbindChatIdentityInState,
   updateUserInState,
   userDeletionHistoryInState,
   upsertMobileAccountInState
@@ -110,6 +114,19 @@ export type AppRepository = {
   countUsableAdmins(excludeUserId?: string): Promise<number>;
   userDeletionHistory(userId: string): Promise<{ hasHistory: boolean; reasons: string[] }>;
   syncAccessRoles(userGroups: UserGroup[], actor?: AuthenticatedActor): Promise<void>;
+  listChatIdentities(query: { platform?: MessageChannel; stableOnly?: boolean }): Promise<ChatIdentity[]>;
+  identityByExternalId(platform: MessageChannel, externalUserId: string): Promise<ChatIdentity | undefined>;
+  bindChatIdentity(input: {
+    userId: string;
+    platform: MessageChannel;
+    externalUserId: string;
+    displayName?: string;
+    confirmedRebind?: boolean;
+  }, actor: AuthenticatedActor): Promise<ChatIdentity>;
+  unbindChatIdentity(input: {
+    userId: string;
+    platform: MessageChannel;
+  }, actor: AuthenticatedActor): Promise<void>;
 };
 
 type StateFileRepository = {
@@ -335,6 +352,22 @@ export function createFileAppRepository(store: StateFileRepository = {
     ),
     syncAccessRoles: (userGroups, actor) => updateState((state) => {
       syncAccessRolesInState(state, userGroups, actor);
+    }),
+    listChatIdentities: async (query) => (
+      listChatIdentitiesFromState(await store.readState(), query)
+    ),
+    identityByExternalId: async (platform, externalUserId) => (
+      identityByExternalIdFromState(
+        await store.readState(),
+        platform,
+        externalUserId
+      )
+    ),
+    bindChatIdentity: (input, actor) => updateState((state) => (
+      bindChatIdentityInState(state, input, actor)
+    )),
+    unbindChatIdentity: (input, actor) => updateState((state) => {
+      unbindChatIdentityInState(state, input, actor);
     })
   };
 }
@@ -401,6 +434,16 @@ export function createMariaDbAppRepository(store: AutoAcceptanceStore = new Mari
     userDeletionHistory: (userId) => store.userDeletionHistory(userId),
     syncAccessRoles: (userGroups, actor) => (
       store.syncAccessRoles(userGroups, actor)
+    ),
+    listChatIdentities: (query) => store.listChatIdentities(query),
+    identityByExternalId: (platform, externalUserId) => (
+      store.identityByExternalId(platform, externalUserId)
+    ),
+    bindChatIdentity: (input, actor) => (
+      store.bindChatIdentity(input, actor)
+    ),
+    unbindChatIdentity: (input, actor) => (
+      store.unbindChatIdentity(input, actor)
     )
   };
 }

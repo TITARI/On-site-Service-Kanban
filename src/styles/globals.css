@@ -2103,14 +2103,96 @@ textarea {
 }
 
 .admin-user-editor,
-.admin-user-password {
+.admin-user-password,
+.admin-user-identities {
   display: grid;
   gap: 12px;
   padding: 16px;
 }
 
-.admin-user-password {
+.admin-user-password,
+.admin-user-identities {
   border-top: 1px solid rgba(31, 106, 77, 0.1);
+}
+
+.admin-user-identity-card {
+  display: grid;
+  gap: 10px;
+  border: 1px solid rgba(31, 106, 77, 0.1);
+  border-radius: 10px;
+  padding: 12px;
+  background: rgba(248, 251, 245, 0.72);
+}
+
+.admin-user-identity-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.admin-user-identity-head strong,
+.admin-user-identity-head span {
+  display: block;
+}
+
+.admin-user-identity-head strong {
+  color: var(--green-deep);
+  font-size: 13px;
+}
+
+.admin-user-identity-head span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.admin-user-identity-card .icon-button {
+  width: 38px;
+  min-height: 38px;
+  padding: 0;
+}
+
+.admin-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(13, 36, 27, 0.42);
+}
+
+.admin-dialog {
+  display: grid;
+  gap: 12px;
+  width: min(420px, 100%);
+  border: 1px solid rgba(31, 106, 77, 0.16);
+  border-radius: 16px;
+  padding: 18px;
+  background: #fffdf7;
+  box-shadow: 0 18px 44px rgba(31, 106, 77, 0.22);
+}
+
+.admin-dialog h4,
+.admin-dialog p {
+  margin: 0;
+}
+
+.admin-dialog h4 {
+  color: var(--green-deep);
+  font-size: 18px;
+}
+
+.admin-dialog p {
+  color: #42554a;
+  line-height: 1.55;
+}
+
+.admin-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
 }
 
 .admin-user-editor .check-row {

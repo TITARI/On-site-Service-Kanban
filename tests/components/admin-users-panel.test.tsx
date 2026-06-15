@@ -68,6 +68,88 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+describe("AdminUsersPanel chat identity controls", () => {
+  it("binds chat identities from the editor after explicit conflict confirmation", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "/api/admin/chat-identities?platform=wechat") {
+        return new Response(JSON.stringify({
+          identities: [{
+            id: "identity-wxid-other",
+            platform: "wechat",
+            externalUserId: "wxid-other",
+            displayName: "Other WeChat",
+            personId: "person-other",
+            firstSeenAt: "2026-06-15T00:00:00.000Z",
+            lastSeenAt: "2026-06-15T00:00:00.000Z"
+          }]
+        }), { status: 200 });
+      }
+      if (url === "/api/admin/chat-identities?platform=wecom") {
+        return new Response(JSON.stringify({ identities: [] }), { status: 200 });
+      }
+      if (url === "/api/admin/users/person-1/chat-identities/wechat" && init?.method === "PUT") {
+        const body = JSON.parse(String(init.body));
+        if (!body.confirmationToken) {
+          return new Response(JSON.stringify({
+            code: "IDENTITY_CONFLICT",
+            message: "Identity already belongs to another user",
+            confirmationToken: "confirm-token",
+            currentOwner: {
+              personId: "person-other",
+              name: "李四"
+            }
+          }), { status: 409 });
+        }
+        return new Response(JSON.stringify({
+          identity: {
+            id: "identity-wxid-other",
+            platform: "wechat",
+            externalUserId: "wxid-other",
+            displayName: "Other WeChat",
+            personId: "person-1",
+            firstSeenAt: "2026-06-15T00:00:00.000Z",
+            lastSeenAt: "2026-06-15T00:00:00.000Z"
+          }
+        }), { status: 200 });
+      }
+      if (url.startsWith("/api/admin/users")) {
+        return new Response(JSON.stringify({
+          users: [user()],
+          total: 1,
+          page: 1,
+          pageSize: 20
+        }), { status: 200 });
+      }
+      throw new Error(`Unexpected request ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const userDriver = userEvent.setup();
+
+    render(<AdminUsersPanel groups={groups} />);
+
+    await userDriver.click(await screen.findByRole("button", { name: "编辑张三" }));
+    const editor = await screen.findByRole("complementary", { name: "编辑用户张三" });
+    await userDriver.selectOptions(
+      await within(editor).findByLabelText("WeChat stable identity"),
+      "wxid-other"
+    );
+    await userDriver.click(within(editor).getByRole("button", { name: "Bind WeChat identity" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "Confirm identity rebind" });
+    expect(within(dialog).getByText(/李四/)).not.toBeNull();
+    await userDriver.click(within(dialog).getByRole("button", { name: "确认换绑" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/api/admin/users/person-1/chat-identities/wechat",
+      expect.objectContaining({
+        method: "PUT",
+        body: expect.stringContaining("confirm-token")
+      })
+    ));
+  });
+});
+
 describe("AdminUsersPanel", () => {
   it("filters users and edits a locked group", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
