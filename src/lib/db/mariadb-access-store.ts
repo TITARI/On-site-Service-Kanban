@@ -303,13 +303,17 @@ async function authorizationFingerprints(connection: DatabaseConnection) {
          p.enabled,
          COALESCE(p.group_id, ''),
          COALESCE(g.enabled, 0),
-         COALESCE(r.enabled, 0),
-         COALESCE(r.source_group_id, ''),
          COALESCE(
            GROUP_CONCAT(
-             DISTINCT rp.permission_code
-             ORDER BY rp.permission_code
-             SEPARATOR ','
+             DISTINCT CONCAT_WS(
+               ':',
+               COALESCE(ar.role_id, ''),
+               COALESCE(r.enabled, 0),
+               COALESCE(r.source_group_id, ''),
+               COALESCE(role_permissions.permission_codes, '')
+             )
+             ORDER BY ar.role_id, r.source_group_id
+             SEPARATOR ';'
            ),
            ''
          )
@@ -319,16 +323,32 @@ async function authorizationFingerprints(connection: DatabaseConnection) {
      LEFT JOIN user_groups g ON g.id = p.group_id
      LEFT JOIN account_roles ar ON ar.account_id = a.id
      LEFT JOIN roles r ON r.id = ar.role_id
-     LEFT JOIN role_permissions rp ON rp.role_id = r.id
+     LEFT JOIN (
+       SELECT
+         role_id,
+         GROUP_CONCAT(
+           DISTINCT permission_code
+           ORDER BY permission_code
+           SEPARATOR ','
+         ) AS permission_codes
+       FROM role_permissions
+       GROUP BY role_id
+     ) role_permissions ON role_permissions.role_id = r.id
      GROUP BY
-       a.id, a.enabled, p.enabled, p.group_id, g.enabled,
-       r.enabled, r.source_group_id
+       a.id, a.enabled, p.enabled, p.group_id, g.enabled
      ORDER BY a.id`
   );
+  const fingerprints = new Map<string, string[]>();
+  for (const row of fingerprintRows) {
+    const accountId = String(row.account_id);
+    const values = fingerprints.get(accountId) ?? [];
+    values.push(String(row.authorization_fingerprint));
+    fingerprints.set(accountId, values);
+  }
   return new Map(
-    fingerprintRows.map((row) => [
-      String(row.account_id),
-      String(row.authorization_fingerprint)
+    [...fingerprints].map(([accountId, values]) => [
+      accountId,
+      values.sort().join("\n")
     ])
   );
 }
@@ -459,11 +479,67 @@ type AccountPersonRow = Row & {
   account_id?: string;
 };
 
+type DuplicatePhoneOwnerRow = Row & {
+  owner_person_id?: string | null;
+  owner_account_id?: string | null;
+  owner_source: "people" | "accounts";
+};
+
+async function duplicatePhoneOwners(
+  connection: DatabaseConnection,
+  phone: string,
+  exclude: { personId?: string; accountId?: string } = {}
+) {
+  const excludedPersonId = exclude.personId ?? null;
+  const excludedAccountId = exclude.accountId ?? null;
+  return await rows<DuplicatePhoneOwnerRow>(
+    connection,
+    `SELECT *
+     FROM (
+       SELECT
+         p.id AS owner_person_id,
+         NULL AS owner_account_id,
+         'people' AS owner_source
+       FROM people p
+       WHERE p.phone = ?
+       UNION ALL
+       SELECT
+         a.person_id AS owner_person_id,
+         a.id AS owner_account_id,
+         'accounts' AS owner_source
+       FROM accounts a
+       WHERE a.login_name = ?
+     ) duplicate_phone_owners
+     WHERE (? IS NULL OR owner_person_id IS NULL OR owner_person_id <> ?)
+       AND (? IS NULL OR owner_account_id IS NULL OR owner_account_id <> ?)
+     LIMIT 1`,
+    [
+      phone,
+      phone,
+      excludedPersonId,
+      excludedPersonId,
+      excludedAccountId,
+      excludedAccountId
+    ]
+  );
+}
+
+async function assertPhoneAvailable(
+  connection: DatabaseConnection,
+  phone: string,
+  exclude: { personId?: string; accountId?: string } = {}
+) {
+  const [duplicate] = await duplicatePhoneOwners(connection, phone, exclude);
+  if (duplicate) {
+    throw new Error("Mobile phone is already assigned to another user");
+  }
+}
+
 async function findAccountPersonByPhone(
   connection: DatabaseConnection,
   phone: string
 ) {
-  const [record] = await rows<AccountPersonRow>(
+  const records = await rows<AccountPersonRow>(
     connection,
     `SELECT
        p.id AS person_id,
@@ -478,10 +554,15 @@ async function findAccountPersonByPhone(
      FROM people p
      LEFT JOIN accounts a ON a.person_id = p.id
      WHERE p.phone = ? OR a.login_name = ?
-     LIMIT 1`,
+     ORDER BY p.id, a.id`,
     [phone, phone]
   );
-  return record;
+  if (records.length > 1) {
+    throw new Error(
+      "Mobile phone matches multiple access records; resolve duplicate people/accounts before login"
+    );
+  }
+  return records[0];
 }
 
 export async function upsertMobileAccount(
@@ -1350,17 +1431,7 @@ export async function createUser(
 ) {
   const phone = normalizeMobilePhone(input.phone);
   const name = nonEmptyName(input.name);
-  const [duplicate] = await rows<Row>(
-    connection,
-    `SELECT id
-     FROM accounts
-     WHERE login_name = ?
-     LIMIT 1`,
-    [phone]
-  );
-  if (duplicate) {
-    throw new Error("Mobile phone is already assigned to another user");
-  }
+  await assertPhoneAvailable(connection, phone);
   const group = await readEnabledGroup(connection, input.groupId);
   const now = new Date();
   await ensureGroupRole(connection, group, now);
@@ -1478,17 +1549,10 @@ export async function updateUser(
     nextLoginName !== currentLoginName
   );
   if (phoneChanged) {
-    const [duplicate] = await rows<Row>(
-      connection,
-      `SELECT id
-       FROM accounts
-       WHERE login_name = ? AND id <> ?
-       LIMIT 1`,
-      [nextPhone, accountId]
-    );
-    if (duplicate) {
-      throw new Error("Mobile phone is already assigned to another user");
-    }
+    await assertPhoneAvailable(connection, nextPhone, {
+      personId,
+      accountId
+    });
   }
   const groupChanged =
     input.groupId !== undefined &&

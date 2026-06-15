@@ -548,6 +548,60 @@ describe("MariaDB access store", () => {
     )).toBe(false);
   });
 
+  it("rejects mobile upsert when one phone matches multiple legacy candidates", async () => {
+    const { calls, connection } = recordingConnection((statement) => {
+      if (statement.includes("FROM people p") && statement.includes("WHERE p.phone = ?")) {
+        return [
+          {
+            person_id: "person-1",
+            person_name: "Alice",
+            phone: "13800138000",
+            group_id: "builder",
+            group_locked: 0,
+            person_enabled: 1,
+            account_id: "account-person-1",
+            account_enabled: 1,
+            auth_version: 3
+          },
+          {
+            person_id: "person-legacy",
+            person_name: "Legacy Alice",
+            phone: "13800138000",
+            group_id: "builder",
+            group_locked: 0,
+            person_enabled: 1,
+            account_id: null,
+            account_enabled: null,
+            auth_version: null
+          }
+        ];
+      }
+      if (statement.includes("authorization_fingerprint")) return [];
+      if (statement.includes("WHERE a.id = ?") && statement.includes("permission_code")) {
+        return persistedActorRows("ticket.process", 3);
+      }
+      return statement.trimStart().startsWith("SELECT")
+        ? []
+        : { affectedRows: 1 };
+    });
+
+    await expect(upsertMobileAccount(connection, {
+      ...defaultConfig(),
+      userGroups: accessGroups()
+    }, {
+      name: "Alice",
+      phone: "13800138000",
+      groupId: "builder"
+    })).rejects.toThrow(/multiple|conflict|duplicate/i);
+
+    expect(calls[0].params).toEqual(["13800138000", "13800138000"]);
+    expect(calls.some((call) =>
+      call.sql.includes("UPDATE people") ||
+      call.sql.includes("UPDATE accounts") ||
+      call.sql.includes("INSERT INTO accounts")
+    )).toBe(false);
+  });
+
   it("synchronizes stable roles, exact permissions, and account links repeatedly", async () => {
     let fingerprintReads = 0;
     const { calls, connection, sql } = recordingConnection((statement) => {
@@ -587,6 +641,118 @@ describe("MariaDB access store", () => {
       call.sql.includes("auth_version = auth_version + 1") &&
       call.params.includes("account-person-1")
     )).toBe(true);
+  });
+
+  it("invalidates when one account loses one of multiple preexisting role links", async () => {
+    let fingerprintReads = 0;
+    const { calls, connection } = recordingConnection((statement) => {
+      if (statement.includes("authorization_fingerprint")) {
+        fingerprintReads += 1;
+        return fingerprintReads === 1
+          ? [
+              {
+                account_id: "account-person-1",
+                authorization_fingerprint: "stale-admin-role"
+              },
+              {
+                account_id: "account-person-1",
+                authorization_fingerprint: "surviving-builder-role"
+              }
+            ]
+          : [{
+              account_id: "account-person-1",
+              authorization_fingerprint: "surviving-builder-role"
+            }];
+      }
+      if (statement.includes("account_authorization_rows")) {
+        fingerprintReads += 1;
+        return fingerprintReads === 1
+          ? [
+              {
+                account_id: "account-person-1",
+                account_enabled: 1,
+                person_enabled: 1,
+                group_id: "builder",
+                group_enabled: 1,
+                role_id: "role-admin",
+                role_enabled: 1,
+                role_source_group_id: "admin",
+                permission_code: "admin.access"
+              },
+              {
+                account_id: "account-person-1",
+                account_enabled: 1,
+                person_enabled: 1,
+                group_id: "builder",
+                group_enabled: 1,
+                role_id: "role-builder",
+                role_enabled: 1,
+                role_source_group_id: "builder",
+                permission_code: "ticket.process"
+              }
+            ]
+          : [{
+              account_id: "account-person-1",
+              account_enabled: 1,
+              person_enabled: 1,
+              group_id: "builder",
+              group_enabled: 1,
+              role_id: "role-builder",
+              role_enabled: 1,
+              role_source_group_id: "builder",
+              permission_code: "ticket.process"
+            }];
+      }
+      return statement.trimStart().startsWith("SELECT")
+        ? []
+        : { affectedRows: 1 };
+    });
+
+    await syncAccessRoles(connection, accessGroups(), new Date("2026-06-14T02:30:00.000Z"));
+
+    expect(calls.some((call) =>
+      call.sql.includes("auth_version = auth_version + 1") &&
+      call.params.includes("account-person-1")
+    )).toBe(true);
+  });
+
+  it("does not invalidate when the aggregate authorization state is unchanged", async () => {
+    let fingerprintReads = 0;
+    const { calls, connection } = recordingConnection((statement) => {
+      if (statement.includes("authorization_fingerprint")) {
+        fingerprintReads += 1;
+        return [
+          {
+            account_id: "account-person-1",
+            authorization_fingerprint: "builder-role"
+          }
+        ];
+      }
+      if (statement.includes("account_authorization_rows")) {
+        fingerprintReads += 1;
+        return [{
+          account_id: "account-person-1",
+          account_enabled: 1,
+          person_enabled: 1,
+          group_id: "builder",
+          group_enabled: 1,
+          role_id: "role-builder",
+          role_enabled: 1,
+          role_source_group_id: "builder",
+          permission_code: "ticket.process"
+        }];
+      }
+      return statement.trimStart().startsWith("SELECT")
+        ? []
+        : { affectedRows: 1 };
+    });
+
+    await syncAccessRoles(connection, accessGroups(), new Date("2026-06-14T02:45:00.000Z"));
+
+    expect(fingerprintReads).toBe(2);
+    expect(calls.some((call) =>
+      call.sql.includes("auth_version = auth_version + 1")
+    )).toBe(false);
   });
 
   it("revokes all sessions and increments auth version idempotently", async () => {
@@ -861,6 +1027,47 @@ describe("MariaDB access store", () => {
     });
   });
 
+  it("rejects creating a user when a legacy person already owns the phone", async () => {
+    const { calls, connection } = recordingConnection((sql) => {
+      if (sql.includes("duplicate_phone_owners")) {
+        return [{
+          owner_person_id: "person-legacy",
+          owner_account_id: null,
+          owner_source: "people"
+        }];
+      }
+      if (sql.includes("FROM user_groups") && sql.includes("enabled = true")) {
+        return [enabledGroupRow()];
+      }
+      if (sql.includes("WHERE p.id = ? OR a.id = ?")) {
+        return [userDetailRow()];
+      }
+      return sql.trimStart().startsWith("SELECT")
+        ? []
+        : { affectedRows: 1 };
+    });
+
+    await expect(createUser(connection, {
+      name: "Alice",
+      phone: "138 0013-8000",
+      groupId: "builder",
+      groupLocked: false,
+      enabled: true
+    }, actor())).rejects.toThrow(/already assigned/i);
+
+    const duplicateRead = calls.find((call) =>
+      call.sql.includes("duplicate_phone_owners")
+    );
+    expect(duplicateRead?.sql).toContain("FROM people");
+    expect(duplicateRead?.sql).toContain("FROM accounts");
+    expect(duplicateRead?.params).toContain("13800138000");
+    expect(calls.every((call) => !call.sql.includes("13800138000"))).toBe(true);
+    expect(calls.some((call) =>
+      call.sql.includes("INSERT INTO people") ||
+      call.sql.includes("INSERT INTO accounts")
+    )).toBe(false);
+  });
+
   it("updates unrelated fields in a disabled group without revalidating or replacing the group role", async () => {
     const { calls, connection } = recordingConnection((sql) => {
       if (sql.includes("FOR UPDATE") && sql.includes("FROM accounts a")) {
@@ -941,6 +1148,57 @@ describe("MariaDB access store", () => {
       },
       authInvalidated: true
     });
+  });
+
+  it("rejects moving a user to a phone held by a legacy person without an account", async () => {
+    const { calls, connection } = recordingConnection((sql) => {
+      if (sql.includes("FOR UPDATE") && sql.includes("FROM accounts a")) {
+        return [{
+          account_id: "account-person-1",
+          login_name: "13800138000",
+          account_enabled: 1,
+          person_id: "person-1",
+          person_name: "Alice",
+          phone: "13800138000",
+          role: "handler",
+          group_id: "builder",
+          group_name_snapshot: "Builder",
+          group_locked: 0,
+          group_enabled: 1,
+          person_enabled: 1
+        }];
+      }
+      if (sql.includes("duplicate_phone_owners")) {
+        return [{
+          owner_person_id: "person-legacy",
+          owner_account_id: null,
+          owner_source: "people"
+        }];
+      }
+      if (sql.includes("WHERE p.id = ? OR a.id = ?")) {
+        return [userDetailRow({
+          phone: "13900139000"
+        })];
+      }
+      return sql.trimStart().startsWith("SELECT")
+        ? []
+        : { affectedRows: 1 };
+    });
+
+    await expect(updateUser(connection, "person-1", {
+      phone: "13900139000"
+    }, actor())).rejects.toThrow(/already assigned/i);
+
+    const duplicateRead = calls.find((call) =>
+      call.sql.includes("duplicate_phone_owners")
+    );
+    expect(duplicateRead?.params).toContain("13900139000");
+    expect(duplicateRead?.params).toContain("person-1");
+    expect(duplicateRead?.params).toContain("account-person-1");
+    expect(calls.some((call) =>
+      call.sql.includes("UPDATE people") ||
+      call.sql.includes("UPDATE accounts")
+    )).toBe(false);
   });
 
   it("rejects enabling a user whose unchanged current group is disabled", async () => {
