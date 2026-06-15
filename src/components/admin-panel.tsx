@@ -827,6 +827,7 @@ export function AdminConfigCenter({
       canClaim: isChecked(formData, `group-${group.id}-canClaim`),
       canProcess: isChecked(formData, `group-${group.id}-canProcess`),
       canAccept: isChecked(formData, `group-${group.id}-canAccept`),
+      canAdmin: isChecked(formData, `group-${group.id}-canAdmin`),
       enabled: isChecked(formData, `group-${group.id}-enabled`)
     }));
     const newGroupNameValue = textValue(formData, "newGroupName");
@@ -838,7 +839,7 @@ export function AdminConfigCenter({
         canClaim: isChecked(formData, "newGroupCanClaim"),
         canProcess: isChecked(formData, "newGroupCanProcess"),
         canAccept: isChecked(formData, "newGroupCanAccept"),
-        canAdmin: false,
+        canAdmin: isChecked(formData, "newGroupCanAdmin"),
         enabled: true
       });
     }
@@ -1197,6 +1198,7 @@ export function AdminConfigCenter({
                           <label className="compact-check-row"><input name={`group-${group.id}-canClaim`} type="checkbox" defaultChecked={group.canClaim} aria-label={`${group.name}可认领`} disabled={isPendingDelete} />认领</label>
                           <label className="compact-check-row"><input name={`group-${group.id}-canProcess`} type="checkbox" defaultChecked={group.canProcess} aria-label={`${group.name}可处理`} disabled={isPendingDelete} />处理</label>
                           <label className="compact-check-row"><input name={`group-${group.id}-canAccept`} type="checkbox" defaultChecked={group.canAccept} aria-label={`${group.name}可验收`} disabled={isPendingDelete} />验收</label>
+                          <label className="compact-check-row"><input name={`group-${group.id}-canAdmin`} type="checkbox" defaultChecked={group.canAdmin ?? false} aria-label={`${group.name}可管理后台`} disabled={isPendingDelete} />后台</label>
                         </div>
                       </div>
                       <div className="settings-cell settings-status-cell" role="cell">
@@ -1277,6 +1279,7 @@ export function AdminConfigCenter({
                       <label className="compact-check-row"><input name="newGroupCanClaim" type="checkbox" aria-label="新增分组可认领" />认领</label>
                       <label className="compact-check-row"><input name="newGroupCanProcess" type="checkbox" aria-label="新增分组可处理" />处理</label>
                       <label className="compact-check-row"><input name="newGroupCanAccept" type="checkbox" aria-label="新增分组可验收" />验收</label>
+                      <label className="compact-check-row"><input name="newGroupCanAdmin" type="checkbox" aria-label="新增分组可管理后台" />后台</label>
                     </div>
                   </div>
                   <div className="settings-cell settings-status-cell" role="cell">

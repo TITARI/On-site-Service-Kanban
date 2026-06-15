@@ -3,6 +3,14 @@ import { normalizeAiPromptConfig } from "../domain/ai-config";
 import type { AppConfig } from "../seed";
 import { normalizeAutoAcceptanceConfig, validateAutoAcceptanceConfig } from "./auto-acceptance-service";
 import { normalizeWxautoMcpConfig, syncWxautoMcpMessageIntegration } from "../integrations/wxauto/config";
+import type { UserGroup } from "../domain/types";
+
+function normalizeUserGroups(userGroups?: UserGroup[]): UserGroup[] | undefined {
+  return userGroups?.map((group) => ({
+    ...group,
+    canAdmin: group.canAdmin ?? false
+  }));
+}
 
 export function stripConfigSecrets(config: AppConfig): AppConfig {
   const wxautoMcp = normalizeWxautoMcpConfig(config.wxautoMcp, config.messageIntegrations);
@@ -47,6 +55,7 @@ export function validateConfig(config: AppConfig) {
   const baseConfig = {
     ...normalizeAiPromptConfig(config),
     keywordGroups: normalizeKeywordGroups(config.keywordGroups),
+    userGroups: normalizeUserGroups(config.userGroups),
     autoAcceptance: validateAutoAcceptanceConfig(config.autoAcceptance)
   };
   const wxautoMcp = normalizeWxautoMcpConfig(baseConfig.wxautoMcp, baseConfig.messageIntegrations);

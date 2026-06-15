@@ -125,6 +125,17 @@ describe("admin database-backed routes", () => {
     expect(store.saveKeywordGroups).toHaveBeenCalledOnce();
   });
 
+  it("rejects admin config reads without an admin session", async () => {
+    store.resolveAccountSession.mockResolvedValue(undefined);
+    const route = await import("@/app/api/admin/config/route");
+
+    const response = await route.GET(new Request("http://localhost/api/admin/config"));
+
+    expect(response.status).toBe(401);
+    await expect(response.json()).resolves.toMatchObject({ message: "Unauthenticated" });
+    expect(store.getConfig).not.toHaveBeenCalled();
+  });
+
   it("accepts keyword rule sets with multiple keyword terms", async () => {
     const route = await import("@/app/api/admin/keywords/route");
     const nextKeywordGroups = [

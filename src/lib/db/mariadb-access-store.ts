@@ -353,6 +353,29 @@ async function authorizationFingerprints(connection: DatabaseConnection) {
   );
 }
 
+async function usableAdminCount(connection: DatabaseConnection) {
+  const [record] = await rows<Row>(
+    connection,
+    `SELECT COUNT(DISTINCT a.id) AS count
+     FROM accounts a
+     JOIN people p ON p.id = a.person_id
+     JOIN account_credentials c
+       ON c.account_id = a.id
+      AND c.password_hash <> ''
+     JOIN account_roles ar ON ar.account_id = a.id
+     JOIN roles r
+       ON r.id = ar.role_id
+      AND r.source_group_id = p.group_id
+      AND r.enabled = true
+     JOIN role_permissions rp
+       ON rp.role_id = r.id
+      AND rp.permission_code = 'admin.access'
+     WHERE a.enabled = true
+       AND p.enabled = true`
+  );
+  return Number(record?.count ?? 0);
+}
+
 async function synchronizeAccountRole(
   connection: DatabaseConnection,
   accountId: string,
@@ -399,6 +422,7 @@ export async function syncAccessRoles(
   now = new Date()
 ): Promise<void> {
   const before = await authorizationFingerprints(connection);
+  const hadUsableAdminAccount = await usableAdminCount(connection) > 0;
   const incomingGroupIds = new Set(groups.map((group) => group.id));
   const referencedRows = await rows<Row>(
     connection,
@@ -460,6 +484,10 @@ export async function syncAccessRoles(
      WHERE p.group_id IS NOT NULL`,
     [now]
   );
+
+  if (hadUsableAdminAccount && await usableAdminCount(connection) < 1) {
+    throw new Error("At least one usable admin account is required");
+  }
 
   const after = await authorizationFingerprints(connection);
   for (const [accountId, fingerprint] of after) {

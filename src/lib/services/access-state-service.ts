@@ -306,6 +306,24 @@ function invalidateAccount(
   return revokeSessions(state, account.id, at);
 }
 
+function hasUsableAdminAccount(state: AccessState) {
+  return state.accounts.some((account) => {
+    const person = personForAccount(state, account);
+    if (!account.enabled || !person?.enabled) return false;
+    if (
+      !state.accountCredentials.some(
+        (credential) =>
+          credential.accountId === account.id &&
+          Boolean(credential.passwordHash)
+      )
+    ) {
+      return false;
+    }
+    const actor = actorForAccount(state, account, "admin");
+    return Boolean(actor?.permissions.includes("admin.access"));
+  });
+}
+
 function synchronizeAccessRoles(
   stateInput: AppState,
   userGroups: UserGroup[],
@@ -313,6 +331,7 @@ function synchronizeAccessRoles(
   writeAudit = true
 ) {
   const state = normalizeAccessState(stateInput);
+  const hadUsableAdminAccount = hasUsableAdminAccount(state);
   const before = new Map(
     state.accounts.map((account) => [
       account.id,
@@ -393,6 +412,10 @@ function synchronizeAccessRoles(
         (account) => account.id === assignment.accountId
       ) && retainedRoleIds.has(assignment.roleId)
   );
+
+  if (hadUsableAdminAccount && !hasUsableAdminAccount(state)) {
+    throw new Error("At least one usable admin account is required");
+  }
 
   for (const account of state.accounts) {
     if (

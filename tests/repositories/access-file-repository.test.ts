@@ -1187,6 +1187,29 @@ describe("file access repository", () => {
     ).resolves.toBeUndefined();
   });
 
+  it("rejects config saves that would remove the last usable admin", async () => {
+    const store = memoryStore();
+    const repository = createFileAppRepository(store);
+    await repository.bootstrapAdmin({
+      legacyPassword: "legacy-secret",
+      name: "Root Admin",
+      phone: "13700137000",
+      password: "StrongPass123!",
+      group: { mode: "existing", groupId: "admin" }
+    });
+
+    await expect(repository.saveConfig({
+      ...store.snapshot().config,
+      userGroups: groups.map((group) => (
+        group.id === "admin"
+          ? { ...group, canAdmin: false }
+          : group
+      ))
+    })).rejects.toThrow("At least one usable admin account is required");
+
+    expect(store.snapshot().config.userGroups?.find((group) => group.id === "admin")?.canAdmin).toBe(true);
+  });
+
   it("keeps auto acceptance and an interleaved access mutation atomic", async () => {
     const initial = accessState();
     initial.tickets = [autoAcceptanceTicket()];
