@@ -198,7 +198,8 @@ describe("MariaDB access store", () => {
     const query = calls[0];
     expect(query.params).toEqual([tokenHash, "mobile"]);
     expect(query.sql).toContain("s.revoked_at IS NULL");
-    expect(query.sql).toContain("s.expires_at > CURRENT_TIMESTAMP(3)");
+    expect(query.sql).toContain("s.expires_at > UTC_TIMESTAMP(3)");
+    expect(query.sql).not.toContain("s.expires_at > CURRENT_TIMESTAMP(3)");
     expect(query.sql).toContain("s.auth_version = a.auth_version");
     expect(query.sql).toContain("a.enabled = true");
     expect(query.sql).toContain("p.enabled = true");

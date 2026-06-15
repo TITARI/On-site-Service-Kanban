@@ -786,7 +786,7 @@ export async function resolveAccountSession(
      WHERE s.token_hash = ?
        AND s.session_type = ?
        AND s.revoked_at IS NULL
-       AND s.expires_at > CURRENT_TIMESTAMP(3)
+       AND s.expires_at > UTC_TIMESTAMP(3)
        AND s.auth_version = a.auth_version
        AND a.enabled = true
        AND p.enabled = true
