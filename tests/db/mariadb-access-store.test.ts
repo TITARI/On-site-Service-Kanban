@@ -1072,7 +1072,11 @@ describe("MariaDB access store", () => {
 
   it("updates unrelated fields in a disabled group without revalidating or replacing the group role", async () => {
     const { calls, connection } = recordingConnection((sql) => {
-      if (sql.includes("FOR UPDATE") && sql.includes("FROM accounts a")) {
+      if (
+        sql.includes("FOR UPDATE") &&
+        sql.includes("FROM accounts a") &&
+        !sql.includes("usable_admin_lock")
+      ) {
         return [{
           account_id: "account-person-1",
           login_name: "13800138000",
@@ -1154,7 +1158,11 @@ describe("MariaDB access store", () => {
 
   it("revokes sessions when only group lock changes", async () => {
     const { calls, connection } = recordingConnection((sql) => {
-      if (sql.includes("FOR UPDATE") && sql.includes("FROM accounts a")) {
+      if (
+        sql.includes("FOR UPDATE") &&
+        sql.includes("FROM accounts a") &&
+        !sql.includes("usable_admin_lock")
+      ) {
         return [{
           account_id: "account-person-1",
           login_name: "13800138000",
@@ -1207,7 +1215,11 @@ describe("MariaDB access store", () => {
 
   it("rejects moving a user to a phone held by a legacy person without an account", async () => {
     const { calls, connection } = recordingConnection((sql) => {
-      if (sql.includes("FOR UPDATE") && sql.includes("FROM accounts a")) {
+      if (
+        sql.includes("FOR UPDATE") &&
+        sql.includes("FROM accounts a") &&
+        !sql.includes("usable_admin_lock")
+      ) {
         return [{
           account_id: "account-person-1",
           login_name: "13800138000",
@@ -1258,7 +1270,11 @@ describe("MariaDB access store", () => {
 
   it("rejects enabling a user whose unchanged current group is disabled", async () => {
     const { calls, connection } = recordingConnection((sql) => {
-      if (sql.includes("FOR UPDATE") && sql.includes("FROM accounts a")) {
+      if (
+        sql.includes("FOR UPDATE") &&
+        sql.includes("FROM accounts a") &&
+        !sql.includes("usable_admin_lock")
+      ) {
         return [{
           account_id: "account-person-1",
           login_name: "13800138000",
@@ -1299,7 +1315,11 @@ describe("MariaDB access store", () => {
 
   it("allows enabling a disabled user when moving to an enabled group", async () => {
     const { calls, connection } = recordingConnection((sql) => {
-      if (sql.includes("FOR UPDATE") && sql.includes("FROM accounts a")) {
+      if (
+        sql.includes("FOR UPDATE") &&
+        sql.includes("FROM accounts a") &&
+        !sql.includes("usable_admin_lock")
+      ) {
         return [{
           account_id: "account-person-1",
           login_name: "13800138000",
@@ -1346,7 +1366,11 @@ describe("MariaDB access store", () => {
 
   it("deletes a user and related access rows using bound identifiers", async () => {
     const { calls, connection } = recordingConnection((sql) => {
-      if (sql.includes("FOR UPDATE") && sql.includes("FROM accounts a")) {
+      if (
+        sql.includes("FOR UPDATE") &&
+        sql.includes("FROM accounts a") &&
+        !sql.includes("usable_admin_lock")
+      ) {
         return [{
           account_id: "account-person-1",
           login_name: "13800138000",
@@ -1394,7 +1418,11 @@ describe("MariaDB access store", () => {
 
   it("checks business history before deleting but ignores target-only audit rows", async () => {
     const { calls, connection } = recordingConnection((sql) => {
-      if (sql.includes("FOR UPDATE") && sql.includes("FROM accounts a")) {
+      if (
+        sql.includes("FOR UPDATE") &&
+        sql.includes("FROM accounts a") &&
+        !sql.includes("usable_admin_lock")
+      ) {
         return [{
           account_id: "account-person-1",
           login_name: "13800138000",
@@ -1417,6 +1445,7 @@ describe("MariaDB access store", () => {
         expect(sql).toContain("pending_work_order_sessions");
         expect(sql).toContain("chat_identities");
         expect(sql).toContain("outbound_messages");
+        expect(sql).toContain("conversation_people");
         expect(sql).toContain("actor_id");
         expect(sql).not.toContain("target_id =");
         return [];
@@ -1436,6 +1465,7 @@ describe("MariaDB access store", () => {
       "person-1",
       "person-1",
       "person-1",
+      "person-1",
       "account-person-1"
     ]);
     expect(calls.findIndex((call) =>
@@ -1447,7 +1477,11 @@ describe("MariaDB access store", () => {
 
   it("blocks deletion when business history exists", async () => {
     const { calls, connection } = recordingConnection((sql) => {
-      if (sql.includes("FOR UPDATE") && sql.includes("FROM accounts a")) {
+      if (
+        sql.includes("FOR UPDATE") &&
+        sql.includes("FROM accounts a") &&
+        !sql.includes("usable_admin_lock")
+      ) {
         return [{
           account_id: "account-person-1",
           login_name: "13800138000",
@@ -1480,9 +1514,57 @@ describe("MariaDB access store", () => {
     )).toBe(false);
   });
 
+  it("blocks deletion when conversation membership exists", async () => {
+    const { calls, connection } = recordingConnection((sql) => {
+      if (
+        sql.includes("FOR UPDATE") &&
+        sql.includes("FROM accounts a") &&
+        !sql.includes("usable_admin_lock")
+      ) {
+        return [{
+          account_id: "account-person-1",
+          login_name: "13800138000",
+          account_enabled: 1,
+          person_id: "person-1",
+          person_name: "Alice",
+          phone: "13800138000",
+          role: "handler",
+          group_id: "builder",
+          group_name_snapshot: "Builder",
+          group_locked: 0,
+          group_enabled: 1,
+          person_enabled: 1
+        }];
+      }
+      if (sql.includes("deletion_history")) {
+        return [{ reason: "conversation_people.person_id" }];
+      }
+      return sql.trimStart().startsWith("SELECT")
+        ? []
+        : { affectedRows: 1 };
+    });
+
+    await expect(
+      deleteUser(connection, "person-1", actor())
+    ).rejects.toThrow(/history|referenced|delete/i);
+
+    const historyQuery = calls.find((call) =>
+      call.sql.includes("deletion_history")
+    );
+    expect(historyQuery?.sql).toContain("conversation_people");
+    expect(historyQuery?.params).toContain("person-1");
+    expect(calls.some((call) =>
+      call.sql === "DELETE FROM people WHERE id = ?"
+    )).toBe(false);
+  });
+
   it("protects the final usable admin from disable and deletion", async () => {
     const { calls, connection } = recordingConnection((sql) => {
-      if (sql.includes("FOR UPDATE") && sql.includes("FROM accounts a")) {
+      if (
+        sql.includes("FOR UPDATE") &&
+        sql.includes("FROM accounts a") &&
+        !sql.includes("usable_admin_lock")
+      ) {
         return [{
           account_id: "account-person-1",
           login_name: "13700137000",
@@ -1498,8 +1580,8 @@ describe("MariaDB access store", () => {
           person_enabled: 1
         }];
       }
-      if (sql.includes("COUNT(DISTINCT a.id) AS count")) {
-        return [{ count: 1 }];
+      if (sql.includes("usable_admin_lock")) {
+        return [{ account_id: "account-person-1", person_id: "person-1" }];
       }
       if (sql.includes("WHERE p.id = ? OR a.id = ?")) {
         return [userDetailRow({
@@ -1530,6 +1612,117 @@ describe("MariaDB access store", () => {
     expect(calls.some((call) =>
       call.sql === "DELETE FROM people WHERE id = ?"
     )).toBe(false);
+  });
+
+  it("protects final admin deletion even when the denormalized person role is stale", async () => {
+    const { calls, connection } = recordingConnection((sql) => {
+      if (
+        sql.includes("FOR UPDATE") &&
+        sql.includes("FROM accounts a") &&
+        !sql.includes("usable_admin_lock")
+      ) {
+        return [{
+          account_id: "account-person-1",
+          login_name: "13700137000",
+          account_enabled: 1,
+          person_id: "person-1",
+          person_name: "Admin",
+          phone: "13700137000",
+          role: "handler",
+          group_id: "admin",
+          group_name_snapshot: "Administrators",
+          group_locked: 1,
+          group_enabled: 1,
+          person_enabled: 1
+        }];
+      }
+      if (sql.includes("usable_admin_lock")) {
+        return [{ account_id: "account-person-1", person_id: "person-1" }];
+      }
+      if (sql.includes("COUNT(DISTINCT a.id) AS count")) {
+        return [{ count: 1 }];
+      }
+      if (sql.includes("deletion_history")) {
+        return [];
+      }
+      return sql.trimStart().startsWith("SELECT")
+        ? []
+        : { affectedRows: 1 };
+    });
+
+    await expect(
+      deleteUser(connection, "person-1", actor())
+    ).rejects.toThrow("At least one usable admin account is required");
+
+    expect(calls.some((call) =>
+      call.sql.includes("usable_admin_lock") &&
+      call.sql.includes("FOR UPDATE")
+    )).toBe(true);
+    expect(calls.some((call) =>
+      call.sql === "DELETE FROM people WHERE id = ?"
+    )).toBe(false);
+  });
+
+  it("locks usable admin rows before admin access removal checks", async () => {
+    const { calls, connection } = recordingConnection((sql) => {
+      if (
+        sql.includes("FOR UPDATE") &&
+        sql.includes("FROM accounts a") &&
+        !sql.includes("usable_admin_lock")
+      ) {
+        return [{
+          account_id: "account-person-1",
+          login_name: "13700137000",
+          account_enabled: 1,
+          person_id: "person-1",
+          person_name: "Admin",
+          phone: "13700137000",
+          role: "admin",
+          group_id: "admin",
+          group_name_snapshot: "Administrators",
+          group_locked: 1,
+          group_enabled: 1,
+          person_enabled: 1
+        }];
+      }
+      if (sql.includes("usable_admin_lock")) {
+        return [
+          { account_id: "account-person-1", person_id: "person-1" },
+          { account_id: "account-person-2", person_id: "person-2" }
+        ];
+      }
+      if (sql.includes("COUNT(DISTINCT a.id) AS count")) {
+        return [{ count: 2 }];
+      }
+      if (sql.includes("WHERE p.id = ? OR a.id = ?")) {
+        return [userDetailRow({
+          person_name: "Admin",
+          phone: "13700137000",
+          group_id: "admin",
+          group_name: "Administrators",
+          group_locked: 1,
+          has_password: 1,
+          permission_code: "admin.access"
+        })];
+      }
+      return sql.trimStart().startsWith("SELECT")
+        ? []
+        : { affectedRows: 1 };
+    });
+
+    await expect(
+      updateUser(connection, "person-1", { enabled: false }, actor())
+    ).resolves.toBeDefined();
+
+    const lockIndex = calls.findIndex((call) =>
+      call.sql.includes("usable_admin_lock")
+    );
+    const updateIndex = calls.findIndex((call) =>
+      call.sql.includes("UPDATE people")
+    );
+    expect(lockIndex).toBeGreaterThanOrEqual(0);
+    expect(calls[lockIndex]?.sql).toContain("FOR UPDATE");
+    expect(lockIndex).toBeLessThan(updateIndex);
   });
 
   it.each([

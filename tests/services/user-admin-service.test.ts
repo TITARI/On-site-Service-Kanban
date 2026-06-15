@@ -8,6 +8,7 @@ import type { AppRepository } from "@/lib/repositories/app-repository";
 import {
   UserAdminConflictError,
   UserAdminNotFoundError,
+  UserAdminValidationError,
   createUserAdminService
 } from "@/lib/services/user-admin-service";
 
@@ -136,6 +137,63 @@ describe("user admin service", () => {
     await expect(
       service.disableUser("person-admin", actor())
     ).rejects.toBeInstanceOf(UserAdminConflictError);
+  });
+
+  it("allows repository to evaluate final admin moves between admin-capable groups", async () => {
+    const moved = user({
+      personId: "person-admin",
+      accountId: "account-person-admin",
+      groupId: "admin-b",
+      groupName: "Admin B",
+      permissions: ["admin.access"],
+      hasPassword: true
+    });
+    const repo = repository({
+      getUser: vi.fn().mockResolvedValue(user({
+        personId: "person-admin",
+        accountId: "account-person-admin",
+        groupId: "admin-a",
+        groupName: "Admin A",
+        permissions: ["admin.access"],
+        hasPassword: true
+      })),
+      countUsableAdmins: vi.fn().mockResolvedValue(1),
+      updateUser: vi.fn().mockResolvedValue(moved)
+    });
+    const service = createUserAdminService(repo);
+    const input = {
+      ...validMutation,
+      groupId: "admin-b",
+      groupLocked: true
+    };
+
+    await expect(
+      service.updateUser("person-admin", input, actor())
+    ).resolves.toBe(moved);
+    expect(repo.updateUser).toHaveBeenCalledWith(
+      "person-admin",
+      input,
+      actor()
+    );
+  });
+
+  it("validates empty password before last-admin protection", async () => {
+    const repo = repository({
+      getUser: vi.fn().mockResolvedValue(user({
+        personId: "person-admin",
+        accountId: "account-person-admin",
+        permissions: ["admin.access"],
+        hasPassword: true
+      })),
+      countUsableAdmins: vi.fn().mockResolvedValue(1),
+      setUserPassword: vi.fn()
+    });
+    const service = createUserAdminService(repo);
+
+    await expect(
+      service.setPassword("person-admin", { password: "" }, actor())
+    ).rejects.toBeInstanceOf(UserAdminValidationError);
+    expect(repo.setUserPassword).not.toHaveBeenCalled();
   });
 
   it("returns paged user lists with the requested page metadata", async () => {

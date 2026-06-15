@@ -1411,6 +1411,41 @@ describe("file access repository", () => {
     });
   });
 
+  it("blocks deletion when the person is linked to a conversation", async () => {
+    const store = memoryStore();
+    const repository = createFileAppRepository(store);
+    const user = await repository.createUser({
+      name: "Conversation Member",
+      phone: "13800138000",
+      groupId: "builder",
+      groupLocked: false,
+      enabled: true
+    }, adminActor());
+    store.mutate((state) => {
+      state.conversations = [
+        {
+          id: "conversation-site",
+          platform: "wechat",
+          type: "group",
+          externalConversationId: "site-group",
+          title: "Site Group",
+          linkedPersonIds: [user.personId],
+          defaultNotify: true,
+          createdAt: "2026-06-15T00:00:00.000Z",
+          updatedAt: "2026-06-15T00:00:00.000Z"
+        }
+      ];
+    });
+
+    await expect(repository.userDeletionHistory(user.personId)).resolves.toEqual({
+      hasHistory: true,
+      reasons: expect.arrayContaining(["conversation_people.person_id"])
+    });
+    await expect(
+      repository.deleteUser(user.personId, adminActor())
+    ).rejects.toThrow(/business history|cannot be deleted/i);
+  });
+
   it("keeps auto acceptance and an interleaved access mutation atomic", async () => {
     const initial = accessState();
     initial.tickets = [autoAcceptanceTicket()];

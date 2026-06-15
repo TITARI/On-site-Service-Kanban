@@ -1214,6 +1214,7 @@ function userDeletionHistoryForAccount(
   state.messageRecords ??= [];
   state.pendingWorkOrderSessions ??= [];
   state.outboundMessages ??= [];
+  state.conversations ??= [];
   const identityIds = new Set(
     state.chatIdentities
       .filter((identity) => identity.personId === personId)
@@ -1251,6 +1252,11 @@ function userDeletionHistoryForAccount(
     identityIds.has(message.targetChatIdentityId)
   ))) {
     reasons.add("outbound_messages.target_chat_identity_id");
+  }
+  if (state.conversations.some((conversation) => (
+    conversation.linkedPersonIds.includes(personId)
+  ))) {
+    reasons.add("conversation_people.person_id");
   }
   if (state.auditLogs.some((entry) => entry.actorId === accountId)) {
     reasons.add("audit_logs.actor_id");

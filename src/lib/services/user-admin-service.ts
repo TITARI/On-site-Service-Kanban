@@ -131,14 +131,9 @@ export function createUserAdminService(repository: AppRepository) {
       actor: AuthenticatedActor
     ) {
       const mutation = parseMutation(input);
-      const current = await repository.getUser(userId);
       await assertNotLastAdmin(
         userId,
-        Boolean(current?.enabled) &&
-          (
-            !mutation.enabled ||
-            mutation.groupId !== current?.groupId
-          )
+        !mutation.enabled
       );
       try {
         return await repository.updateUser(userId, mutation, actor);
@@ -188,7 +183,6 @@ export function createUserAdminService(repository: AppRepository) {
         ? (input as { password?: unknown }).password
         : input;
       if (String(rawPassword ?? "") === "") {
-        await assertNotLastAdmin(userId, true);
         throw new UserAdminValidationError("Password is required");
       }
       let password: string;
