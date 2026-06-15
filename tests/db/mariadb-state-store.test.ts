@@ -685,6 +685,67 @@ describe("MariaDbStateStore", () => {
     ]);
   });
 
+  it("rejects runtime account upserts when login belongs to a different person", async () => {
+    const { calls, connection } = wechatProcessingConnection();
+    const baseExecute = vi.mocked(connection.execute);
+    const originalExecute = baseExecute.getMockImplementation();
+    baseExecute.mockImplementation(async (sql: string, params: unknown[] = []) => {
+      if (sql.includes("FROM accounts") && sql.includes("FOR UPDATE")) {
+        calls.push({ sql, params });
+        return [[{
+          id: "account-other-person",
+          person_id: "other-person",
+          login_name: "13800138088"
+        }]];
+      }
+      return originalExecute?.(sql, params) ?? [{ affectedRows: 1 }];
+    });
+    databaseMocks.setConnection(connection);
+
+    await expect(new MariaDbStateStore().processWechatMessage({
+      channel: "wechat",
+      externalMessageId: "message-register-conflict",
+      senderId: "wxid-runtime",
+      senderName: "Alice WeChat",
+      senderGroup: "Runtime Group",
+      sourceConversationId: "runtime-group",
+      text: "娉ㄥ唽 Builder Alice 13800138088"
+    })).rejects.toThrow(/Runtime account consistency error.*13800138088.*different person/);
+
+    const personInsert = calls.find((call) =>
+      call.sql.includes("INSERT INTO people") &&
+      call.params.includes("13800138088")
+    );
+    const personId = String(personInsert?.params[0]);
+    expect(calls.some((call) =>
+      call.sql.includes("INSERT INTO account_roles") &&
+      call.params.includes(`account-${personId}`)
+    )).toBe(false);
+  });
+
+  it("does not reset auth state when runtime account upsert hits a safe duplicate", async () => {
+    const { calls, connection } = wechatProcessingConnection();
+    databaseMocks.setConnection(connection);
+
+    await new MariaDbStateStore().processWechatMessage({
+      channel: "wechat",
+      externalMessageId: "message-register-runtime",
+      senderId: "wxid-runtime",
+      senderName: "Alice WeChat",
+      senderGroup: "Runtime Group",
+      sourceConversationId: "runtime-group",
+      text: "娉ㄥ唽 Builder Alice 13800138088"
+    });
+
+    const accountInsert = calls.find((call) =>
+      call.sql.includes("INSERT INTO accounts")
+    );
+    const duplicateUpdateClause = normalizedSql(accountInsert?.sql ?? "")
+      .split("ON DUPLICATE KEY UPDATE")[1] ?? "";
+    expect(duplicateUpdateClause).not.toContain("auth_version");
+    expect(duplicateUpdateClause).not.toContain("last_login_at");
+  });
+
   it("continues persisting watchtower tables while processing WeChat messages", async () => {
     const { calls, connection } = wechatProcessingConnection();
     databaseMocks.setConnection(connection);

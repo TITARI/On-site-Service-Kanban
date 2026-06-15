@@ -760,12 +760,44 @@ function hydrateRuntimePeopleGroups(state: AppState) {
   }
 }
 
+async function assertRuntimeAccountConsistent(
+  connection: DatabaseConnection,
+  person: Person,
+  accountId: string
+) {
+  const accountRows = await rows<Row>(
+    connection,
+    `SELECT id, person_id, login_name
+     FROM accounts
+     WHERE id = ? OR person_id = ? OR login_name = ?
+     FOR UPDATE`,
+    [accountId, person.id, person.phone]
+  );
+
+  for (const row of accountRows) {
+    const existingId = String(row.id);
+    const existingPersonId = row.person_id ? String(row.person_id) : "";
+    if (existingPersonId && existingPersonId !== person.id) {
+      throw new Error(
+        `Runtime account consistency error: login_name ${person.phone} is attached to a different person/account (${existingPersonId}/${existingId})`
+      );
+    }
+    if (existingId !== accountId) {
+      throw new Error(
+        `Runtime account consistency error: person ${person.id} is attached to non-deterministic account ${existingId}, expected ${accountId}`
+      );
+    }
+  }
+}
+
 async function upsertRuntimeAccessAccounts(
   connection: DatabaseConnection,
   people: Person[],
   now: Date
 ) {
   for (const person of people) {
+    const accountId = `account-${person.id}`;
+    await assertRuntimeAccountConsistent(connection, person, accountId);
     await execute(
       connection,
       `INSERT INTO accounts (
@@ -777,7 +809,7 @@ async function upsertRuntimeAccessAccounts(
         enabled = VALUES(enabled),
         updated_at = VALUES(updated_at)`,
       [
-        `account-${person.id}`,
+        accountId,
         person.id,
         person.phone,
         person.enabled,
@@ -791,14 +823,14 @@ async function upsertRuntimeAccessAccounts(
     await execute(
       connection,
       "DELETE FROM account_roles WHERE account_id = ?",
-      [`account-${person.id}`]
+      [accountId]
     );
     await execute(
       connection,
       `INSERT INTO account_roles (account_id, role_id, created_at)
        VALUES (?, ?, ?)
        ON DUPLICATE KEY UPDATE role_id = VALUES(role_id)`,
-      [`account-${person.id}`, `role-${person.groupId}`, now]
+      [accountId, `role-${person.groupId}`, now]
     );
   }
 }
