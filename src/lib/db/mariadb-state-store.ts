@@ -751,6 +751,79 @@ async function writeImportedAccessAccounts(
   }
 }
 
+function hydrateRuntimePeopleGroups(state: AppState) {
+  const groups = state.config.userGroups ?? [];
+  for (const person of state.people ?? []) {
+    if (person.groupId || !person.groupName) continue;
+    const group = groups.find((item) => item.enabled && item.name === person.groupName);
+    if (group) person.groupId = group.id;
+  }
+}
+
+async function upsertRuntimeAccessAccounts(
+  connection: DatabaseConnection,
+  people: Person[],
+  now: Date
+) {
+  for (const person of people) {
+    await execute(
+      connection,
+      `INSERT INTO accounts (
+        id, person_id, login_name, enabled, auth_version, last_login_at, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON DUPLICATE KEY UPDATE
+        person_id = VALUES(person_id),
+        login_name = VALUES(login_name),
+        enabled = VALUES(enabled),
+        updated_at = VALUES(updated_at)`,
+      [
+        `account-${person.id}`,
+        person.id,
+        person.phone,
+        person.enabled,
+        1,
+        null,
+        dateOrNull(person.createdAt) ?? now,
+        dateOrNull(person.updatedAt) ?? now
+      ]
+    );
+    if (!person.groupId) continue;
+    await execute(
+      connection,
+      "DELETE FROM account_roles WHERE account_id = ?",
+      [`account-${person.id}`]
+    );
+    await execute(
+      connection,
+      `INSERT INTO account_roles (account_id, role_id, created_at)
+       VALUES (?, ?, ?)
+       ON DUPLICATE KEY UPDATE role_id = VALUES(role_id)`,
+      [`account-${person.id}`, `role-${person.groupId}`, now]
+    );
+  }
+}
+
+async function clearWatchtowerStateTables(connection: DatabaseConnection) {
+  for (const table of [
+    "ticket_feedback_users",
+    "ticket_replies",
+    "ticket_timeline",
+    "ai_decisions",
+    "message_analysis_logs",
+    "wechat_order_logs",
+    "pending_work_order_sessions",
+    "outbound_messages",
+    "inbound_messages",
+    "conversation_people",
+    "conversations",
+    "chat_identities",
+    "people",
+    "tickets"
+  ]) {
+    await execute(connection, `DELETE FROM ${table}`);
+  }
+}
+
 async function writeBooths(connection: DatabaseConnection, booths: BoothRecord[], now: Date) {
   await execute(
     connection,
@@ -981,13 +1054,33 @@ async function writeConfig(connection: DatabaseConnection, config: AppConfig, no
   await writeConfigVersion(connection, normalized, now);
 }
 
-async function writePeople(connection: DatabaseConnection, people: Person[], now: Date) {
+async function writePeople(
+  connection: DatabaseConnection,
+  people: Person[],
+  now: Date,
+  options: { upsert?: boolean } = {}
+) {
   for (const person of people) {
     await execute(
       connection,
       `INSERT INTO people (
         id, name, phone, role, group_id, group_name_snapshot, group_locked, name_conflict, booth_scope, enabled, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)${
+        options.upsert
+          ? `
+      ON DUPLICATE KEY UPDATE
+        name = VALUES(name),
+        phone = VALUES(phone),
+        role = VALUES(role),
+        group_id = VALUES(group_id),
+        group_name_snapshot = VALUES(group_name_snapshot),
+        group_locked = VALUES(group_locked),
+        name_conflict = VALUES(name_conflict),
+        booth_scope = VALUES(booth_scope),
+        enabled = VALUES(enabled),
+        updated_at = VALUES(updated_at)`
+          : ""
+      }`,
       [
         person.id,
         person.name,
@@ -1006,14 +1099,30 @@ async function writePeople(connection: DatabaseConnection, people: Person[], now
   }
 }
 
-async function writeChatIdentities(connection: DatabaseConnection, identities: ChatIdentity[], now: Date) {
+async function writeChatIdentities(
+  connection: DatabaseConnection,
+  identities: ChatIdentity[],
+  now: Date,
+  options: { upsert?: boolean } = {}
+) {
   for (const identity of identities) {
     await execute(
       connection,
       `INSERT INTO chat_identities (
         id, platform, external_user_id, display_name, is_temporary, person_id, verified_by,
         verified_at, first_seen_at, last_seen_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)${
+        options.upsert
+          ? `
+      ON DUPLICATE KEY UPDATE
+        display_name = VALUES(display_name),
+        is_temporary = VALUES(is_temporary),
+        person_id = VALUES(person_id),
+        verified_by = VALUES(verified_by),
+        verified_at = VALUES(verified_at),
+        last_seen_at = VALUES(last_seen_at)`
+          : ""
+      }`,
       [
         identity.id,
         identity.platform,
@@ -1030,13 +1139,28 @@ async function writeChatIdentities(connection: DatabaseConnection, identities: C
   }
 }
 
-async function writeConversations(connection: DatabaseConnection, conversations: Conversation[], now: Date) {
+async function writeConversations(
+  connection: DatabaseConnection,
+  conversations: Conversation[],
+  now: Date,
+  options: { upsert?: boolean } = {}
+) {
   for (const conversation of conversations) {
     await execute(
       connection,
       `INSERT INTO conversations (
         id, platform, type, external_conversation_id, title, default_notify, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)${
+        options.upsert
+          ? `
+      ON DUPLICATE KEY UPDATE
+        type = VALUES(type),
+        external_conversation_id = VALUES(external_conversation_id),
+        title = VALUES(title),
+        default_notify = VALUES(default_notify),
+        updated_at = VALUES(updated_at)`
+          : ""
+      }`,
       [
         conversation.id,
         conversation.platform,
@@ -1052,14 +1176,24 @@ async function writeConversations(connection: DatabaseConnection, conversations:
     for (const personId of conversation.linkedPersonIds) {
       await execute(
         connection,
-        "INSERT INTO conversation_people (conversation_id, person_id, created_at) VALUES (?, ?, ?)",
+        `INSERT INTO conversation_people (conversation_id, person_id, created_at)
+         VALUES (?, ?, ?)${
+           options.upsert
+             ? " ON DUPLICATE KEY UPDATE created_at = VALUES(created_at)"
+             : ""
+         }`,
         [conversation.id, personId, now]
       );
     }
   }
 }
 
-async function writeTickets(connection: DatabaseConnection, tickets: Ticket[], now: Date) {
+async function writeTickets(
+  connection: DatabaseConnection,
+  tickets: Ticket[],
+  now: Date,
+  options: { upsert?: boolean } = {}
+) {
   for (const ticket of tickets) {
     await execute(
       connection,
@@ -1068,7 +1202,36 @@ async function writeTickets(connection: DatabaseConnection, tickets: Ticket[], n
         submitter_id, submitter_name, submitter_phone, reporter_person_id, reporter_chat_identity_id,
         source_conversation_id, status, accepted_at, handler_id, handler_name, handler_phone,
         assignment_group, urge_count, last_urged_at, urge_level, priority_score, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)${
+        options.upsert
+          ? `
+      ON DUPLICATE KEY UPDATE
+        title = VALUES(title),
+        booth_number = VALUES(booth_number),
+        company_name = VALUES(company_name),
+        company_short_name = VALUES(company_short_name),
+        description = VALUES(description),
+        image_urls = VALUES(image_urls),
+        issue_type = VALUES(issue_type),
+        submitter_id = VALUES(submitter_id),
+        submitter_name = VALUES(submitter_name),
+        submitter_phone = VALUES(submitter_phone),
+        reporter_person_id = VALUES(reporter_person_id),
+        reporter_chat_identity_id = VALUES(reporter_chat_identity_id),
+        source_conversation_id = VALUES(source_conversation_id),
+        status = VALUES(status),
+        accepted_at = VALUES(accepted_at),
+        handler_id = VALUES(handler_id),
+        handler_name = VALUES(handler_name),
+        handler_phone = VALUES(handler_phone),
+        assignment_group = VALUES(assignment_group),
+        urge_count = VALUES(urge_count),
+        last_urged_at = VALUES(last_urged_at),
+        urge_level = VALUES(urge_level),
+        priority_score = VALUES(priority_score),
+        updated_at = VALUES(updated_at)`
+          : ""
+      }`,
       [
         ticket.id,
         ticket.title,
@@ -1104,7 +1267,15 @@ async function writeTickets(connection: DatabaseConnection, tickets: Ticket[], n
         connection,
         `INSERT INTO ticket_feedback_users (
           id, ticket_id, user_id, user_name, phone, feedback_at
-        ) VALUES (?, ?, ?, ?, ?, ?)`,
+        ) VALUES (?, ?, ?, ?, ?, ?)${
+          options.upsert
+            ? `
+        ON DUPLICATE KEY UPDATE
+          user_name = VALUES(user_name),
+          phone = VALUES(phone),
+          feedback_at = VALUES(feedback_at)`
+            : ""
+        }`,
         [
           stableId("feedback", `${ticket.id}:${feedback.userId}`),
           ticket.id,
@@ -1121,7 +1292,17 @@ async function writeTickets(connection: DatabaseConnection, tickets: Ticket[], n
         connection,
         `INSERT INTO ticket_replies (
           id, ticket_id, author_id, author_name, author_phone, role, body, image_urls, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)${
+          options.upsert
+            ? `
+        ON DUPLICATE KEY UPDATE
+          author_name = VALUES(author_name),
+          author_phone = VALUES(author_phone),
+          role = VALUES(role),
+          body = VALUES(body),
+          image_urls = VALUES(image_urls)`
+            : ""
+        }`,
         [
           reply.id,
           ticket.id,
@@ -1139,7 +1320,16 @@ async function writeTickets(connection: DatabaseConnection, tickets: Ticket[], n
     for (const item of ticket.timeline) {
       await execute(
         connection,
-        "INSERT INTO ticket_timeline (id, ticket_id, type, body, actor_name, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+        `INSERT INTO ticket_timeline (id, ticket_id, type, body, actor_name, created_at)
+         VALUES (?, ?, ?, ?, ?, ?)${
+           options.upsert
+             ? `
+         ON DUPLICATE KEY UPDATE
+           type = VALUES(type),
+           body = VALUES(body),
+           actor_name = VALUES(actor_name)`
+             : ""
+         }`,
         [item.id, ticket.id, item.type, item.body, item.actorName, dateOrNull(item.createdAt) ?? now]
       );
     }
@@ -1150,7 +1340,20 @@ async function writeTickets(connection: DatabaseConnection, tickets: Ticket[], n
         `INSERT INTO ai_decisions (
           id, ticket_id, model_id, scenario, confidence, action, issue_type, matched_ticket_id,
           suggestion, latency_ms, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)${
+          options.upsert
+            ? `
+        ON DUPLICATE KEY UPDATE
+          model_id = VALUES(model_id),
+          scenario = VALUES(scenario),
+          confidence = VALUES(confidence),
+          action = VALUES(action),
+          issue_type = VALUES(issue_type),
+          matched_ticket_id = VALUES(matched_ticket_id),
+          suggestion = VALUES(suggestion),
+          latency_ms = VALUES(latency_ms)`
+            : ""
+        }`,
         [
           stableId("decision", `${ticket.id}:${index}`),
           ticket.id,
@@ -1169,7 +1372,12 @@ async function writeTickets(connection: DatabaseConnection, tickets: Ticket[], n
   }
 }
 
-async function writeInboundMessages(connection: DatabaseConnection, records: InboundMessageRecord[], now: Date) {
+async function writeInboundMessages(
+  connection: DatabaseConnection,
+  records: InboundMessageRecord[],
+  now: Date,
+  options: { upsert?: boolean } = {}
+) {
   for (const record of records) {
     await execute(
       connection,
@@ -1177,7 +1385,23 @@ async function writeInboundMessages(connection: DatabaseConnection, records: Inb
         id, channel, external_message_id, sender_id, sender_name, sender_phone, sender_group, text,
         image_urls, received_at, created_at, reporter_person_id, reporter_chat_identity_id,
         source_conversation_id, raw_payload, analysis_json
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)${
+        options.upsert
+          ? `
+      ON DUPLICATE KEY UPDATE
+        sender_id = VALUES(sender_id),
+        sender_name = VALUES(sender_name),
+        sender_phone = VALUES(sender_phone),
+        sender_group = VALUES(sender_group),
+        text = VALUES(text),
+        image_urls = VALUES(image_urls),
+        reporter_person_id = VALUES(reporter_person_id),
+        reporter_chat_identity_id = VALUES(reporter_chat_identity_id),
+        source_conversation_id = VALUES(source_conversation_id),
+        raw_payload = VALUES(raw_payload),
+        analysis_json = VALUES(analysis_json)`
+          : ""
+      }`,
       [
         record.id,
         record.channel,
@@ -1202,7 +1426,18 @@ async function writeInboundMessages(connection: DatabaseConnection, records: Inb
       connection,
       `INSERT INTO message_analysis_logs (
         id, inbound_message_id, booth_number, issue_type, confidence, suggested_action, matched_ticket_id, reason, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)${
+        options.upsert
+          ? `
+      ON DUPLICATE KEY UPDATE
+        booth_number = VALUES(booth_number),
+        issue_type = VALUES(issue_type),
+        confidence = VALUES(confidence),
+        suggested_action = VALUES(suggested_action),
+        matched_ticket_id = VALUES(matched_ticket_id),
+        reason = VALUES(reason)`
+          : ""
+      }`,
       [
         stableId("analysis", record.id),
         record.id,
@@ -1220,7 +1455,17 @@ async function writeInboundMessages(connection: DatabaseConnection, records: Inb
       connection,
       `INSERT INTO wechat_order_logs (
         id, inbound_message_id, channel, action, ticket_id, session_id, summary, status, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)${
+        options.upsert
+          ? `
+      ON DUPLICATE KEY UPDATE
+        action = VALUES(action),
+        ticket_id = VALUES(ticket_id),
+        session_id = VALUES(session_id),
+        summary = VALUES(summary),
+        status = VALUES(status)`
+          : ""
+      }`,
       [
         stableId("wechat-log", record.id),
         record.id,
@@ -1236,7 +1481,12 @@ async function writeInboundMessages(connection: DatabaseConnection, records: Inb
   }
 }
 
-async function writePendingSessions(connection: DatabaseConnection, sessions: PendingWorkOrderSession[], now: Date) {
+async function writePendingSessions(
+  connection: DatabaseConnection,
+  sessions: PendingWorkOrderSession[],
+  now: Date,
+  options: { upsert?: boolean } = {}
+) {
   for (const session of sessions) {
     await execute(
       connection,
@@ -1244,7 +1494,26 @@ async function writePendingSessions(connection: DatabaseConnection, sessions: Pe
         id, platform, conversation_id, chat_identity_id, original_message_record_id, draft_text,
         draft_images, identity_group, contact_name, contact_phone, person_id, booth_number,
         issue_type, missing_fields, created_at, updated_at, last_prompt_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)${
+        options.upsert
+          ? `
+      ON DUPLICATE KEY UPDATE
+        conversation_id = VALUES(conversation_id),
+        chat_identity_id = VALUES(chat_identity_id),
+        original_message_record_id = VALUES(original_message_record_id),
+        draft_text = VALUES(draft_text),
+        draft_images = VALUES(draft_images),
+        identity_group = VALUES(identity_group),
+        contact_name = VALUES(contact_name),
+        contact_phone = VALUES(contact_phone),
+        person_id = VALUES(person_id),
+        booth_number = VALUES(booth_number),
+        issue_type = VALUES(issue_type),
+        missing_fields = VALUES(missing_fields),
+        updated_at = VALUES(updated_at),
+        last_prompt_at = VALUES(last_prompt_at)`
+          : ""
+      }`,
       [
         session.id,
         session.platform,
@@ -1268,7 +1537,12 @@ async function writePendingSessions(connection: DatabaseConnection, sessions: Pe
   }
 }
 
-async function writeOutboundMessages(connection: DatabaseConnection, messages: OutboundMessage[], now: Date) {
+async function writeOutboundMessages(
+  connection: DatabaseConnection,
+  messages: OutboundMessage[],
+  now: Date,
+  options: { upsert?: boolean } = {}
+) {
   for (const message of messages) {
     await execute(
       connection,
@@ -1276,7 +1550,24 @@ async function writeOutboundMessages(connection: DatabaseConnection, messages: O
         id, channel, target_conversation_id, target_chat_identity_id, target_name, text,
         related_ticket_id, related_session_id, status, retry_count, last_error, claimed_at,
         sent_at, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)${
+        options.upsert
+          ? `
+      ON DUPLICATE KEY UPDATE
+        target_conversation_id = VALUES(target_conversation_id),
+        target_chat_identity_id = VALUES(target_chat_identity_id),
+        target_name = VALUES(target_name),
+        text = VALUES(text),
+        related_ticket_id = VALUES(related_ticket_id),
+        related_session_id = VALUES(related_session_id),
+        status = VALUES(status),
+        retry_count = VALUES(retry_count),
+        last_error = VALUES(last_error),
+        claimed_at = VALUES(claimed_at),
+        sent_at = VALUES(sent_at),
+        updated_at = VALUES(updated_at)`
+          : ""
+      }`,
       [
         message.id,
         message.channel,
@@ -1296,6 +1587,19 @@ async function writeOutboundMessages(connection: DatabaseConnection, messages: O
       ]
     );
   }
+}
+
+async function replaceWatchtowerState(connection: DatabaseConnection, state: AppState, now: Date) {
+  hydrateRuntimePeopleGroups(state);
+  await clearWatchtowerStateTables(connection);
+  await writePeople(connection, state.people ?? [], now, { upsert: true });
+  await upsertRuntimeAccessAccounts(connection, state.people ?? [], now);
+  await writeChatIdentities(connection, state.chatIdentities ?? [], now, { upsert: true });
+  await writeConversations(connection, state.conversations ?? [], now, { upsert: true });
+  await writeTickets(connection, state.tickets, now, { upsert: true });
+  await writeInboundMessages(connection, state.messageRecords, now, { upsert: true });
+  await writePendingSessions(connection, state.pendingWorkOrderSessions ?? [], now, { upsert: true });
+  await writeOutboundMessages(connection, state.outboundMessages ?? [], now, { upsert: true });
 }
 
 function ticketFeedbackTargetName(ticket: Ticket) {
@@ -1671,7 +1975,7 @@ export class MariaDbStateStore {
     return await withDatabaseTransaction(async (connection) => {
       const state = await this.readState(connection);
       const result = await processWechatWatchtowerMessage(state, input);
-      await this.writeState(state, connection);
+      await replaceWatchtowerState(connection, state, new Date());
       return result;
     });
   }

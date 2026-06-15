@@ -170,6 +170,118 @@ function recordingConnection() {
   return { calls, connection };
 }
 
+function wechatProcessingConnection() {
+  const calls: Array<{ sql: string; params: unknown[] }> = [];
+  const config = {
+    ...defaultConfig(),
+    issueTypes: [
+      {
+        id: "network",
+        name: "Network",
+        urgencyMinutes: 20,
+        priorityWeight: 25,
+        assignmentGroup: "Builder",
+        enabled: true
+      }
+    ],
+    keywordGroups: [],
+    messageIntegrations: [
+      {
+        id: "wechat",
+        channel: "wechat" as const,
+        label: "WeChat",
+        enabled: true,
+        endpoint: "/api/integrations/wechat/messages",
+        secretEnv: "WECHAT_SECRET",
+        autoCreateTickets: true
+      }
+    ],
+    userGroups: [
+      {
+        id: "builder",
+        name: "Builder",
+        description: "Builder group",
+        canClaim: true,
+        canProcess: true,
+        canAccept: false,
+        canAdmin: false,
+        enabled: true
+      }
+    ]
+  };
+  const connection = {
+    execute: vi.fn(async (sql: string, params: unknown[] = []) => {
+      calls.push({ sql, params });
+      if (sql.includes("FROM app_config_versions")) {
+        return [[{ config_json: JSON.stringify(config) }]];
+      }
+      if (sql.includes("FROM exhibition_booths")) {
+        return [[{
+          booth_number: "A01",
+          company_name: "Example Exhibitor",
+          company_short_name: "Example",
+          sales_owner: "Sales",
+          builder: "Builder"
+        }]];
+      }
+      if (sql.includes("FROM chat_identities")) {
+        return [[{
+          id: "chat-wechat-user",
+          platform: "wechat",
+          external_user_id: "wxid-runtime",
+          display_name: "Alice WeChat",
+          is_temporary: 0,
+          person_id: null,
+          verified_by: null,
+          verified_at: null,
+          first_seen_at: rowDate(),
+          last_seen_at: rowDate()
+        }]];
+      }
+      if (sql.includes("FROM conversations")) {
+        return [[{
+          id: "conversation-runtime",
+          platform: "wechat",
+          type: "group",
+          external_conversation_id: "runtime-group",
+          title: "Runtime Group",
+          default_notify: 1,
+          created_at: rowDate(),
+          updated_at: rowDate()
+        }]];
+      }
+      if (sql.includes("FROM pending_work_order_sessions")) {
+        return [[{
+          id: "pending-runtime",
+          platform: "wechat",
+          conversation_id: "conversation-runtime",
+          chat_identity_id: "chat-wechat-user",
+          original_message_record_id: "message-original",
+          draft_text: "A01 Network broken",
+          draft_images: JSON.stringify([]),
+          identity_group: null,
+          contact_name: null,
+          contact_phone: null,
+          person_id: null,
+          booth_number: null,
+          issue_type: null,
+          missing_fields: JSON.stringify(["identityGroup", "name", "phone"]),
+          created_at: rowDate(),
+          updated_at: rowDate(),
+          last_prompt_at: rowDate()
+        }]];
+      }
+      if (sql.trimStart().startsWith("SELECT")) return [[]];
+      return [{ affectedRows: 1 }];
+    })
+  } as unknown as DatabaseConnection;
+  return { calls, connection };
+}
+
+function normalizedSql(sql: string) {
+  return sql.replace(/\s+/g, " ").trim();
+}
+
 describe("MariaDbStateStore", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -494,6 +606,110 @@ describe("MariaDbStateStore", () => {
       "account-person-imported",
       "role-builder"
     ]);
+  });
+
+  it("processes WeChat messages without clearing access auth tables", async () => {
+    const { calls, connection } = wechatProcessingConnection();
+    databaseMocks.setConnection(connection);
+
+    await new MariaDbStateStore().processWechatMessage({
+      channel: "wechat",
+      externalMessageId: "message-register-runtime",
+      senderId: "wxid-runtime",
+      senderName: "Alice WeChat",
+      senderGroup: "Runtime Group",
+      sourceConversationId: "runtime-group",
+      text: "注册 Builder Alice 13800138088"
+    });
+
+    const sql = calls.map((call) => normalizedSql(call.sql));
+    for (const table of [
+      "account_sessions",
+      "account_credentials",
+      "auth_bootstrap_state",
+      "accounts",
+      "roles",
+      "role_permissions"
+    ]) {
+      expect(sql, `${table} must not be fully cleared`).not.toContain(`DELETE FROM ${table}`);
+    }
+  });
+
+  it("upserts registered WeChat people and deterministic account roles without replacing auth state", async () => {
+    const { calls, connection } = wechatProcessingConnection();
+    databaseMocks.setConnection(connection);
+
+    await new MariaDbStateStore().processWechatMessage({
+      channel: "wechat",
+      externalMessageId: "message-register-runtime",
+      senderId: "wxid-runtime",
+      senderName: "Alice WeChat",
+      senderGroup: "Runtime Group",
+      sourceConversationId: "runtime-group",
+      text: "注册 Builder Alice 13800138088"
+    });
+
+    const personInsert = calls.find((call) =>
+      call.sql.includes("INSERT INTO people") &&
+      call.params.includes("13800138088")
+    );
+    expect(personInsert?.params.slice(4, 7)).toEqual([
+      "builder",
+      "Builder",
+      false
+    ]);
+    expect(normalizedSql(personInsert?.sql ?? "")).toContain("ON DUPLICATE KEY UPDATE");
+
+    const personId = String(personInsert?.params[0]);
+    const accountInsert = calls.find((call) =>
+      call.sql.includes("INSERT INTO accounts") &&
+      call.params.includes(`account-${personId}`)
+    );
+    expect(accountInsert?.params.slice(0, 5)).toEqual([
+      `account-${personId}`,
+      personId,
+      "13800138088",
+      true,
+      1
+    ]);
+    expect(normalizedSql(accountInsert?.sql ?? "")).toContain("ON DUPLICATE KEY UPDATE");
+
+    const accountRoleInsert = calls.find((call) =>
+      call.sql.includes("INSERT INTO account_roles") &&
+      call.params.includes(`account-${personId}`) &&
+      call.params.includes("role-builder")
+    );
+    expect(accountRoleInsert?.params.slice(0, 2)).toEqual([
+      `account-${personId}`,
+      "role-builder"
+    ]);
+  });
+
+  it("continues persisting watchtower tables while processing WeChat messages", async () => {
+    const { calls, connection } = wechatProcessingConnection();
+    databaseMocks.setConnection(connection);
+
+    await new MariaDbStateStore().processWechatMessage({
+      channel: "wechat",
+      externalMessageId: "message-register-runtime",
+      senderId: "wxid-runtime",
+      senderName: "Alice WeChat",
+      senderGroup: "Runtime Group",
+      sourceConversationId: "runtime-group",
+      text: "注册 Builder Alice 13800138088"
+    });
+
+    expect(calls.some((call) => call.sql.includes("DELETE FROM pending_work_order_sessions"))).toBe(true);
+    expect(calls.some((call) => call.sql.includes("DELETE FROM outbound_messages"))).toBe(true);
+    expect(calls.some((call) => call.sql.includes("DELETE FROM inbound_messages"))).toBe(true);
+    expect(calls.some((call) => call.sql.includes("DELETE FROM conversation_people"))).toBe(true);
+    expect(calls.some((call) => call.sql.includes("DELETE FROM chat_identities"))).toBe(true);
+    expect(calls.some((call) => call.sql.includes("DELETE FROM people"))).toBe(true);
+    expect(calls.some((call) => call.sql.includes("DELETE FROM tickets"))).toBe(true);
+    expect(calls.some((call) => call.sql.includes("INSERT INTO inbound_messages"))).toBe(true);
+    expect(calls.some((call) => call.sql.includes("INSERT INTO conversations"))).toBe(true);
+    expect(calls.some((call) => call.sql.includes("INSERT INTO chat_identities"))).toBe(true);
+    expect(calls.some((call) => call.sql.includes("INSERT INTO outbound_messages"))).toBe(true);
   });
 
   it("persists bootstrap group changes into versioned app config", async () => {
