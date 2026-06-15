@@ -1462,6 +1462,24 @@ describe("MariaDB access store", () => {
     }
   });
 
+  it("filters admin users by effective enabled account and person", async () => {
+    const { calls, connection } = recordingConnection((sql) => (
+      sql.includes("COUNT(*) AS total") ? [{ total: 0 }] : []
+    ));
+
+    await listUsers(connection, {
+      admin: true,
+      page: 1,
+      pageSize: 20
+    });
+
+    expect(calls).toHaveLength(2);
+    for (const call of calls) {
+      expect(call.sql).toContain("p.enabled = true");
+      expect(call.sql).toContain("a.enabled = true");
+    }
+  });
+
   it("derives user detail permissions from effective enabled group and matching enabled role", async () => {
     const { calls, connection } = recordingConnection((sql) => {
       if (sql.includes("COUNT(*) AS total")) return [{ total: 1 }];
@@ -1484,6 +1502,28 @@ describe("MariaDB access store", () => {
     expect(detailSql).toContain("g.enabled = true");
   });
 
+  it.each([
+    { field: "account_enabled", overrides: { account_enabled: 0 } },
+    { field: "person_enabled", overrides: { person_enabled: 0 } }
+  ])("omits listUsers permissions when $field is false", async ({ overrides }) => {
+    const { connection } = recordingConnection((sql) => {
+      if (sql.includes("COUNT(*) AS total")) return [{ total: 1 }];
+      return sql.includes("paged_users")
+        ? [userDetailRow(overrides)]
+        : [];
+    });
+
+    const result = await listUsers(connection, {
+      page: 1,
+      pageSize: 20
+    });
+
+    expect(result.users[0]).toEqual(expect.objectContaining({
+      enabled: false,
+      permissions: []
+    }));
+  });
+
   it("derives getUser permissions from effective enabled group and matching enabled role", async () => {
     const { calls, connection } = recordingConnection(() => [
       userDetailRow({ permission_code: null })
@@ -1498,6 +1538,22 @@ describe("MariaDB access store", () => {
     expect(calls[0].sql).toContain("r.source_group_id = p.group_id");
     expect(calls[0].sql).toContain("LEFT JOIN role_permissions rp");
     expect(calls[0].sql).toContain("g.enabled = true");
+  });
+
+  it.each([
+    { field: "account_enabled", overrides: { account_enabled: 0 } },
+    { field: "person_enabled", overrides: { person_enabled: 0 } }
+  ])("omits getUser permissions when $field is false", async ({ overrides }) => {
+    const { connection } = recordingConnection(() => [
+      userDetailRow(overrides)
+    ]);
+
+    const result = await getUser(connection, "person-1");
+
+    expect(result).toEqual(expect.objectContaining({
+      enabled: false,
+      permissions: []
+    }));
   });
 
   it("searches chat identity identifiers with a parameterized EXISTS", async () => {

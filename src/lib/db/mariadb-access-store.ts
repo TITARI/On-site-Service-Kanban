@@ -1265,6 +1265,8 @@ function userFilter(query: UserQuery): UserFilter {
        AND filter_g.enabled = true
       JOIN role_permissions filter_rp ON filter_rp.role_id = filter_r.id
       WHERE filter_ar.account_id = a.id
+        AND p.enabled = true
+        AND a.enabled = true
         AND filter_rp.permission_code = 'admin.access'
     )`);
   }
@@ -1335,6 +1337,7 @@ function usersFromRows(userRows: Row[]) {
       users.set(personId, entry);
     }
     if (
+      entry.item.enabled &&
       row.permission_code &&
       PERMISSION_CODES.includes(row.permission_code as PermissionCode)
     ) {
