@@ -1309,6 +1309,9 @@ describe("MariaDB access store", () => {
           person_enabled: 1
         }];
       }
+      if (sql.includes("deletion_history")) {
+        return [];
+      }
       return { affectedRows: 1 };
     });
 
@@ -1334,6 +1337,146 @@ describe("MariaDB access store", () => {
       phone: "13800138000",
       groupId: "builder"
     });
+  });
+
+  it("checks business history before deleting but ignores target-only audit rows", async () => {
+    const { calls, connection } = recordingConnection((sql) => {
+      if (sql.includes("FOR UPDATE") && sql.includes("FROM accounts a")) {
+        return [{
+          account_id: "account-person-1",
+          login_name: "13800138000",
+          account_enabled: 1,
+          person_id: "person-1",
+          person_name: "Alice",
+          phone: "13800138000",
+          role: "handler",
+          group_id: "builder",
+          group_name_snapshot: "Builder",
+          group_locked: 0,
+          group_enabled: 1,
+          person_enabled: 1
+        }];
+      }
+      if (sql.includes("deletion_history")) {
+        expect(sql).toContain("tickets");
+        expect(sql).toContain("reporter_person_id");
+        expect(sql).toContain("inbound_messages");
+        expect(sql).toContain("pending_work_order_sessions");
+        expect(sql).toContain("chat_identities");
+        expect(sql).toContain("outbound_messages");
+        expect(sql).toContain("actor_id");
+        expect(sql).not.toContain("target_id =");
+        return [];
+      }
+      return sql.trimStart().startsWith("SELECT")
+        ? []
+        : { affectedRows: 1 };
+    });
+
+    await deleteUser(connection, "person-1", actor());
+
+    const historyQuery = calls.find((call) =>
+      call.sql.includes("deletion_history")
+    );
+    expect(historyQuery?.params).toEqual([
+      "person-1",
+      "person-1",
+      "person-1",
+      "person-1",
+      "account-person-1"
+    ]);
+    expect(calls.findIndex((call) =>
+      call.sql.includes("deletion_history")
+    )).toBeLessThan(calls.findIndex((call) =>
+      call.sql === "DELETE FROM people WHERE id = ?"
+    ));
+  });
+
+  it("blocks deletion when business history exists", async () => {
+    const { calls, connection } = recordingConnection((sql) => {
+      if (sql.includes("FOR UPDATE") && sql.includes("FROM accounts a")) {
+        return [{
+          account_id: "account-person-1",
+          login_name: "13800138000",
+          account_enabled: 1,
+          person_id: "person-1",
+          person_name: "Alice",
+          phone: "13800138000",
+          role: "handler",
+          group_id: "builder",
+          group_name_snapshot: "Builder",
+          group_locked: 0,
+          group_enabled: 1,
+          person_enabled: 1
+        }];
+      }
+      if (sql.includes("deletion_history")) {
+        return [{ reason: "tickets.reporter_person_id" }];
+      }
+      return sql.trimStart().startsWith("SELECT")
+        ? []
+        : { affectedRows: 1 };
+    });
+
+    await expect(
+      deleteUser(connection, "person-1", actor())
+    ).rejects.toThrow(/history|referenced|delete/i);
+
+    expect(calls.some((call) =>
+      call.sql === "DELETE FROM people WHERE id = ?"
+    )).toBe(false);
+  });
+
+  it("protects the final usable admin from disable and deletion", async () => {
+    const { calls, connection } = recordingConnection((sql) => {
+      if (sql.includes("FOR UPDATE") && sql.includes("FROM accounts a")) {
+        return [{
+          account_id: "account-person-1",
+          login_name: "13700137000",
+          account_enabled: 1,
+          person_id: "person-1",
+          person_name: "Admin",
+          phone: "13700137000",
+          role: "admin",
+          group_id: "admin",
+          group_name_snapshot: "Administrators",
+          group_locked: 1,
+          group_enabled: 1,
+          person_enabled: 1
+        }];
+      }
+      if (sql.includes("COUNT(DISTINCT a.id) AS count")) {
+        return [{ count: 1 }];
+      }
+      if (sql.includes("WHERE p.id = ? OR a.id = ?")) {
+        return [userDetailRow({
+          person_name: "Admin",
+          phone: "13700137000",
+          group_id: "admin",
+          group_name: "Administrators",
+          group_locked: 1,
+          has_password: 1,
+          permission_code: "admin.access"
+        })];
+      }
+      return sql.trimStart().startsWith("SELECT")
+        ? []
+        : { affectedRows: 1 };
+    });
+
+    await expect(
+      updateUser(connection, "person-1", { enabled: false }, actor())
+    ).rejects.toThrow("At least one usable admin account is required");
+    await expect(
+      deleteUser(connection, "person-1", actor())
+    ).rejects.toThrow("At least one usable admin account is required");
+
+    expect(calls.some((call) =>
+      call.sql.includes("UPDATE people")
+    )).toBe(false);
+    expect(calls.some((call) =>
+      call.sql === "DELETE FROM people WHERE id = ?"
+    )).toBe(false);
   });
 
   it.each([

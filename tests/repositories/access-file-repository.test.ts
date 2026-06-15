@@ -1111,6 +1111,84 @@ describe("file access repository", () => {
     )).toBe(false);
   });
 
+  it("blocks deletion when the person has business history", async () => {
+    const store = memoryStore();
+    const repository = createFileAppRepository(store);
+    const user = await repository.createUser({
+      name: "Reporter",
+      phone: "13800138000",
+      groupId: "builder",
+      groupLocked: false,
+      enabled: true
+    }, adminActor());
+    store.mutate((state) => {
+      state.tickets = [
+        {
+          ...autoAcceptanceTicket(),
+          id: "ticket-reported",
+          reporterPersonId: user.personId
+        }
+      ];
+    });
+
+    await expect(
+      repository.deleteUser(user.personId, adminActor())
+    ).rejects.toThrow(/business history|cannot be deleted/i);
+    await expect(repository.getUser(user.personId)).resolves.toBeDefined();
+  });
+
+  it("allows deletion when only target maintenance audits exist", async () => {
+    const store = memoryStore();
+    const repository = createFileAppRepository(store);
+    const user = await repository.createUser({
+      name: "Maintenance Only",
+      phone: "13800138000",
+      groupId: "builder",
+      groupLocked: false,
+      enabled: true
+    }, adminActor());
+    store.mutate((state) => {
+      state.auditLogs?.push({
+        id: "audit-target-only",
+        actorId: "account-admin",
+        actorName: "Root Admin",
+        action: "user.update",
+        targetType: "user",
+        targetId: user.personId,
+        detail: { accountId: user.accountId },
+        createdAt: "2026-06-15T00:00:00.000Z"
+      });
+    });
+
+    await repository.deleteUser(user.personId, adminActor());
+
+    await expect(repository.getUser(user.personId)).resolves.toBeUndefined();
+  });
+
+  it("protects the final usable administrator from disable and deletion", async () => {
+    const store = memoryStore();
+    const repository = createFileAppRepository(store);
+    const admin = await repository.bootstrapAdmin({
+      legacyPassword: "legacy-secret",
+      name: "Root Admin",
+      phone: "13700137000",
+      password: "StrongPass123!",
+      group: { mode: "existing", groupId: "admin" }
+    });
+
+    await expect(
+      repository.setUserEnabled(admin.personId, false, admin)
+    ).rejects.toThrow("At least one usable admin account is required");
+    await expect(
+      repository.deleteUser(admin.personId, admin)
+    ).rejects.toThrow("At least one usable admin account is required");
+
+    await expect(repository.getUser(admin.personId)).resolves.toMatchObject({
+      enabled: true,
+      permissions: ["admin.access"]
+    });
+  });
+
   it("synchronizes exact roles and permissions while maintaining one role per account", async () => {
     const store = memoryStore();
     const repository = createFileAppRepository(store);
@@ -1208,6 +1286,93 @@ describe("file access repository", () => {
     })).rejects.toThrow("At least one usable admin account is required");
 
     expect(store.snapshot().config.userGroups?.find((group) => group.id === "admin")?.canAdmin).toBe(true);
+  });
+
+  it("protects the final usable admin from user disable and deletion", async () => {
+    const store = memoryStore();
+    const repository = createFileAppRepository(store);
+    const admin = await repository.bootstrapAdmin({
+      legacyPassword: "legacy-secret",
+      name: "Root Admin",
+      phone: "13700137000",
+      password: "StrongPass123!",
+      group: { mode: "existing", groupId: "admin" }
+    });
+
+    await expect(
+      repository.setUserEnabled(admin.personId, false, admin)
+    ).rejects.toThrow("At least one usable admin account is required");
+    await expect(
+      repository.deleteUser(admin.personId, admin)
+    ).rejects.toThrow("At least one usable admin account is required");
+
+    const snapshot = store.snapshot();
+    expect(snapshot.people?.find(
+      (person) => person.id === admin.personId
+    )?.enabled).toBe(true);
+    expect(snapshot.accounts?.find(
+      (account) => account.id === admin.accountId
+    )?.enabled).toBe(true);
+  });
+
+  it("reports user deletion history from business records but not target-only maintenance audits", async () => {
+    const store = memoryStore();
+    const repository = createFileAppRepository(store);
+    const user = await repository.createUser({
+      name: "History User",
+      phone: "13800138000",
+      groupId: "builder",
+      groupLocked: false,
+      enabled: true
+    }, adminActor());
+    store.mutate((state) => {
+      state.auditLogs?.push({
+        id: "audit-target",
+        actorName: "Admin",
+        action: "user.update",
+        targetType: "user",
+        targetId: user.personId,
+        detail: {},
+        createdAt: "2026-06-15T00:00:00.000Z"
+      });
+    });
+
+    await expect(repository.userDeletionHistory(user.personId)).resolves.toEqual({
+      hasHistory: false,
+      reasons: []
+    });
+
+    store.mutate((state) => {
+      state.tickets.push({
+        id: "ticket-history",
+        title: "History",
+        boothNumber: "A01",
+        companyName: "Example Company",
+        companyShortName: "Example",
+        description: "History",
+        imageUrls: [],
+        issueType: "Network",
+        submitterId: user.personId,
+        submitterName: "History User",
+        submitterPhone: "13800138000",
+        reporterPersonId: user.personId,
+        feedbackUsers: [],
+        status: autoAcceptanceTicket().status,
+        urgeCount: 0,
+        urgeLevel: 0,
+        priorityScore: 0,
+        aiDecisions: [],
+        replies: [],
+        timeline: [],
+        createdAt: "2026-06-15T00:00:00.000Z",
+        updatedAt: "2026-06-15T00:00:00.000Z"
+      });
+    });
+
+    await expect(repository.userDeletionHistory(user.personId)).resolves.toEqual({
+      hasHistory: true,
+      reasons: expect.arrayContaining(["tickets.reporter_person_id"])
+    });
   });
 
   it("keeps auto acceptance and an interleaved access mutation atomic", async () => {

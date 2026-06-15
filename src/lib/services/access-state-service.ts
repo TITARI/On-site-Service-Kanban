@@ -306,8 +306,7 @@ function invalidateAccount(
   return revokeSessions(state, account.id, at);
 }
 
-function hasUsableAdminAccount(state: AccessState) {
-  return state.accounts.some((account) => {
+function isUsableAdminAccount(state: AccessState, account: Account) {
     const person = personForAccount(state, account);
     if (!account.enabled || !person?.enabled) return false;
     if (
@@ -321,7 +320,37 @@ function hasUsableAdminAccount(state: AccessState) {
     }
     const actor = actorForAccount(state, account, "admin");
     return Boolean(actor?.permissions.includes("admin.access"));
-  });
+}
+
+function hasUsableAdminAccount(state: AccessState) {
+  return state.accounts.some((account) => (
+    isUsableAdminAccount(state, account)
+  ));
+}
+
+export function countUsableAdminsInState(
+  stateInput: AppState,
+  excludeUserId?: string
+) {
+  const state = normalizeAccessState(stateInput);
+  return state.accounts.filter((account) => {
+    if (
+      excludeUserId &&
+      (account.id === excludeUserId || account.personId === excludeUserId)
+    ) {
+      return false;
+    }
+    return isUsableAdminAccount(state, account);
+  }).length;
+}
+
+function assertUsableAdminRemains(
+  state: AccessState,
+  hadUsableAdminAccount: boolean
+) {
+  if (hadUsableAdminAccount && !hasUsableAdminAccount(state)) {
+    throw new Error("At least one usable admin account is required");
+  }
 }
 
 function synchronizeAccessRoles(
@@ -413,9 +442,7 @@ function synchronizeAccessRoles(
       ) && retainedRoleIds.has(assignment.roleId)
   );
 
-  if (hadUsableAdminAccount && !hasUsableAdminAccount(state)) {
-    throw new Error("At least one usable admin account is required");
-  }
+  assertUsableAdminRemains(state, hadUsableAdminAccount);
 
   for (const account of state.accounts) {
     if (
@@ -1021,6 +1048,7 @@ export function updateUserInState(
   actor: AuthenticatedActor
 ) {
   const state = normalizeAccessState(stateInput);
+  const hadUsableAdminAccount = hasUsableAdminAccount(state);
   const account = state.accounts.find(
     (item) => item.id === userId || item.personId === userId
   );
@@ -1099,6 +1127,7 @@ export function updateUserInState(
   person.updatedAt = at;
   account.updatedAt = at;
   if (invalidate) invalidateAccount(state, account, at);
+  assertUsableAdminRemains(state, hadUsableAdminAccount);
   const item = userItem(state, person, account);
   audit(
     state,
@@ -1130,11 +1159,22 @@ export function deleteUserInState(
   actor: AuthenticatedActor
 ) {
   const state = normalizeAccessState(stateInput);
+  const hadUsableAdminAccount = hasUsableAdminAccount(state);
   const account = state.accounts.find(
     (item) => item.id === userId || item.personId === userId
   );
   const person = account ? personForAccount(state, account) : undefined;
   if (!account || !person) throw new Error("User was not found");
+  if (
+    hadUsableAdminAccount &&
+    isUsableAdminAccount(state, account) &&
+    countUsableAdminsInState(state, userId) < 1
+  ) {
+    throw new Error("At least one usable admin account is required");
+  }
+  if (userDeletionHistoryForAccount(state, person.id, account.id).hasHistory) {
+    throw new Error("User has business history and cannot be deleted");
+  }
 
   state.accounts = state.accounts.filter((item) => item.id !== account.id);
   state.people = state.people.filter((item) => item.id !== person.id);
@@ -1150,6 +1190,7 @@ export function deleteUserInState(
   for (const identity of state.chatIdentities) {
     if (identity.personId === person.id) identity.personId = undefined;
   }
+  assertUsableAdminRemains(state, hadUsableAdminAccount);
   audit(
     state,
     "user.delete",
@@ -1162,6 +1203,70 @@ export function deleteUserInState(
     },
     actor
   );
+}
+
+function userDeletionHistoryForAccount(
+  state: AccessState,
+  personId: string,
+  accountId: string
+) {
+  const identityIds = new Set(
+    state.chatIdentities
+      .filter((identity) => identity.personId === personId)
+      .map((identity) => identity.id)
+  );
+  const reasons = new Set<string>();
+  if (state.tickets.some((ticket) => ticket.reporterPersonId === personId)) {
+    reasons.add("tickets.reporter_person_id");
+  }
+  if (state.messageRecords.some((message) => message.reporterPersonId === personId)) {
+    reasons.add("inbound_messages.reporter_person_id");
+  }
+  if (state.pendingWorkOrderSessions.some((session) => session.personId === personId)) {
+    reasons.add("pending_work_order_sessions.person_id");
+  }
+  if (state.tickets.some((ticket) => (
+    ticket.reporterChatIdentityId &&
+    identityIds.has(ticket.reporterChatIdentityId)
+  ))) {
+    reasons.add("tickets.reporter_chat_identity_id");
+  }
+  if (state.messageRecords.some((message) => (
+    message.reporterChatIdentityId &&
+    identityIds.has(message.reporterChatIdentityId)
+  ))) {
+    reasons.add("inbound_messages.reporter_chat_identity_id");
+  }
+  if (state.pendingWorkOrderSessions.some((session) => (
+    identityIds.has(session.chatIdentityId)
+  ))) {
+    reasons.add("pending_work_order_sessions.chat_identity_id");
+  }
+  if (state.outboundMessages.some((message) => (
+    message.targetChatIdentityId &&
+    identityIds.has(message.targetChatIdentityId)
+  ))) {
+    reasons.add("outbound_messages.target_chat_identity_id");
+  }
+  if (state.auditLogs.some((entry) => entry.actorId === accountId)) {
+    reasons.add("audit_logs.actor_id");
+  }
+  return {
+    hasHistory: reasons.size > 0,
+    reasons: [...reasons].sort()
+  };
+}
+
+export function userDeletionHistoryInState(
+  stateInput: AppState,
+  userId: string
+) {
+  const state = normalizeAccessState(stateInput);
+  const account = state.accounts.find(
+    (item) => item.id === userId || item.personId === userId
+  );
+  if (!account) return { hasHistory: false, reasons: [] };
+  return userDeletionHistoryForAccount(state, account.personId, account.id);
 }
 
 export function setUserPasswordInState(

@@ -376,6 +376,36 @@ async function usableAdminCount(connection: DatabaseConnection) {
   return Number(record?.count ?? 0);
 }
 
+export async function countUsableAdmins(
+  connection: DatabaseConnection,
+  excludeUserId?: string
+) {
+  if (!excludeUserId) return await usableAdminCount(connection);
+  const [record] = await rows<Row>(
+    connection,
+    `SELECT COUNT(DISTINCT a.id) AS count
+     FROM accounts a
+     JOIN people p ON p.id = a.person_id
+     JOIN account_credentials c
+       ON c.account_id = a.id
+      AND c.password_hash <> ''
+     JOIN account_roles ar ON ar.account_id = a.id
+     JOIN roles r
+       ON r.id = ar.role_id
+      AND r.source_group_id = p.group_id
+      AND r.enabled = true
+     JOIN role_permissions rp
+       ON rp.role_id = r.id
+      AND rp.permission_code = 'admin.access'
+     WHERE a.enabled = true
+       AND p.enabled = true
+       AND a.id <> ?
+       AND p.id <> ?`,
+    [excludeUserId, excludeUserId]
+  );
+  return Number(record?.count ?? 0);
+}
+
 async function synchronizeAccountRole(
   connection: DatabaseConnection,
   accountId: string,
@@ -1565,6 +1595,148 @@ async function accountPersonForUpdate(
   return record;
 }
 
+async function assertMutationKeepsLastAdmin(
+  connection: DatabaseConnection,
+  accountId: string,
+  personId: string,
+  input: Partial<UserMutation>,
+  nextGroup?: UserGroup,
+  currentEnabled = true
+) {
+  if (!currentEnabled) return;
+  if (!await isTargetUsableAdmin(connection, accountId)) return;
+  const nextEnabled = input.enabled ?? currentEnabled;
+  const nextPermissions = nextGroup
+    ? permissionCodesForGroup(nextGroup)
+    : undefined;
+  if (
+    nextEnabled &&
+    (!nextPermissions || nextPermissions.includes("admin.access"))
+  ) {
+    return;
+  }
+  if (await countUsableAdmins(connection, personId) < 1) {
+    throw new Error("At least one usable admin account is required");
+  }
+}
+
+async function isTargetUsableAdmin(
+  connection: DatabaseConnection,
+  accountId: string
+) {
+  const [record] = await rows<Row>(
+    connection,
+    `SELECT COUNT(DISTINCT a.id) AS count
+     FROM accounts a
+     JOIN people p ON p.id = a.person_id
+     JOIN account_credentials c
+       ON c.account_id = a.id
+      AND c.password_hash <> ''
+     JOIN account_roles ar ON ar.account_id = a.id
+     JOIN roles r
+       ON r.id = ar.role_id
+      AND r.source_group_id = p.group_id
+      AND r.enabled = true
+     JOIN role_permissions rp
+       ON rp.role_id = r.id
+      AND rp.permission_code = 'admin.access'
+     WHERE a.id = ?
+       AND a.enabled = true
+       AND p.enabled = true`,
+    [accountId]
+  );
+  return Number(record?.count ?? 0) > 0;
+}
+
+async function userDeletionHistoryForAccount(
+  connection: DatabaseConnection,
+  personId: string,
+  accountId: string
+) {
+  const historyRows = await rows<Row>(
+    connection,
+    `SELECT reason
+     FROM (
+       SELECT 'tickets.reporter_person_id' AS reason
+       WHERE EXISTS (
+         SELECT 1 FROM tickets
+         WHERE reporter_person_id = ?
+       )
+       UNION ALL
+       SELECT 'inbound_messages.reporter_person_id' AS reason
+       WHERE EXISTS (
+         SELECT 1 FROM inbound_messages
+         WHERE reporter_person_id = ?
+       )
+       UNION ALL
+       SELECT 'pending_work_order_sessions.person_id' AS reason
+       WHERE EXISTS (
+         SELECT 1 FROM pending_work_order_sessions
+         WHERE person_id = ?
+       )
+       UNION ALL
+       SELECT 'chat_identity_references' AS reason
+       WHERE EXISTS (
+         SELECT 1
+         FROM chat_identities ci
+         WHERE ci.person_id = ?
+           AND (
+             EXISTS (
+               SELECT 1 FROM tickets t
+               WHERE t.reporter_chat_identity_id = ci.id
+             )
+             OR EXISTS (
+               SELECT 1 FROM inbound_messages im
+               WHERE im.reporter_chat_identity_id = ci.id
+             )
+             OR EXISTS (
+               SELECT 1 FROM pending_work_order_sessions ps
+               WHERE ps.chat_identity_id = ci.id
+             )
+             OR EXISTS (
+               SELECT 1 FROM outbound_messages om
+               WHERE om.target_chat_identity_id = ci.id
+             )
+           )
+       )
+       UNION ALL
+       SELECT 'audit_logs.actor_id' AS reason
+       WHERE EXISTS (
+         SELECT 1 FROM audit_logs
+         WHERE actor_id = ?
+       )
+     ) deletion_history
+     ORDER BY reason`,
+    [personId, personId, personId, personId, accountId]
+  );
+  const reasons = historyRows.map((row) => String(row.reason));
+  return {
+    hasHistory: reasons.length > 0,
+    reasons
+  };
+}
+
+export async function userDeletionHistory(
+  connection: DatabaseConnection,
+  userId: string
+) {
+  const [record] = await rows<Row>(
+    connection,
+    `SELECT a.id AS account_id, p.id AS person_id
+     FROM accounts a
+     JOIN people p ON p.id = a.person_id
+     WHERE a.id = ? OR p.id = ?
+     LIMIT 1`,
+    [userId, userId]
+  );
+  if (!record) return { hasHistory: false, reasons: [] };
+  return await userDeletionHistoryForAccount(
+    connection,
+    String(record.person_id),
+    String(record.account_id)
+  );
+}
+
 export async function updateUser(
   connection: DatabaseConnection,
   userId: string,
@@ -1623,6 +1795,14 @@ export async function updateUser(
   const nextAccountEnabled = input.enabled ?? currentAccountEnabled;
   const nextEnabled = nextPersonEnabled && nextAccountEnabled;
   const nextGroupLocked = input.groupLocked ?? currentGroupLocked;
+  await assertMutationKeepsLastAdmin(
+    connection,
+    accountId,
+    personId,
+    input,
+    group,
+    currentEnabled
+  );
   const enabledChanged = input.enabled !== undefined && (
     currentPersonEnabled !== input.enabled ||
     currentAccountEnabled !== input.enabled
@@ -1720,6 +1900,20 @@ export async function deleteUser(
   const current = await accountPersonForUpdate(connection, userId);
   const accountId = String(current.account_id);
   const personId = String(current.person_id);
+  if (
+    await isTargetUsableAdmin(connection, accountId) &&
+    await countUsableAdmins(connection, personId) < 1
+  ) {
+    throw new Error("At least one usable admin account is required");
+  }
+  const history = await userDeletionHistoryForAccount(
+    connection,
+    personId,
+    accountId
+  );
+  if (history.hasHistory) {
+    throw new Error("User has business history and cannot be deleted");
+  }
   const now = new Date();
   await execute(
     connection,

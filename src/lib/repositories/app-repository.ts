@@ -36,6 +36,7 @@ import {
   bootstrapStatusFromState,
   createAccountSessionInState,
   createUserInState,
+  countUsableAdminsInState,
   deleteUserInState,
   getUserFromState,
   listUsersFromState,
@@ -50,6 +51,7 @@ import {
   syncAccessRolesInState,
   syncAccessRolesWithoutAuditInState,
   updateUserInState,
+  userDeletionHistoryInState,
   upsertMobileAccountInState
 } from "../services/access-state-service";
 
@@ -105,6 +107,8 @@ export type AppRepository = {
   setUserEnabled(userId: string, enabled: boolean, actor: AuthenticatedActor): Promise<UserListItem>;
   deleteUser(userId: string, actor: AuthenticatedActor): Promise<void>;
   setUserPassword(userId: string, passwordHash: string, actor: AuthenticatedActor): Promise<void>;
+  countUsableAdmins(excludeUserId?: string): Promise<number>;
+  userDeletionHistory(userId: string): Promise<{ hasHistory: boolean; reasons: string[] }>;
   syncAccessRoles(userGroups: UserGroup[], actor?: AuthenticatedActor): Promise<void>;
 };
 
@@ -323,6 +327,12 @@ export function createFileAppRepository(store: StateFileRepository = {
         setUserPasswordInState(state, userId, passwordHash, actor);
       })
     ),
+    countUsableAdmins: async (excludeUserId) => (
+      countUsableAdminsInState(await store.readState(), excludeUserId)
+    ),
+    userDeletionHistory: async (userId) => (
+      userDeletionHistoryInState(await store.readState(), userId)
+    ),
     syncAccessRoles: (userGroups, actor) => updateState((state) => {
       syncAccessRolesInState(state, userGroups, actor);
     })
@@ -385,6 +395,10 @@ export function createMariaDbAppRepository(store: AutoAcceptanceStore = new Mari
     setUserPassword: (userId, passwordHash, actor) => (
       store.setUserPassword(userId, passwordHash, actor)
     ),
+    countUsableAdmins: (excludeUserId) => (
+      store.countUsableAdmins(excludeUserId)
+    ),
+    userDeletionHistory: (userId) => store.userDeletionHistory(userId),
     syncAccessRoles: (userGroups, actor) => (
       store.syncAccessRoles(userGroups, actor)
     )

@@ -48,6 +48,7 @@ import {
   bootstrapStatus as readBootstrapStatus,
   createAccountSession as createAccessAccountSession,
   createUser as createAccessUser,
+  countUsableAdmins as countAccessUsableAdmins,
   deleteUser as deleteAccessUser,
   getUser as readAccessUser,
   listUsers as listAccessUsers,
@@ -62,6 +63,7 @@ import {
   setUserPassword as setAccessUserPassword,
   syncAccessRoles as syncDatabaseAccessRoles,
   updateUser as updateAccessUser,
+  userDeletionHistory as readAccessUserDeletionHistory,
   upsertMobileAccount as upsertAccessMobileAccount
 } from "./mariadb-access-store";
 
@@ -2356,6 +2358,20 @@ export class MariaDbStateStore {
         actor
       );
     });
+  }
+
+  async countUsableAdmins(excludeUserId?: string) {
+    return await countAccessUsableAdmins(
+      getDatabasePool(),
+      excludeUserId
+    );
+  }
+
+  async userDeletionHistory(userId: string) {
+    return await readAccessUserDeletionHistory(
+      getDatabasePool(),
+      userId
+    );
   }
 
   async syncAccessRoles(
