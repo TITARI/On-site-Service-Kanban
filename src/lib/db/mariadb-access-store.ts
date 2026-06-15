@@ -1807,10 +1807,12 @@ export async function updateUser(
     currentPersonEnabled !== input.enabled ||
     currentAccountEnabled !== input.enabled
   );
+  const groupLockedChanged = nextGroupLocked !== currentGroupLocked;
   const invalidate =
     phoneChanged ||
     groupChanged ||
-    enabledChanged;
+    enabledChanged ||
+    groupLockedChanged;
   const changes: Record<string, { from: unknown; to: unknown }> = {};
   if (nextName !== currentName) {
     changes.name = { from: currentName, to: nextName };
@@ -1821,7 +1823,7 @@ export async function updateUser(
   if (groupChanged) {
     changes.groupId = { from: currentGroupId, to: nextGroupId };
   }
-  if (nextGroupLocked !== currentGroupLocked) {
+  if (groupLockedChanged) {
     changes.groupLocked = {
       from: currentGroupLocked,
       to: nextGroupLocked

@@ -1122,6 +1122,7 @@ export function updateUserInState(
       to: input.groupLocked
     };
     person.groupLocked = input.groupLocked;
+    invalidate = true;
   }
 
   person.updatedAt = at;

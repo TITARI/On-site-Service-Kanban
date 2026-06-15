@@ -1152,6 +1152,59 @@ describe("MariaDB access store", () => {
     });
   });
 
+  it("revokes sessions when only group lock changes", async () => {
+    const { calls, connection } = recordingConnection((sql) => {
+      if (sql.includes("FOR UPDATE") && sql.includes("FROM accounts a")) {
+        return [{
+          account_id: "account-person-1",
+          login_name: "13800138000",
+          account_enabled: 1,
+          person_id: "person-1",
+          person_name: "Alice",
+          phone: "13800138000",
+          role: "handler",
+          group_id: "builder",
+          group_name_snapshot: "Builder",
+          group_locked: 0,
+          group_enabled: 1,
+          person_enabled: 1
+        }];
+      }
+      if (sql.includes("WHERE p.id = ? OR a.id = ?")) {
+        return [userDetailRow({ group_locked: 1 })];
+      }
+      return sql.trimStart().startsWith("SELECT")
+        ? []
+        : { affectedRows: 1 };
+    });
+
+    await expect(updateUser(connection, "person-1", {
+      groupLocked: true
+    }, actor())).resolves.toMatchObject({
+      groupLocked: true
+    });
+
+    expect(calls.some((call) =>
+      call.sql.includes("UPDATE accounts") &&
+      call.sql.includes("auth_version = auth_version + 1") &&
+      call.params.includes("account-person-1")
+    )).toBe(true);
+    expect(calls.some((call) =>
+      call.sql.includes("UPDATE account_sessions") &&
+      call.params.includes("account-person-1")
+    )).toBe(true);
+    const audit = calls.find((call) =>
+      call.sql.includes("INSERT INTO audit_logs")
+    );
+    expect(JSON.parse(String(audit?.params[6]))).toEqual({
+      accountId: "account-person-1",
+      changes: {
+        groupLocked: { from: false, to: true }
+      },
+      authInvalidated: true
+    });
+  });
+
   it("rejects moving a user to a phone held by a legacy person without an account", async () => {
     const { calls, connection } = recordingConnection((sql) => {
       if (sql.includes("FOR UPDATE") && sql.includes("FROM accounts a")) {

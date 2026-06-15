@@ -974,6 +974,42 @@ describe("file access repository", () => {
     ]);
   });
 
+  it("revokes sessions when only group lock changes", async () => {
+    const store = memoryStore();
+    const repository = createFileAppRepository(store);
+    const user = await repository.createUser({
+      name: "Lock User",
+      phone: "13800138000",
+      groupId: "builder",
+      groupLocked: false,
+      enabled: true
+    }, adminActor());
+    const tokenHash = testSessionHash("group lock update");
+    await repository.createAccountSession(
+      user.accountId,
+      "mobile",
+      tokenHash,
+      "2099-01-01T00:00:00.000Z"
+    );
+    const before = store.snapshot().accounts?.find(
+      (item) => item.id === user.accountId
+    )?.authVersion ?? 0;
+
+    await repository.updateUser(user.personId, {
+      groupLocked: true
+    }, adminActor());
+
+    expect(store.snapshot().accounts?.find(
+      (item) => item.id === user.accountId
+    )?.authVersion).toBe(before + 1);
+    await expect(
+      repository.resolveAccountSession(tokenHash, "mobile")
+    ).resolves.toBeUndefined();
+    expect(store.snapshot().auditLogs?.at(-1)?.detail).toMatchObject({
+      authInvalidated: true
+    });
+  });
+
   it("supports user CRUD, filters, pagination, auth invalidation, and secret-safe audits", async () => {
     const store = memoryStore();
     const repository = createFileAppRepository(store);
