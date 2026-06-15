@@ -82,7 +82,7 @@ describe("AdminUsersPanel", () => {
     render(<AdminUsersPanel groups={groups} />);
 
     expect(await screen.findByText("张三")).not.toBeNull();
-    await userDriver.type(screen.getByLabelText("搜索姓名或手机号"), "张三");
+    await userDriver.type(screen.getByLabelText("搜索姓名或手机号"), "13800138000");
     await userDriver.click(screen.getByRole("button", { name: "筛选用户" }));
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
@@ -93,7 +93,7 @@ describe("AdminUsersPanel", () => {
       .map((call) => String(call[0]))
       .filter((url) => url.startsWith("/api/admin/users?"))
       .at(-1);
-    expect(listCall).toContain("search=%E5%BC%A0%E4%B8%89");
+    expect(listCall).toContain("search=13800138000");
 
     await userDriver.click(screen.getByRole("button", { name: "编辑张三" }));
     const editor = await screen.findByRole("complementary", { name: "编辑用户张三" });
@@ -112,5 +112,47 @@ describe("AdminUsersPanel", () => {
       groupLocked: true,
       enabled: true
     });
+  });
+
+  it("shows password API errors beside the password action", async () => {
+    const passwordError = "至少保留一个可用管理员";
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "/api/admin/users/person-1/password" && init?.method === "POST") {
+        return new Response(JSON.stringify({ message: passwordError }), { status: 409 });
+      }
+      if (url.startsWith("/api/admin/users")) {
+        return new Response(JSON.stringify({
+          users: [user({
+            groupId: "admin",
+            groupName: "管理员",
+            permissions: ["admin.access"],
+            hasPassword: true
+          })],
+          total: 1,
+          page: 1,
+          pageSize: 20
+        }), { status: 200 });
+      }
+      throw new Error(`Unexpected request ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const userDriver = userEvent.setup();
+
+    render(<AdminUsersPanel groups={groups} />);
+
+    await userDriver.click(await screen.findByRole("button", { name: "编辑张三" }));
+    const editor = await screen.findByRole("complementary", { name: "编辑用户张三" });
+    const passwordInput = within(editor).getByLabelText("用户新密码");
+    const passwordSection = passwordInput.closest(".admin-user-password");
+    const mainEditorForm = editor.querySelector(".admin-user-editor");
+    expect(passwordSection).not.toBeNull();
+    expect(mainEditorForm).not.toBeNull();
+
+    await userDriver.type(passwordInput, "StrongPassword123!");
+    await userDriver.click(within(passwordSection as HTMLElement).getByRole("button", { name: "设置/重置密码" }));
+
+    expect(await within(passwordSection as HTMLElement).findByText(passwordError)).not.toBeNull();
+    expect(within(mainEditorForm as HTMLElement).queryByText(passwordError)).toBeNull();
   });
 });

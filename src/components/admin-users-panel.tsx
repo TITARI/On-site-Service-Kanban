@@ -118,6 +118,7 @@ export function AdminUsersPanel({
   const [draft, setDraft] = useState<DraftState>(() => draftFromUser(undefined, groups));
   const [savingAction, setSavingAction] = useState<string | null>(null);
   const [editorError, setEditorError] = useState<string | null>(null);
+  const [passwordError, setPasswordError] = useState<string | null>(null);
   const [actionErrors, setActionErrors] = useState<Record<string, string>>({});
   const [password, setPassword] = useState("");
 
@@ -156,11 +157,13 @@ export function AdminUsersPanel({
     setDraft(draftFromUser(user, groups));
     setPassword("");
     setEditorError(null);
+    setPasswordError(null);
   }
 
   function closeEditor() {
     setEditor(null);
     setEditorError(null);
+    setPasswordError(null);
     setPassword("");
   }
 
@@ -227,11 +230,11 @@ export function AdminUsersPanel({
 
   async function savePassword() {
     if (!editor?.user || !password.trim()) {
-      setEditorError("请填写新密码");
+      setPasswordError("请填写新密码");
       return;
     }
     setSavingAction("password");
-    setEditorError(null);
+    setPasswordError(null);
     try {
       const response = await fetch(`/api/admin/users/${editor.user.personId}/password`, {
         method: "POST",
@@ -242,7 +245,7 @@ export function AdminUsersPanel({
       setPassword("");
       await loadUsers();
     } catch (error) {
-      setEditorError(error instanceof Error ? error.message : "密码设置失败");
+      setPasswordError(error instanceof Error ? error.message : "密码设置失败");
     } finally {
       setSavingAction(null);
     }
@@ -432,6 +435,7 @@ export function AdminUsersPanel({
                 <KeyRound size={16} aria-hidden="true" />
                 {savingAction === "password" ? "提交中..." : "设置/重置密码"}
               </button>
+              {passwordError && <p className="admin-user-action-error" role="alert">{passwordError}</p>}
             </div>
           )}
         </aside>
