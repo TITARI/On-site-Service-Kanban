@@ -97,6 +97,7 @@ export type AppRepository = {
   recordAdminLoginSuccess(accountId: string): Promise<void>;
   bootstrapStatus(): Promise<{ required: boolean }>;
   bootstrapAdmin(input: BootstrapAdminInput): Promise<AuthenticatedActor>;
+  bootstrapAdminWithSession(input: BootstrapAdminInput, tokenHash: string, expiresAt: string): Promise<{ actor: AuthenticatedActor; session: AccountSession }>;
   listUsers(query: UserQuery): Promise<{ users: UserListItem[]; total: number }>;
   getUser(userId: string): Promise<UserListItem | undefined>;
   createUser(input: UserMutation, actor: AuthenticatedActor): Promise<UserListItem>;
@@ -282,6 +283,23 @@ export function createFileAppRepository(store: StateFileRepository = {
         bootstrapAdminInState(state, input, passwordHash)
       ));
     },
+    bootstrapAdminWithSession: async (input, tokenHash, expiresAt) => {
+      if (!input.legacyPassword.trim()) {
+        throw new Error("Legacy password is required");
+      }
+      const passwordHash = await hashPassword(input.password);
+      return updateState((state) => {
+        const actor = bootstrapAdminInState(state, input, passwordHash);
+        const session = createAccountSessionInState(
+          state,
+          actor.accountId,
+          "admin",
+          tokenHash,
+          expiresAt
+        );
+        return { actor, session };
+      });
+    },
     listUsers: async (query) => (
       listUsersFromState(await store.readState(), query)
     ),
@@ -351,6 +369,9 @@ export function createMariaDbAppRepository(store: AutoAcceptanceStore = new Mari
     ),
     bootstrapStatus: () => store.bootstrapStatus(),
     bootstrapAdmin: (input) => store.bootstrapAdmin(input),
+    bootstrapAdminWithSession: (input, tokenHash, expiresAt) => (
+      store.bootstrapAdminWithSession(input, tokenHash, expiresAt)
+    ),
     listUsers: (query) => store.listUsers(query),
     getUser: (userId) => store.getUser(userId),
     createUser: (input, actor) => store.createUser(input, actor),

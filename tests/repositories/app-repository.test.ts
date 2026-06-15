@@ -129,6 +129,7 @@ describe("app repository", () => {
       recordAdminLoginSuccess: vi.fn(async () => undefined),
       bootstrapStatus: vi.fn(async () => ({ required: true })),
       bootstrapAdmin: vi.fn(async () => actor),
+      bootstrapAdminWithSession: vi.fn(async () => ({ actor, session: { id: "session-admin" } })),
       listUsers: vi.fn(async () => ({ users: [], total: 0 })),
       getUser: vi.fn(async () => undefined),
       createUser: vi.fn(async () => undefined),
@@ -150,6 +151,11 @@ describe("app repository", () => {
     await repository.recordAdminLoginSuccess("account-admin");
     await repository.bootstrapStatus();
     await repository.bootstrapAdmin(bootstrapInput);
+    await repository.bootstrapAdminWithSession(
+      bootstrapInput,
+      "b".repeat(64),
+      "2099-01-01T00:00:00.000Z"
+    );
     await repository.listUsers(userQuery);
     await repository.getUser("person-admin");
     await repository.createUser(userInput, actor);
@@ -177,6 +183,11 @@ describe("app repository", () => {
     expect(store.recordAdminLoginSuccess).toHaveBeenCalledWith("account-admin");
     expect(store.bootstrapStatus).toHaveBeenCalledOnce();
     expect(store.bootstrapAdmin).toHaveBeenCalledWith(bootstrapInput);
+    expect(store.bootstrapAdminWithSession).toHaveBeenCalledWith(
+      bootstrapInput,
+      "b".repeat(64),
+      "2099-01-01T00:00:00.000Z"
+    );
     expect(store.listUsers).toHaveBeenCalledWith(userQuery);
     expect(store.getUser).toHaveBeenCalledWith("person-admin");
     expect(store.createUser).toHaveBeenCalledWith(userInput, actor);

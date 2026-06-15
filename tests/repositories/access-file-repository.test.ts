@@ -768,6 +768,54 @@ describe("file access repository", () => {
     );
   });
 
+  it("creates bootstrap admin entities and the first admin session in one atomic file update", async () => {
+    const initial = accessState();
+    let current = structuredClone(initial);
+    let updates = 0;
+    const expectedHash = testSessionHash("atomic bootstrap admin");
+    const store = {
+      readState: async () => structuredClone(current) as AppState,
+      updateState: async <T>(operation: (state: AppState) => Promise<T> | T) => {
+        updates += 1;
+        const draft = structuredClone(current);
+        const result = await operation(draft);
+        if (updates === 1) {
+          const session = draft.accountSessions?.find(
+            (item) => item.tokenHash === expectedHash
+          );
+          if (!session) {
+            throw new Error("session missing from bootstrap transaction");
+          }
+          throw new Error("rollback bootstrap transaction after session insert");
+        }
+        current = draft;
+        return result;
+      }
+    };
+    const repository = createFileAppRepository(store);
+
+    await expect((repository as unknown as {
+      bootstrapAdminWithSession: (
+        input: Parameters<typeof repository.bootstrapAdmin>[0],
+        tokenHash: string,
+        expiresAt: string
+      ) => ReturnType<typeof repository.bootstrapAdmin>;
+    }).bootstrapAdminWithSession(
+      {
+        legacyPassword: "legacy-secret",
+        name: "Root Admin",
+        phone: "13700137000",
+        password: "StrongPass123!",
+        group: { mode: "existing", groupId: "admin" }
+      },
+      expectedHash,
+      "2099-01-01T00:00:00.000Z"
+    )).rejects.toThrow(/rollback bootstrap transaction/);
+
+    expect(updates).toBe(1);
+    expect(current).toEqual(initial);
+  });
+
   it.each([
     ["wx-external-only"],
     ["PUBLIC ALIAS ALPHA"],

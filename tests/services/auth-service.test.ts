@@ -5,7 +5,11 @@ import type {
   AuthenticatedActor
 } from "@/lib/domain/access-control";
 import type { AppConfig } from "@/lib/seed";
-import { mobileLogin, resolveRequestActor } from "@/lib/services/auth-service";
+import {
+  bootstrapFirstAdmin,
+  mobileLogin,
+  resolveRequestActor
+} from "@/lib/services/auth-service";
 import { SESSION_COOKIE_NAMES, sessionTokenHash } from "@/lib/services/session-service";
 
 const config: AppConfig = {
@@ -121,6 +125,62 @@ describe("auth service", () => {
         sessionTokenHash(result.token),
         "2026-06-22T08:00:00.000Z"
       );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("bootstraps the first admin through one atomic repository session operation", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-15T08:00:00.000Z"));
+    const adminActor = actor({
+      accountId: "account-admin",
+      personId: "person-admin",
+      name: "Root Admin",
+      phone: "13700137000",
+      groupId: "admin",
+      groupName: "Administrators",
+      permissions: ["admin.access"],
+      sessionType: "admin"
+    });
+    const repo = repository({
+      bootstrapStatus: vi.fn(async () => ({ required: true })),
+      bootstrapAdmin: vi.fn(async () => adminActor),
+      bootstrapAdminWithSession: vi.fn(async () => ({ actor: adminActor })),
+      createAccountSession: vi.fn(async (
+        accountId: string,
+        type,
+        tokenHash: string,
+        expiresAt: string
+      ) => session({ accountId, sessionType: type, tokenHash, expiresAt }))
+    } as Partial<AppRepository>);
+    const input = {
+      legacyPassword: "legacy-secret",
+      name: "Root Admin",
+      phone: "13700137000",
+      password: "StrongPass123!",
+      group: { mode: "existing" as const, groupId: "admin" }
+    };
+
+    try {
+      const result = await bootstrapFirstAdmin(
+        repo,
+        input,
+        { ADMIN_BOOTSTRAP_PASSWORD: "legacy-secret" } as NodeJS.ProcessEnv
+      );
+
+      expect(result.actor).toBe(adminActor);
+      expect(result.token).toMatch(/^[A-Za-z0-9_-]{43}$/);
+      expect(result.expiresAt.toISOString()).toBe("2026-06-16T08:00:00.000Z");
+      expect((repo as unknown as {
+        bootstrapAdminWithSession: ReturnType<typeof vi.fn>;
+      }).bootstrapAdminWithSession).toHaveBeenCalledWith(
+        input,
+        sessionTokenHash(result.token),
+        "2026-06-16T08:00:00.000Z"
+      );
+      expect(repo.bootstrapAdmin).not.toHaveBeenCalled();
+      expect(repo.createAccountSession).not.toHaveBeenCalled();
     } finally {
       vi.useRealTimers();
     }

@@ -824,6 +824,79 @@ describe("MariaDbStateStore", () => {
     expect(databaseMocks.withDatabaseTransaction).toHaveBeenCalledOnce();
   });
 
+  it("creates the bootstrap admin session in the same MariaDB transaction as bootstrap writes", async () => {
+    const calls: Array<{ sql: string; params: unknown[] }> = [];
+    const connection = {
+      execute: vi.fn(async (sql: string, params: unknown[] = []) => {
+        calls.push({ sql, params });
+        if (sql.includes("FROM user_groups") && sql.includes("ORDER BY id")) {
+          return [[{
+            id: "admin",
+            name: "Administrators",
+            description: "",
+            can_claim: 0,
+            can_process: 0,
+            can_accept: 0,
+            can_admin: 1,
+            enabled: 1
+          }]];
+        }
+        if (sql.includes("WHERE a.id = ?") && sql.includes("permission_code")) {
+          return [[{
+            account_id: "account-person-admin",
+            auth_version: 1,
+            person_id: "person-admin",
+            person_name: "Root Admin",
+            phone: "13700137000",
+            group_id: "admin",
+            group_name: "Administrators",
+            permission_code: "admin.access"
+          }]];
+        }
+        if (sql.trimStart().startsWith("SELECT")) return [[]];
+        return [{ affectedRows: 1 }];
+      })
+    } as unknown as DatabaseConnection;
+    databaseMocks.setConnection(connection);
+    const tokenHash = "b".repeat(64);
+
+    await (new MariaDbStateStore() as unknown as {
+      bootstrapAdminWithSession: (
+        input: Parameters<MariaDbStateStore["bootstrapAdmin"]>[0],
+        tokenHash: string,
+        expiresAt: string
+      ) => ReturnType<MariaDbStateStore["bootstrapAdmin"]>;
+    }).bootstrapAdminWithSession(
+      {
+        legacyPassword: "legacy-secret",
+        name: "Root Admin",
+        phone: "13700137000",
+        password: "StrongPass123!",
+        group: { mode: "existing", groupId: "admin" }
+      },
+      tokenHash,
+      "2099-01-01T00:00:00.000Z"
+    );
+
+    expect(databaseMocks.withDatabaseTransaction).toHaveBeenCalledOnce();
+    const sessionInsert = calls.find((call) =>
+      call.sql.includes("INSERT INTO account_sessions")
+    );
+    expect(sessionInsert?.params).toEqual(expect.arrayContaining([
+      "account-person-admin",
+      "admin",
+      tokenHash
+    ]));
+    const bootstrapAuditIndex = calls.findIndex((call) =>
+      call.sql.includes("INSERT INTO audit_logs") &&
+      call.params.includes("admin.bootstrap")
+    );
+    const sessionInsertIndex = calls.findIndex((call) =>
+      call.sql.includes("INSERT INTO account_sessions")
+    );
+    expect(sessionInsertIndex).toBeGreaterThan(bootstrapAuditIndex);
+  });
+
   it("propagates bootstrap transaction helper failures without issuing writes", async () => {
     const { connection } = recordingConnection();
     databaseMocks.setConnection(connection);

@@ -16,6 +16,7 @@ import {
 const store = vi.hoisted(() => ({
   bootstrapStatus: vi.fn(),
   bootstrapAdmin: vi.fn(),
+  bootstrapAdminWithSession: vi.fn(),
   adminLoginRecord: vi.fn(),
   recordAdminLoginFailure: vi.fn(),
   recordAdminLoginSuccess: vi.fn(),
@@ -29,6 +30,7 @@ vi.mock("@/lib/repositories/app-repository", () => ({
     kind: "file",
     bootstrapStatus: store.bootstrapStatus,
     bootstrapAdmin: store.bootstrapAdmin,
+    bootstrapAdminWithSession: store.bootstrapAdminWithSession,
     adminLoginRecord: store.adminLoginRecord,
     recordAdminLoginFailure: store.recordAdminLoginFailure,
     recordAdminLoginSuccess: store.recordAdminLoginSuccess,
@@ -108,6 +110,7 @@ describe("admin auth routes", () => {
     vi.resetModules();
     store.bootstrapStatus.mockReset();
     store.bootstrapAdmin.mockReset();
+    store.bootstrapAdminWithSession.mockReset();
     store.adminLoginRecord.mockReset();
     store.recordAdminLoginFailure.mockReset();
     store.recordAdminLoginSuccess.mockReset();
@@ -117,6 +120,7 @@ describe("admin auth routes", () => {
 
     store.bootstrapStatus.mockResolvedValue({ required: true });
     store.bootstrapAdmin.mockResolvedValue(actor());
+    store.bootstrapAdminWithSession.mockResolvedValue({ actor: actor() });
     store.createAccountSession.mockImplementation(async (
       accountId: string,
       type: SessionType,
@@ -147,13 +151,13 @@ describe("admin auth routes", () => {
       role: "admin"
     });
     expect(store.bootstrapStatus).toHaveBeenCalledOnce();
-    expect(store.bootstrapAdmin).toHaveBeenCalledWith(bootstrapBody());
-    expect(store.createAccountSession).toHaveBeenCalledWith(
-      "account-admin",
-      "admin",
+    expect(store.bootstrapAdminWithSession).toHaveBeenCalledWith(
+      bootstrapBody(),
       expect.stringMatching(/^[a-f0-9]{64}$/),
       expect.stringMatching(/^20\d\d-/)
     );
+    expect(store.bootstrapAdmin).not.toHaveBeenCalled();
+    expect(store.createAccountSession).not.toHaveBeenCalled();
     expect(cookie).toContain(`${SESSION_COOKIE_NAMES.admin}=`);
     expect(cookie).toContain("HttpOnly");
     expect(cookie).toContain("SameSite=Lax");
@@ -168,8 +172,10 @@ describe("admin auth routes", () => {
     ));
 
     expect(response.status).toBe(200);
-    expect(store.bootstrapAdmin).toHaveBeenCalledWith(
-      bootstrapBody({ legacyPassword: "admin123" })
+    expect(store.bootstrapAdminWithSession).toHaveBeenCalledWith(
+      bootstrapBody({ legacyPassword: "admin123" }),
+      expect.stringMatching(/^[a-f0-9]{64}$/),
+      expect.stringMatching(/^20\d\d-/)
     );
   });
 
@@ -187,6 +193,7 @@ describe("admin auth routes", () => {
     expect(response.status).toBe(403);
     expect(payload.message).toEqual(expect.any(String));
     expect(store.bootstrapAdmin).not.toHaveBeenCalled();
+    expect(store.bootstrapAdminWithSession).not.toHaveBeenCalled();
     expect(store.createAccountSession).not.toHaveBeenCalled();
     expect(response.headers.get("set-cookie")).toBeNull();
   });
@@ -204,6 +211,7 @@ describe("admin auth routes", () => {
     expect(response.status).toBe(401);
     expect(payload.message).toEqual(expect.any(String));
     expect(store.bootstrapAdmin).not.toHaveBeenCalled();
+    expect(store.bootstrapAdminWithSession).not.toHaveBeenCalled();
   });
 
   it("logs in an enabled admin, resets failures, and sets the admin session cookie", async () => {

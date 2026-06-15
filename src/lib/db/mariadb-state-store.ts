@@ -2255,6 +2255,41 @@ export class MariaDbStateStore {
     });
   }
 
+  async bootstrapAdminWithSession(
+    input: BootstrapAdminInput,
+    tokenHash: string,
+    expiresAt: string
+  ) {
+    if (!input.legacyPassword.trim()) {
+      throw new Error("Legacy password is required");
+    }
+    const passwordHash = await hashPassword(input.password);
+    return await withDatabaseTransaction(async (connection) => {
+      const actor = await bootstrapAdminAccess(
+        connection,
+        input,
+        passwordHash
+      );
+      const config = {
+        ...await latestConfig(connection),
+        userGroups: await readAccessGroups(connection)
+      };
+      await replaceConfigTables(connection, config);
+      await syncDatabaseAccessRoles(
+        connection,
+        config.userGroups ?? []
+      );
+      const session = await createAccessAccountSession(
+        connection,
+        actor.accountId,
+        "admin",
+        tokenHash,
+        expiresAt
+      );
+      return { actor, session };
+    });
+  }
+
   async listUsers(query: UserQuery) {
     return await listAccessUsers(getDatabasePool(), query);
   }

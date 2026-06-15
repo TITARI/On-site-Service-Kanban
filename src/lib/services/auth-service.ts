@@ -128,13 +128,18 @@ export async function bootstrapFirstAdmin(
     throw new AuthError(401, "Invalid bootstrap password");
   }
 
-  let actor: AuthenticatedActor;
+  const token = createSessionToken();
+  const expiresAt = new Date(Date.now() + ADMIN_SESSION_DAYS * 24 * 60 * 60 * 1000);
   try {
-    actor = await repository.bootstrapAdmin(input);
+    const { actor } = await repository.bootstrapAdminWithSession(
+      input,
+      sessionTokenHash(token),
+      expiresAt.toISOString()
+    );
+    return { actor, token, expiresAt };
   } catch (error) {
     throw domainAuthError(error) ?? error;
   }
-  return createAccountSession(repository, actor, "admin", ADMIN_SESSION_DAYS);
 }
 
 export async function adminLogin(
