@@ -6,7 +6,8 @@ import { MobileShell, type MobileTab } from "@/components/mobile-shell";
 import { TicketDetail } from "@/components/ticket-detail";
 import { TicketList } from "@/components/ticket-list";
 import { TicketSubmitForm } from "@/components/ticket-submit-form";
-import { clearStoredUser, readStoredUser, type CurrentUser } from "@/lib/client/auth";
+import type { CurrentUser } from "@/lib/client/auth";
+import { removeLegacyStoredUser, resolveMobileSession } from "@/lib/client/session-auth";
 import { findTicketByShortCode } from "@/lib/domain/ticket-links";
 import { getPriorityDisplay } from "@/lib/domain/priority-label";
 import type { Ticket } from "@/lib/domain/types";
@@ -139,15 +140,31 @@ export default function HomePage() {
   }, [data, selectedId]);
 
   useEffect(() => {
-    const storedUser = readStoredUser();
-    if (storedUser) {
-      setUser(storedUser);
-      setTab("tickets");
-      setIsLoading(true);
-    } else {
-      void refreshLoginConfig();
+    let cancelled = false;
+
+    async function initializeAuth() {
+      try {
+        const sessionUser = await resolveMobileSession();
+        if (cancelled) return;
+        if (sessionUser) {
+          removeLegacyStoredUser();
+          setUser(sessionUser);
+          setTab("tickets");
+          setIsLoading(true);
+        } else {
+          await refreshLoginConfig();
+        }
+      } catch {
+        if (!cancelled) await refreshLoginConfig();
+      } finally {
+        if (!cancelled) setAuthReady(true);
+      }
     }
-    setAuthReady(true);
+
+    void initializeAuth();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const selectedTicket = useMemo(() => data?.tickets.find((ticket) => ticket.id === selectedId), [data, selectedId]);
@@ -194,8 +211,8 @@ export default function HomePage() {
     setSelectedId(undefined);
   };
 
-  const logout = () => {
-    clearStoredUser();
+  const logout = async () => {
+    await fetch("/api/auth/mobile/logout", { method: "POST" });
     setUser(null);
     setData(null);
     setSelectedId(undefined);
@@ -224,7 +241,7 @@ export default function HomePage() {
       <main className="app-shell loading">
         <StatusMessage tone="error">{error}</StatusMessage>
         <button className="primary-button" type="button" onClick={() => void refresh()}>重新加载</button>
-        <button className="secondary-button" type="button" onClick={logout}>退出登录</button>
+        <button className="secondary-button" type="button" onClick={() => void logout()}>退出登录</button>
       </main>
     );
   }
@@ -236,7 +253,7 @@ export default function HomePage() {
   };
 
   return (
-    <MobileShell activeTab={tab} currentUser={user} hideHero={isDetailPage} metrics={metrics} onLogout={logout} onTabChange={changeTab}>
+    <MobileShell activeTab={tab} currentUser={user} hideHero={isDetailPage} metrics={metrics} onLogout={() => void logout()} onTabChange={changeTab}>
       {tab === "submit" && <TicketSubmitForm config={data.config} currentUser={user} onSubmitted={() => { changeTab("tickets"); void refresh(); }} />}
       {tab === "tickets" && !selectedTicket && <TicketList tickets={data.tickets} onSelect={setSelectedId} />}
       {tab === "tickets" && selectedTicket && (

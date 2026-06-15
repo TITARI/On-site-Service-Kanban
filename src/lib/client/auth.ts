@@ -1,3 +1,4 @@
+import type { AuthenticatedActor } from "@/lib/domain/access-control";
 import type { UserGroup } from "@/lib/domain/types";
 
 export type CurrentUser = {
@@ -36,6 +37,22 @@ export function createMemberUser(name: string, phone: string, group: UserGroup):
   };
 }
 
+export function currentUserFromActor(actor: AuthenticatedActor): CurrentUser {
+  return {
+    id: actor.personId,
+    name: actor.name,
+    phone: actor.phone,
+    role: "member",
+    groupId: actor.groupId,
+    groupName: actor.groupName,
+    permissions: {
+      canClaim: actor.permissions.includes("ticket.claim"),
+      canProcess: actor.permissions.includes("ticket.process"),
+      canAccept: actor.permissions.includes("ticket.accept")
+    }
+  };
+}
+
 export function isAdminPassword(value: string) {
   return value === DEFAULT_ADMIN_PASSWORD;
 }
@@ -53,7 +70,7 @@ export function readStoredUser(): CurrentUser | null {
       phone: parsed.phone ?? "",
       role: "member",
       groupId: parsed.groupId ?? "business",
-      groupName: parsed.groupName ?? "业务组",
+      groupName: parsed.groupName ?? "business",
       permissions: parsed.permissions ?? fallbackPermissions
     };
   } catch {

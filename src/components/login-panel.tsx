@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { LogIn, UserRound } from "lucide-react";
-import { createMemberUser, storeUser, type CurrentUser } from "@/lib/client/auth";
+import type { CurrentUser } from "@/lib/client/auth";
 import { userGroupsOf, type AppConfig } from "@/lib/seed";
 import { StatusMessage } from "./status-message";
 
@@ -10,7 +10,7 @@ export function LoginPanel({ config, onLogin }: { config: AppConfig; onLogin: (u
   const [message, setMessage] = useState<string | null>(null);
   const groups = userGroupsOf(config);
 
-  function loginMember(event: React.FormEvent<HTMLFormElement>) {
+  async function loginMember(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const formData = new FormData(event.currentTarget);
     const name = String(formData.get("name") ?? "").trim();
@@ -21,9 +21,19 @@ export function LoginPanel({ config, onLogin }: { config: AppConfig; onLogin: (u
       setMessage("请填写真实姓名、联系电话和用户分组");
       return;
     }
-    const user = createMemberUser(name, phone, group);
-    storeUser(user);
-    onLogin(user);
+    setMessage(null);
+    const response = await fetch("/api/auth/mobile/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, phone, groupId })
+    });
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({})) as { message?: string };
+      setMessage(payload.message ?? "鐧诲綍澶辫触");
+      return;
+    }
+    const payload = await response.json() as { user: CurrentUser };
+    onLogin(payload.user);
   }
 
   return (

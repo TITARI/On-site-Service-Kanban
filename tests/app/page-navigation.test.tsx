@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import HomePage from "@/app/page";
-import { AUTH_STORAGE_KEY, type CurrentUser } from "@/lib/client/auth";
+import type { CurrentUser } from "@/lib/client/auth";
 import { ticketShortCode } from "@/lib/domain/ticket-links";
 import type { Ticket } from "@/lib/domain/types";
 import type { AppConfig } from "@/lib/seed";
@@ -44,8 +44,8 @@ const ticket: Ticket = {
   updatedAt: "2026-05-21T08:00:00.000Z"
 };
 
-function loginAs(user: CurrentUser | { id: string; name: string; phone: string; role: string }) {
-  localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(user));
+function sessionResponse(user: CurrentUser = memberUser) {
+  return new Response(JSON.stringify({ user }), { status: 200 });
 }
 
 afterEach(() => {
@@ -56,8 +56,11 @@ afterEach(() => {
 
 describe("home page ticket navigation", () => {
   it("keeps ticket detail on a second-level view", async () => {
-    loginAs(memberUser);
-    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ tickets: [ticket], config }), { status: 200 })));
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/auth/session?type=mobile") return sessionResponse();
+      return new Response(JSON.stringify({ tickets: [ticket], config }), { status: 200 });
+    }));
 
     render(<HomePage />);
 
@@ -81,10 +84,10 @@ describe("home page ticket navigation", () => {
   });
 
   it("loads full ticket details after selecting a mobile ticket summary", async () => {
-    loginAs(memberUser);
     const { imageUrls, replies, timeline, aiDecisions, ...summary } = ticket;
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
+      if (url === "/api/auth/session?type=mobile") return sessionResponse();
       if (url.includes("/api/tickets/ticket-1")) {
         return new Response(JSON.stringify({ ticket }), { status: 200 });
       }
@@ -101,11 +104,11 @@ describe("home page ticket navigation", () => {
   });
 
   it("opens ticket details from a short ticket code query", async () => {
-    loginAs(memberUser);
     window.history.pushState({}, "", `/?ticketCode=${ticketShortCode(ticket.id)}`);
     const { imageUrls, replies, timeline, aiDecisions, ...summary } = ticket;
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
+      if (url === "/api/auth/session?type=mobile") return sessionResponse();
       if (url.includes("/api/tickets/ticket-1")) {
         return new Response(JSON.stringify({ ticket }), { status: 200 });
       }
@@ -120,8 +123,11 @@ describe("home page ticket navigation", () => {
   });
 
   it("hides the immersive hero on ticket detail pages", async () => {
-    loginAs(memberUser);
-    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ tickets: [ticket], config }), { status: 200 })));
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/auth/session?type=mobile") return sessionResponse();
+      return new Response(JSON.stringify({ tickets: [ticket], config }), { status: 200 });
+    }));
 
     render(<HomePage />);
 
@@ -135,8 +141,14 @@ describe("home page ticket navigation", () => {
   });
 
   it("ignores old mobile admin sessions", async () => {
-    loginAs({ id: "admin", name: "管理员", phone: "", role: "admin" });
-    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ config }), { status: 200 })));
+    localStorage.setItem("internal-board-current-user", JSON.stringify({ id: "admin", name: "管理员", phone: "", role: "admin" }));
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/auth/session?type=mobile") {
+        return new Response(JSON.stringify({ message: "Unauthenticated" }), { status: 401 });
+      }
+      return new Response(JSON.stringify({ config }), { status: 200 });
+    }));
 
     render(<HomePage />);
 
