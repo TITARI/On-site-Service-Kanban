@@ -118,6 +118,13 @@ function stableId(prefix: string, value: string) {
   return `${prefix}-${createHash("sha256").update(value).digest("base64url")}`;
 }
 
+function normalizeUserGroups(groups?: UserGroup[]) {
+  return groups?.map((group) => ({
+    ...group,
+    canAdmin: group.canAdmin ?? false
+  }));
+}
+
 function mergedConfig(config?: Partial<AppConfig>): AppConfig {
   const defaults = defaultConfig();
   const incoming = config ?? {};
@@ -134,7 +141,7 @@ function mergedConfig(config?: Partial<AppConfig>): AppConfig {
     aiModels: incoming.aiModels?.length ? incoming.aiModels : defaults.aiModels,
     messageIntegrations,
     wxautoMcp,
-    userGroups: incoming.userGroups ?? defaults.userGroups,
+    userGroups: normalizeUserGroups(incoming.userGroups) ?? defaults.userGroups,
     keywordGroups: normalizeKeywordGroups(incoming.keywordGroups?.length ? incoming.keywordGroups : defaults.keywordGroups),
     aiPromptTemplates: promptConfig.aiPromptTemplates,
     aiPromptDefaults: promptConfig.aiPromptDefaults,

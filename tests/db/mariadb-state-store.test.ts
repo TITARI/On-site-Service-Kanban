@@ -352,6 +352,38 @@ describe("MariaDbStateStore", () => {
     expect(inserts.map((call) => call.params[6])).toEqual([true, false]);
   });
 
+  it("normalizes legacy config version groups without canAdmin on read", async () => {
+    const legacyGroup = {
+      id: "legacy-group",
+      name: "Legacy Group",
+      description: "Legacy config without canAdmin",
+      canClaim: true,
+      canProcess: true,
+      canAccept: true,
+      enabled: true
+    };
+    const connection = {
+      execute: vi.fn(async (sql: string) => {
+        if (sql.includes("FROM app_config_versions")) {
+          return [[{
+            config_json: JSON.stringify({
+              ...defaultConfig(),
+              userGroups: [legacyGroup]
+            })
+          }]];
+        }
+        return [[]];
+      })
+    } as unknown as DatabaseConnection;
+
+    await expect(new MariaDbStateStore().getConfig(connection)).resolves.toMatchObject({
+      userGroups: [expect.objectContaining({
+        id: "legacy-group",
+        canAdmin: false
+      })]
+    });
+  });
+
   it("wraps access mutations in a database transaction", async () => {
     const { calls, connection } = recordingConnection();
     databaseMocks.setConnection(connection);
