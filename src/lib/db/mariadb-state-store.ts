@@ -66,6 +66,7 @@ import {
   getUserImportJobRows as getAccessUserImportJobRows,
   listChatIdentities as listAccessChatIdentities,
   listUsers as listAccessUsers,
+  markUserImportRowsStale as markAccessUserImportRowsStale,
   readAccessGroups,
   recordAccessRolesSync,
   recordAdminLoginFailure as writeAdminLoginFailure,
@@ -2493,6 +2494,21 @@ export class MariaDbStateStore {
         connection,
         jobId,
         decisions,
+        actor
+      );
+    });
+  }
+
+  async markUserImportRowsStale(
+    jobId: string,
+    rowIds: string[],
+    actor: AuthenticatedActor
+  ) {
+    await withDatabaseTransaction(async (connection) => {
+      await markAccessUserImportRowsStale(
+        connection,
+        jobId,
+        rowIds,
         actor
       );
     });

@@ -147,4 +147,96 @@ describe("AdminUserImport", () => {
     expect(createdUrls).toEqual(["blob:report-1"]);
     expect(revokedUrls).toEqual(["blob:report-1"]);
   });
+
+  it("applies bulk add, overwrite, and skip decisions to selectable rows", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "/api/admin/users?page=1&pageSize=20") {
+        return new Response(JSON.stringify({ users: [], total: 0 }), { status: 200 });
+      }
+      if (url === "/api/admin/user-imports/preview" && init?.method === "POST") {
+        const body = JSON.parse(String(init.body));
+        return new Response(JSON.stringify({
+          jobId: "import-job-2",
+          previewVersion: "preview-2",
+          sourceName: "users.csv",
+          sourceHash: body.sourceHash,
+          rows: [
+            {
+              id: "row-add",
+              rowNumber: 1,
+              raw: { 濮撳悕: "Add User" },
+              value: {
+                name: "Add User",
+                phone: "13800138001",
+                groupId: "builder",
+                groupLocked: false,
+                enabled: true
+              },
+              conflicts: [],
+              allowedActions: ["add", "skip"],
+              category: "add",
+              selectable: true
+            },
+            {
+              id: "row-overwrite",
+              rowNumber: 2,
+              raw: { 濮撳悕: "Overwrite User" },
+              value: {
+                name: "Overwrite User",
+                phone: "13800138002",
+                groupId: "builder",
+                groupLocked: false,
+                enabled: true
+              },
+              conflicts: ["phone-occupied"],
+              allowedActions: ["overwrite", "skip"],
+              category: "overwrite",
+              selectable: true
+            }
+          ],
+          summary: { total: 2, selectable: 2, blocked: 0 }
+        }), { status: 201 });
+      }
+      if (url === "/api/admin/user-imports/import-job-2/rows" && init?.method === "PATCH") {
+        return new Response(null, { status: 204 });
+      }
+      if (url === "/api/admin/user-imports/import-job-2/commit" && init?.method === "POST") {
+        return new Response(JSON.stringify({ committed: 0 }), { status: 200 });
+      }
+      throw new Error(`Unexpected request ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const userDriver = userEvent.setup();
+
+    render(<AdminUsersPanel groups={groups} />);
+
+    const importRegion = await screen.findByRole("region", { name: /导入|瀵煎叆/ });
+    await userDriver.upload(
+      within(importRegion).getByLabelText(/导入文件|瀵煎叆/),
+      new File(["name,phone"], "users.csv", { type: "text/csv" })
+    );
+    await userDriver.click(within(importRegion).getByRole("button", { name: /预览|瑙ｆ瀽/ }));
+
+    await within(importRegion).findByText("Add User");
+    const rowOneDecision = within(importRegion).getByLabelText(/1.*处理方式|1.*澶勭悊/);
+    const rowTwoDecision = within(importRegion).getByLabelText(/2.*处理方式|2.*澶勭悊/);
+    await userDriver.selectOptions(within(importRegion).getByLabelText("批量处理方式"), "skip");
+    await userDriver.click(within(importRegion).getByRole("button", { name: "应用批量处理" }));
+
+    expect(rowOneDecision).toHaveProperty("value", "skip");
+    expect(rowTwoDecision).toHaveProperty("value", "skip");
+
+    await userDriver.selectOptions(within(importRegion).getByLabelText("批量处理方式"), "add");
+    await userDriver.click(within(importRegion).getByRole("button", { name: "应用批量处理" }));
+
+    expect(rowOneDecision).toHaveProperty("value", "add");
+    expect(rowTwoDecision).toHaveProperty("value", "skip");
+
+    await userDriver.selectOptions(within(importRegion).getByLabelText("批量处理方式"), "overwrite");
+    await userDriver.click(within(importRegion).getByRole("button", { name: "应用批量处理" }));
+
+    expect(rowOneDecision).toHaveProperty("value", "add");
+    expect(rowTwoDecision).toHaveProperty("value", "overwrite");
+  });
 });

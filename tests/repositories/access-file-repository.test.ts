@@ -5,6 +5,7 @@ import type {
   UserMutation
 } from "@/lib/domain/access-control";
 import type { Ticket, UserGroup } from "@/lib/domain/types";
+import { USER_IMPORT_TEMPLATE_COLUMNS } from "@/lib/domain/user-import";
 import { createFileAppRepository } from "@/lib/repositories/app-repository";
 import { verifyPassword } from "@/lib/services/password-service";
 import {
@@ -14,6 +15,14 @@ import {
 import { defaultConfig } from "@/lib/seed";
 
 type AccessTestState = AppState;
+
+const [
+  IMPORT_NAME_COLUMN,
+  IMPORT_PHONE_COLUMN,
+  IMPORT_GROUP_COLUMN,
+  IMPORT_GROUP_LOCKED_COLUMN,
+  IMPORT_ENABLED_COLUMN
+] = USER_IMPORT_TEMPLATE_COLUMNS;
 
 const groups: UserGroup[] = [
   {
@@ -1575,5 +1584,58 @@ describe("file access repository", () => {
     expect(saved.rows[0].value).not.toHaveProperty("无关列");
     expect(store.snapshot().people).toHaveLength(0);
     expect(store.snapshot().accounts).toHaveLength(0);
+  });
+
+  it("commits an unchanged overwrite import and records a commit audit atomically", async () => {
+    const store = memoryStore();
+    const repository = createFileAppRepository(store);
+    const actor = adminActor();
+    const existing = await repository.createUser({
+      name: "Existing User",
+      phone: "13800138000",
+      groupId: "builder",
+      groupLocked: false,
+      enabled: true
+    }, actor);
+
+    const preview = await repository.saveUserImportPreview({
+      sourceName: "users.xlsx",
+      sourceHash: "d".repeat(64),
+      rows: [{
+        [IMPORT_NAME_COLUMN]: "Updated User",
+        [IMPORT_PHONE_COLUMN]: "13800138000",
+        [IMPORT_GROUP_COLUMN]: "Business",
+        [IMPORT_GROUP_LOCKED_COLUMN]: "true",
+        [IMPORT_ENABLED_COLUMN]: "true"
+      }]
+    }, actor);
+    await repository.saveUserImportDecisions(preview.jobId, [{
+      rowId: preview.rows[0].id,
+      decision: {
+        action: "overwrite",
+        confirmWechatRebind: false,
+        confirmWecomRebind: false
+      }
+    }], actor);
+
+    await expect(repository.applyUserImport({
+      ...await repository.loadImportJob(preview.jobId, actor),
+      rows: (await repository.loadImportJob(preview.jobId, actor)).rows.filter(
+        (row) => row.decision?.action !== "skip"
+      )
+    }, actor)).resolves.toEqual({ committed: 1 });
+
+    await expect(repository.getUser(existing.personId)).resolves.toMatchObject({
+      name: "Updated User",
+      phone: "13800138000",
+      groupId: "business",
+      groupLocked: true
+    });
+    expect(store.snapshot().auditLogs?.at(-1)).toMatchObject({
+      action: "user_import.commit",
+      targetType: "import_job",
+      targetId: preview.jobId,
+      detail: { committed: 1, sourceName: "users.xlsx" }
+    });
   });
 });

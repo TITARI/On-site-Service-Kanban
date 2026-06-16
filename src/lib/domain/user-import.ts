@@ -46,7 +46,8 @@ export type UserImportConflictCode =
   | "wecom-file-duplicate"
   | "phone-occupied"
   | "wechat-occupied"
-  | "wecom-occupied";
+  | "wecom-occupied"
+  | "stale-preview";
 
 export type UserImportAction = "add" | "overwrite" | "skip";
 export type UserImportCategory = "add" | "overwrite" | "blocked";
@@ -84,7 +85,27 @@ export type UserImportPreviewRow = {
   category: UserImportCategory;
   selectable: boolean;
   decision?: UserImportDecision;
+  baseline?: UserImportRowBaseline;
 };
+
+export type UserImportRowBaseline = {
+  person?: {
+    personId: string;
+    updatedAt: string;
+  };
+  group?: {
+    groupId: string;
+    enabled: boolean;
+  };
+  identities?: Partial<Record<MessageChannel, {
+    identityId: string;
+    personId?: string;
+    updatedAt: string;
+  }>>;
+};
+
+type UserImportIdentityBaseline =
+  NonNullable<UserImportRowBaseline["identities"]>[MessageChannel];
 
 export type UserImportPreviewSummary = {
   total: number;
@@ -311,6 +332,24 @@ async function identityConflict(
   );
 }
 
+async function identityBaseline(
+  repository: UserImportPreviewRepository,
+  platform: MessageChannel,
+  externalUserId: string | undefined
+) {
+  if (!externalUserId) return undefined;
+  const identity = await repository.identityByExternalId(
+    platform,
+    externalUserId
+  );
+  if (!identity) return undefined;
+  return {
+    identityId: identity.id,
+    ...(identity.personId ? { personId: identity.personId } : {}),
+    updatedAt: identity.lastSeenAt
+  };
+}
+
 function blockingConflicts(conflicts: UserImportConflictCode[]) {
   return conflicts.some((conflict) =>
     [
@@ -380,6 +419,8 @@ export async function previewUserImport(
   for (const row of normalized) {
     const conflicts = [...row.conflicts];
     let existingUser: UserListItem | undefined;
+    let wechatBaseline: UserImportIdentityBaseline | undefined;
+    let wecomBaseline: UserImportIdentityBaseline | undefined;
     if (
       row.candidates.phone &&
       (phoneCounts.get(row.candidates.phone) ?? 0) > 1
@@ -401,6 +442,16 @@ export async function previewUserImport(
     if (row.value) {
       existingUser = await exactUserByPhone(repository, row.value.phone);
       if (existingUser) conflicts.push("phone-occupied");
+      wechatBaseline = await identityBaseline(
+        repository,
+        "wechat",
+        row.value.wechatExternalUserId
+      );
+      wecomBaseline = await identityBaseline(
+        repository,
+        "wecom",
+        row.value.wecomExternalUserId
+      );
       if (await identityConflict(
         repository,
         "wechat",
@@ -422,6 +473,9 @@ export async function previewUserImport(
     const unique = uniqueConflicts(conflicts);
     const actions = allowedActions(unique, existingUser);
     const category = categoryFor(actions);
+    const groupBaseline = row.value
+      ? groups.find((group) => group.id === row.value?.groupId)
+      : undefined;
     rows.push({
       id: previewId("import-row"),
       rowNumber: row.rowNumber,
@@ -430,7 +484,31 @@ export async function previewUserImport(
       conflicts: unique,
       allowedActions: actions,
       category,
-      selectable: actions.some((action) => action !== "skip")
+      selectable: actions.some((action) => action !== "skip"),
+      baseline: {
+        ...(existingUser ? {
+          person: {
+            personId: existingUser.personId,
+            updatedAt: existingUser.updatedAt
+          }
+        } : {}),
+        ...(groupBaseline ? {
+          group: {
+            groupId: groupBaseline.id,
+            enabled: groupBaseline.enabled
+          }
+        } : {}),
+        ...(
+          wechatBaseline || wecomBaseline
+            ? {
+                identities: {
+                  ...(wechatBaseline ? { wechat: wechatBaseline } : {}),
+                  ...(wecomBaseline ? { wecom: wecomBaseline } : {})
+                }
+              }
+            : {}
+        )
+      }
     });
   }
 

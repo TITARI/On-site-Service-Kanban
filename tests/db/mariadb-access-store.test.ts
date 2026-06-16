@@ -2087,9 +2087,23 @@ describe("MariaDB access store", () => {
           conflicts: [],
           allowedActions: ["add"],
           category: "add",
-          selectable: true
+          selectable: true,
+          baseline: {
+            group: {
+              groupId: "builder",
+              enabled: true
+            },
+            identities: {
+              wechat: {
+                identityId: "chat-wxid-zhang",
+                personId: "person-existing",
+                updatedAt: "2026-06-15T00:00:00.000Z"
+              }
+            }
+          }
         }
-      ]
+      ],
+      summary: { total: 1, selectable: 1, blocked: 0 }
     });
 
     expect(connection.execute).toHaveBeenCalledTimes(2);
@@ -2115,7 +2129,20 @@ describe("MariaDB access store", () => {
     ]));
     expect(JSON.parse(calls[1].params[4] as string)).toEqual({
       allowedActions: ["add"],
-      category: "add"
+      category: "add",
+      baseline: {
+        group: {
+          groupId: "builder",
+          enabled: true
+        },
+        identities: {
+          wechat: {
+            identityId: "chat-wxid-zhang",
+            personId: "person-existing",
+            updatedAt: "2026-06-15T00:00:00.000Z"
+          }
+        }
+      }
     });
     expect(JSON.parse(calls[1].params[6] as string)).toEqual({
       name: "张三",

@@ -78,6 +78,7 @@ export function AdminUserImport({ onCommitted }: Props) {
   const [decisionError, setDecisionError] = useState("");
   const [commitError, setCommitError] = useState("");
   const [commitMessage, setCommitMessage] = useState("");
+  const [bulkAction, setBulkAction] = useState<UserImportAction>("skip");
 
   const categories = useMemo(() => {
     const rows = preview?.rows ?? [];
@@ -102,6 +103,31 @@ export function AdminUserImport({ onCommitted }: Props) {
       }
       return { ...current, [rowId]: next };
     });
+  }
+
+  function applyBulkDecision() {
+    if (!preview) return;
+    setDecisions((current) => {
+      const next = { ...current };
+      for (const row of preview.rows) {
+        if (!row.selectable || !row.allowedActions.includes(bulkAction)) {
+          continue;
+        }
+        const currentDecision = selectedDecision(row, current);
+        next[row.id] = {
+          ...currentDecision,
+          action: bulkAction,
+          confirmWechatRebind: bulkAction === "skip"
+            ? false
+            : currentDecision.confirmWechatRebind,
+          confirmWecomRebind: bulkAction === "skip"
+            ? false
+            : currentDecision.confirmWecomRebind
+        } as UserImportDecision;
+      }
+      return next;
+    });
+    setDecisionError("");
   }
 
   async function previewFile() {
@@ -284,6 +310,30 @@ export function AdminUserImport({ onCommitted }: Props) {
             <span>新增 {categories.add}</span>
             <span>覆盖 {categories.overwrite}</span>
             <span>阻塞 {categories.blocked}</span>
+          </div>
+          <div className="admin-import-bulk-actions">
+            <label>
+              <span>批量处理方式</span>
+              <select
+                aria-label="批量处理方式"
+                value={bulkAction}
+                disabled={busy !== null}
+                onChange={(event) => setBulkAction(event.target.value as UserImportAction)}
+              >
+                <option value="add">{ACTION_LABELS.add}</option>
+                <option value="overwrite">{ACTION_LABELS.overwrite}</option>
+                <option value="skip">{ACTION_LABELS.skip}</option>
+              </select>
+            </label>
+            <button
+              className="secondary-button"
+              type="button"
+              disabled={busy !== null}
+              onClick={applyBulkDecision}
+            >
+              应用批量处理
+            </button>
+            <p>仅应用到允许该操作的行，已选确认项会随行保留。</p>
           </div>
           <div className="admin-import-table-wrap">
             <table className="admin-import-table">

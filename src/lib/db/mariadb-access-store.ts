@@ -2362,6 +2362,7 @@ function importRowFromDatabase(row: Row): UserImportPreviewRow {
   const metadata = parseJsonValue<{
     allowedActions?: UserImportPreviewRow["allowedActions"];
     category?: UserImportPreviewRow["category"];
+    baseline?: UserImportPreviewRow["baseline"];
   }>(
     row.message,
     {}
@@ -2385,7 +2386,8 @@ function importRowFromDatabase(row: Row): UserImportPreviewRow {
     allowedActions,
     category,
     selectable: allowedActions.some((action) => action !== "skip"),
-    ...(decision ? { decision } : {})
+    ...(decision ? { decision } : {}),
+    ...(metadata.baseline ? { baseline: metadata.baseline } : {})
   };
 }
 
@@ -2432,7 +2434,8 @@ export async function saveUserImportPreview(
         "preview",
         json({
           allowedActions: row.allowedActions,
-          category: row.category
+          category: row.category,
+          ...(row.baseline ? { baseline: row.baseline } : {})
         }),
         json(row.raw),
         row.value ? json(row.value) : null,
@@ -2513,6 +2516,69 @@ export async function saveUserImportDecisions(
   );
 }
 
+export async function markUserImportRowsStale(
+  connection: DatabaseConnection,
+  jobId: string,
+  rowIds: string[],
+  actor: AuthenticatedActor
+) {
+  const preview = await getUserImportJobRows(connection, jobId, actor);
+  const staleIds = new Set(rowIds);
+  const now = new Date();
+  for (const row of preview.rows) {
+    if (!staleIds.has(row.id)) continue;
+    const conflicts = [...new Set([...row.conflicts, "stale-preview"])];
+    await execute(
+      connection,
+      `UPDATE import_job_rows
+       SET status = ?, message = ?, conflict_json = ?, decision_json = ?,
+           result_action = ?, updated_at = ?
+       WHERE id = ? AND job_id = ?`,
+      [
+        "stale",
+        json({
+          allowedActions: ["skip"],
+          category: "blocked",
+          ...(row.baseline ? { baseline: row.baseline } : {})
+        }),
+        json(conflicts),
+        json({
+          action: "skip",
+          confirmWechatRebind: false,
+          confirmWecomRebind: false
+        }),
+        "skip",
+        now,
+        row.id,
+        jobId
+      ]
+    );
+  }
+  await execute(
+    connection,
+    "UPDATE import_jobs SET updated_at = ? WHERE id = ?",
+    [now, jobId]
+  );
+}
+
+function expectedImportRebind(
+  row: UserImportPreviewRow,
+  platform: MessageChannel,
+  toPersonId: string
+) {
+  const baseline = row.baseline?.identities?.[platform];
+  const confirmed = platform === "wechat"
+    ? row.decision?.confirmWechatRebind
+    : row.decision?.confirmWecomRebind;
+  if (!baseline || !confirmed) return undefined;
+  return {
+    platform,
+    identityId: baseline.identityId,
+    fromPersonId: baseline.personId ?? "",
+    toPersonId
+  };
+}
+
 export async function applyUserImport(
   connection: DatabaseConnection,
   input: UserImportCommitInput,
@@ -2545,7 +2611,8 @@ export async function applyUserImport(
         platform: "wechat",
         externalUserId: row.value.wechatExternalUserId,
         displayName: row.value.name,
-        confirmedRebind: row.decision.confirmWechatRebind
+        confirmedRebind: row.decision.confirmWechatRebind,
+        expectedRebind: expectedImportRebind(row, "wechat", user.personId)
       }, actor);
     }
     if (row.value.wecomExternalUserId) {
@@ -2554,7 +2621,8 @@ export async function applyUserImport(
         platform: "wecom",
         externalUserId: row.value.wecomExternalUserId,
         displayName: row.value.name,
-        confirmedRebind: row.decision.confirmWecomRebind
+        confirmedRebind: row.decision.confirmWecomRebind,
+        expectedRebind: expectedImportRebind(row, "wecom", user.personId)
       }, actor);
     }
     await execute(

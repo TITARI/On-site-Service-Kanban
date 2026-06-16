@@ -6,6 +6,7 @@ import type {
   UserImportDecisionPatch,
   UserImportPreview,
   UserImportPreviewInput,
+  UserImportPreviewRow,
   UserImportReportRow
 } from "../domain/user-import";
 import {
@@ -144,6 +145,7 @@ export type AppRepository = {
   saveUserImportPreview(input: UserImportPreviewInput, actor: AuthenticatedActor): Promise<UserImportPreview>;
   getUserImportJobRows(jobId: string, actor: AuthenticatedActor): Promise<UserImportPreview>;
   saveUserImportDecisions(jobId: string, decisions: UserImportDecisionPatch[], actor: AuthenticatedActor): Promise<void>;
+  markUserImportRowsStale(jobId: string, rowIds: string[], actor: AuthenticatedActor): Promise<void>;
   loadImportJob(jobId: string, actor: AuthenticatedActor): Promise<UserImportPreview>;
   currentUserVersion(row: UserImportPreview["rows"][number], actor: AuthenticatedActor): Promise<string | undefined>;
   applyUserImport(input: UserImportCommitInput, actor: AuthenticatedActor): Promise<UserImportCommitResult>;
@@ -216,6 +218,44 @@ function userImportReportFromJob(
           ? row.conflicts.join(", ")
           : "待处理"
   }));
+}
+
+function markImportRowsStale(
+  job: NonNullable<AppState["userImportJobs"]>[number],
+  rowIds: string[]
+) {
+  const staleIds = new Set(rowIds);
+  for (const row of job.rows) {
+    if (!staleIds.has(row.id)) continue;
+    row.conflicts = [...new Set([...row.conflicts, "stale-preview"])];
+    row.allowedActions = ["skip"];
+    row.category = "blocked";
+    row.selectable = false;
+    row.decision = {
+      action: "skip",
+      confirmWechatRebind: false,
+      confirmWecomRebind: false
+    };
+  }
+  job.summary = summarizeUserImportRows(job.rows);
+}
+
+function expectedImportRebind(
+  row: UserImportPreviewRow,
+  platform: MessageChannel,
+  toPersonId: string
+) {
+  const baseline = row.baseline?.identities?.[platform];
+  const confirmed = platform === "wechat"
+    ? row.decision?.confirmWechatRebind
+    : row.decision?.confirmWecomRebind;
+  if (!baseline || !confirmed) return undefined;
+  return {
+    platform,
+    identityId: baseline.identityId,
+    fromPersonId: baseline.personId ?? "",
+    toPersonId
+  };
 }
 
 function createStateUpdater(store: StateFileRepository) {
@@ -472,6 +512,15 @@ export function createFileAppRepository(store: StateFileRepository = {
       }
       job.updatedAt = new Date().toISOString();
     }),
+    markUserImportRowsStale: (jobId, rowIds, actor) => updateState((state) => {
+      state.userImportJobs ??= [];
+      const job = state.userImportJobs.find((item) => item.jobId === jobId);
+      if (!job || job.ownerAccountId !== actor.accountId) {
+        throw new Error("User import preview job was not found");
+      }
+      markImportRowsStale(job, rowIds);
+      job.updatedAt = new Date().toISOString();
+    }),
     loadImportJob: async (jobId, actor) => {
       const state = stateCollections(await store.readState());
       const job = state.userImportJobs.find((item) => item.jobId === jobId);
@@ -524,7 +573,8 @@ export function createFileAppRepository(store: StateFileRepository = {
             platform: "wechat",
             externalUserId: row.value.wechatExternalUserId,
             displayName: row.value.name,
-            confirmedRebind: row.decision.confirmWechatRebind
+            confirmedRebind: row.decision.confirmWechatRebind,
+            expectedRebind: expectedImportRebind(row, "wechat", user.personId)
           }, actor);
         }
         if (row.value.wecomExternalUserId) {
@@ -533,7 +583,8 @@ export function createFileAppRepository(store: StateFileRepository = {
             platform: "wecom",
             externalUserId: row.value.wecomExternalUserId,
             displayName: row.value.name,
-            confirmedRebind: row.decision.confirmWecomRebind
+            confirmedRebind: row.decision.confirmWecomRebind,
+            expectedRebind: expectedImportRebind(row, "wecom", user.personId)
           }, actor);
         }
         const persisted = job.rows.find((item) => item.id === row.id);
@@ -546,6 +597,17 @@ export function createFileAppRepository(store: StateFileRepository = {
       job.updatedAt = now;
       job.completedAt = now;
       job.summary = summarizeUserImportRows(job.rows);
+      state.auditLogs ??= [];
+      state.auditLogs.push({
+        id: `audit-user-import-${input.jobId}-${now}`,
+        actorId: actor.accountId,
+        actorName: actor.name,
+        action: "user_import.commit",
+        targetType: "import_job",
+        targetId: input.jobId,
+        detail: { committed, sourceName: input.sourceName },
+        createdAt: now
+      });
       return { committed };
     }),
     userImportReport: async (jobId, actor) => {
@@ -640,6 +702,9 @@ export function createMariaDbAppRepository(store: AutoAcceptanceStore = new Mari
     ),
     saveUserImportDecisions: (jobId, decisions, actor) => (
       store.saveUserImportDecisions(jobId, decisions, actor)
+    ),
+    markUserImportRowsStale: (jobId, rowIds, actor) => (
+      store.markUserImportRowsStale(jobId, rowIds, actor)
     ),
     loadImportJob: (jobId, actor) => store.loadImportJob(jobId, actor),
     currentUserVersion: (row) => store.currentUserVersion(row),

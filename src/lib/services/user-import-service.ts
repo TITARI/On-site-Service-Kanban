@@ -2,6 +2,7 @@ import type {
   AuthenticatedActor,
   UserListItem
 } from "../domain/access-control";
+import type { ChatIdentity, MessageChannel } from "../domain/types";
 import type {
   UserImportCommitInput,
   UserImportCommitResult,
@@ -11,12 +12,12 @@ import type {
   UserImportReportRow
 } from "../domain/user-import";
 import {
-  assertValidUserImportDecision,
-  previewUserImport
+  assertValidUserImportDecision
 } from "../domain/user-import";
 import type { AppRepository } from "../repositories/app-repository";
 
-const STALE_IMPORT_MESSAGE = "导入数据已变化，请重新处理冲突";
+const STALE_IMPORT_MESSAGE =
+  "\u5bfc\u5165\u6570\u636e\u5df2\u53d8\u5316\uff0c\u8bf7\u91cd\u65b0\u5904\u7406\u51b2\u7a81";
 
 type CommitRepository = AppRepository & {
   loadImportJob?: (
@@ -31,11 +32,19 @@ type CommitRepository = AppRepository & {
     input: UserImportCommitInput,
     actor: AuthenticatedActor
   ) => Promise<UserImportCommitResult>;
+  markUserImportRowsStale?: (
+    jobId: string,
+    rowIds: string[],
+    actor: AuthenticatedActor
+  ) => Promise<void>;
   userImportReport?: (
     jobId: string,
     actor: AuthenticatedActor
   ) => Promise<UserImportReportRow[]>;
 };
+
+type IdentityBaseline =
+  NonNullable<NonNullable<UserImportPreviewRow["baseline"]>["identities"]>[MessageChannel];
 
 async function exactUserByPhone(repository: AppRepository, phone: string) {
   const { users } = await repository.listUsers({
@@ -46,27 +55,121 @@ async function exactUserByPhone(repository: AppRepository, phone: string) {
   return users.find((user) => user.phone === phone);
 }
 
-function previewVersion(row: UserImportPreviewRow, user: UserListItem | undefined) {
-  if (!row.value) return undefined;
-  return user?.updatedAt ?? "missing";
-}
-
-async function computedCurrentVersion(
-  repository: AppRepository,
-  row: UserImportPreviewRow,
-  actor: AuthenticatedActor
-) {
-  const customVersion = (repository as CommitRepository).currentUserVersion;
-  if (customVersion) return await customVersion(row, actor);
-  if (!row.value) return undefined;
-  return previewVersion(row, await exactUserByPhone(repository, row.value.phone));
-}
-
 function selectedRows(rows: UserImportPreviewRow[]) {
   return rows.filter((row) =>
     row.decision &&
     row.decision.action !== "skip"
   );
+}
+
+function currentActions(existingUser: UserListItem | undefined) {
+  return existingUser ? ["overwrite", "skip"] : ["add", "skip"];
+}
+
+function identityChanged(
+  current: ChatIdentity | undefined,
+  baseline: IdentityBaseline | undefined
+) {
+  if (!baseline) return Boolean(current?.personId);
+  return (
+    !current ||
+    current.id !== baseline.identityId ||
+    current.personId !== baseline.personId ||
+    current.lastSeenAt !== baseline.updatedAt
+  );
+}
+
+function confirmedRebind(
+  row: UserImportPreviewRow,
+  platform: MessageChannel
+) {
+  if (!row.decision || row.decision.action === "skip") return false;
+  return platform === "wechat"
+    ? row.decision.confirmWechatRebind
+    : row.decision.confirmWecomRebind;
+}
+
+async function legacyVersionChanged(
+  repository: AppRepository,
+  row: UserImportPreviewRow,
+  actor: AuthenticatedActor
+) {
+  const currentUserVersion = (repository as CommitRepository).currentUserVersion;
+  if (!currentUserVersion || row.baseline?.person) return false;
+  const version = await currentUserVersion(row, actor);
+  return (
+    version !== undefined &&
+    version !== "same" &&
+    version !== "missing"
+  );
+}
+
+async function rowIsStale(
+  repository: AppRepository,
+  row: UserImportPreviewRow,
+  actor: AuthenticatedActor
+) {
+  const value = row.value;
+  const decision = row.decision;
+  if (!value || !decision) return true;
+  if (await legacyVersionChanged(repository, row, actor)) return true;
+
+  const currentUser = await exactUserByPhone(repository, value.phone);
+  if (row.baseline?.person) {
+    if (
+      !currentUser ||
+      currentUser.personId !== row.baseline.person.personId ||
+      currentUser.updatedAt !== row.baseline.person.updatedAt
+    ) {
+      return true;
+    }
+  }
+
+  const liveActions = currentActions(currentUser);
+  if (!liveActions.includes(decision.action)) return true;
+
+  const group = (await repository.getConfig()).userGroups?.find(
+    (item) => item.id === value.groupId
+  );
+  if (
+    !group?.enabled ||
+    (row.baseline?.group &&
+      (
+        group.id !== row.baseline.group.groupId ||
+        group.enabled !== row.baseline.group.enabled
+      ))
+  ) {
+    return true;
+  }
+
+  for (const [platform, externalUserId] of [
+    ["wechat", value.wechatExternalUserId],
+    ["wecom", value.wecomExternalUserId]
+  ] as const) {
+    if (!externalUserId) continue;
+    const baseline = row.baseline?.identities?.[platform];
+    const identity = await repository.identityByExternalId(
+      platform,
+      externalUserId
+    );
+    if (identityChanged(identity, baseline)) return true;
+    if (
+      row.conflicts.includes(`${platform}-occupied`) &&
+      !confirmedRebind(row, platform)
+    ) {
+      return true;
+    }
+    if (
+      identity?.personId &&
+      currentUser?.personId &&
+      identity.personId !== currentUser.personId &&
+      !row.conflicts.includes(`${platform}-occupied`)
+    ) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 async function revalidateRows(
@@ -75,79 +178,28 @@ async function revalidateRows(
   actor: AuthenticatedActor
 ) {
   const selected = selectedRows(job.rows);
+  const staleRowIds: string[] = [];
   for (const row of selected) {
-    if (!row.value || !row.decision) throw new Error(STALE_IMPORT_MESSAGE);
+    if (!row.value || !row.decision) {
+      staleRowIds.push(row.id);
+      continue;
+    }
     try {
       assertValidUserImportDecision(row, row.decision);
     } catch {
-      throw new Error(STALE_IMPORT_MESSAGE);
+      staleRowIds.push(row.id);
     }
   }
 
-  const canRepreview = selected.every((row) =>
-    row.value?.phone &&
-    JSON.stringify(row.raw).includes(row.value.phone)
-  );
-  const livePreview = canRepreview
-    ? await previewUserImport(
-        repository,
-        {
-          sourceName: job.sourceName,
-          sourceHash: job.sourceHash,
-          rows: job.rows.map((row) => row.raw)
-        },
-        actor
-      )
-    : undefined;
   for (const row of selected) {
-    const value = row.value;
-    const decision = row.decision;
-    if (!value || !decision) throw new Error(STALE_IMPORT_MESSAGE);
-    const liveRow = livePreview?.rows[row.rowNumber - 1];
-    if (
-      liveRow &&
-      (
-        !liveRow.value ||
-        liveRow.category !== row.category ||
-        liveRow.allowedActions.join("|") !== row.allowedActions.join("|") ||
-        liveRow.conflicts.join("|") !== row.conflicts.join("|")
-      )
-    ) {
-      throw new Error(STALE_IMPORT_MESSAGE);
-    }
+    if (staleRowIds.includes(row.id)) continue;
+    if (await rowIsStale(repository, row, actor)) staleRowIds.push(row.id);
+  }
 
-    const currentVersion = await computedCurrentVersion(repository, row, actor);
-    if (
-      currentVersion !== undefined &&
-      currentVersion !== "same" &&
-      currentVersion !== "missing"
-    ) {
-      throw new Error(STALE_IMPORT_MESSAGE);
-    }
-
-    const group = (await repository.getConfig()).userGroups?.find(
-      (item) => item.id === value.groupId
-    );
-    if (!group?.enabled) throw new Error(STALE_IMPORT_MESSAGE);
-
-    for (const [platform, externalUserId, confirmed] of [
-      ["wechat", value.wechatExternalUserId, decision.confirmWechatRebind],
-      ["wecom", value.wecomExternalUserId, decision.confirmWecomRebind]
-    ] as const) {
-      if (!externalUserId) continue;
-      const identity = await repository.identityByExternalId(
-        platform,
-        externalUserId
-      );
-      if (
-        identity?.personId &&
-        identity.personId !== liveRow?.value?.phone &&
-        row.conflicts.includes(`${platform}-occupied`) &&
-        confirmed !== true
-      ) {
-        throw new Error(STALE_IMPORT_MESSAGE);
-      }
-    }
+  if (staleRowIds.length) {
+    const marker = (repository as CommitRepository).markUserImportRowsStale;
+    await marker?.(job.jobId, staleRowIds, actor);
+    throw new Error(STALE_IMPORT_MESSAGE);
   }
   return selected;
 }
