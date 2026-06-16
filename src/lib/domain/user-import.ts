@@ -110,6 +110,13 @@ export type UserImportDecisionPatch = {
   decision: UserImportDecision;
 };
 
+export class UserImportValidationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "UserImportValidationError";
+  }
+}
+
 type UserImportPreviewRepository = {
   getConfig(): Promise<{ userGroups?: UserGroup[] }>;
   listUsers(query: {
@@ -472,7 +479,9 @@ function isObject(value: unknown): value is Record<string, unknown> {
 
 export function parseUserImportDecision(input: unknown): UserImportDecision {
   if (!isObject(input)) {
-    throw new Error("Import row decision must be an object");
+    throw new UserImportValidationError(
+      "Import row decision must be an object"
+    );
   }
   const {
     action,
@@ -484,19 +493,25 @@ export function parseUserImportDecision(input: unknown): UserImportDecision {
     action !== "overwrite" &&
     action !== "skip"
   ) {
-    throw new Error("Import row decision action is not allowed");
+    throw new UserImportValidationError(
+      "Import row decision action is not allowed"
+    );
   }
   if (
     typeof confirmWechatRebind !== "boolean" ||
     typeof confirmWecomRebind !== "boolean"
   ) {
-    throw new Error("Import row decision confirmations must be boolean");
+    throw new UserImportValidationError(
+      "Import row decision confirmations must be boolean"
+    );
   }
   if (
     action === "skip" &&
     (confirmWechatRebind !== false || confirmWecomRebind !== false)
   ) {
-    throw new Error("Skip decisions must set confirmations to false");
+    throw new UserImportValidationError(
+      "Skip decisions must set confirmations to false"
+    );
   }
   return {
     action,
@@ -509,14 +524,20 @@ export function parseUserImportDecisionPatches(
   input: unknown
 ): UserImportDecisionPatch[] {
   if (!Array.isArray(input)) {
-    throw new Error("decisions must be an array");
+    throw new UserImportValidationError("decisions must be an array");
   }
   return input.map((item): UserImportDecisionPatch => {
     if (!isObject(item)) {
-      throw new Error("Import row decision patch must be an object");
+      throw new UserImportValidationError(
+        "Import row decision patch must be an object"
+      );
     }
     const rowId = typeof item.rowId === "string" ? item.rowId.trim() : "";
-    if (!rowId) throw new Error("Import row decision rowId is required");
+    if (!rowId) {
+      throw new UserImportValidationError(
+        "Import row decision rowId is required"
+      );
+    }
     return {
       rowId,
       decision: parseUserImportDecision(item.decision)

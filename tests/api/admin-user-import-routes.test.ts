@@ -199,6 +199,11 @@ describe("admin user import routes", () => {
         confirmWechatRebind: "false",
         confirmWecomRebind: false
       } }] },
+      { decisions: [{ rowId: "row-1", decision: {
+        action: "delete",
+        confirmWechatRebind: false,
+        confirmWecomRebind: false
+      } }] },
       { decisions: [{ rowId: " ", decision: {
         action: "add",
         confirmWechatRebind: false,

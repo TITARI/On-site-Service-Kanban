@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { badRequest, errorMessage, parseJson } from "@/lib/api/errors";
-import { parseUserImportDecisionPatches } from "@/lib/domain/user-import";
+import {
+  UserImportValidationError,
+  parseUserImportDecisionPatches
+} from "@/lib/domain/user-import";
 import { getAppRepository } from "@/lib/repositories/app-repository";
 import { createUserImportService } from "@/lib/services/user-import-service";
 import { adminActorOrResponse } from "../../../users/route-utils";
@@ -14,6 +17,9 @@ async function jobIdFrom(context: RouteContext) {
 }
 
 function routeError(error: unknown) {
+  if (error instanceof UserImportValidationError) {
+    return badRequest(error.message);
+  }
   if (error instanceof Error && /not found/i.test(error.message)) {
     return NextResponse.json({ message: error.message }, { status: 404 });
   }
