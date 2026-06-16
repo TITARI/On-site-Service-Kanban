@@ -17,6 +17,16 @@ import {
   type UserQuery
 } from "../domain/access-control";
 import type { ChatIdentity, ChatIdentityRebindExpectation, MessageChannel, PersonRole, UserGroup } from "../domain/types";
+import type {
+  PersistedUserImportPreview,
+  UserImportDecisionPatch,
+  UserImportPreview,
+  UserImportPreviewRow
+} from "../domain/user-import";
+import {
+  assertValidUserImportDecision,
+  summarizeUserImportRows
+} from "../domain/user-import";
 import type { AppConfig } from "../seed";
 import {
   normalizeMobilePhone,
@@ -50,6 +60,22 @@ async function execute(
 
 function bool(value: unknown) {
   return value === true || value === 1 || value === "1";
+}
+
+function parseJsonValue<T>(value: unknown, fallback: T): T {
+  if (value === null || value === undefined || value === "") return fallback;
+  if (typeof value === "string") {
+    try {
+      return JSON.parse(value) as T;
+    } catch {
+      return fallback;
+    }
+  }
+  return value as T;
+}
+
+function json(value: unknown) {
+  return JSON.stringify(value ?? null);
 }
 
 function iso(value: unknown): string | undefined {
@@ -2310,5 +2336,159 @@ export async function recordAccessRolesSync(
     undefined,
     { groupIds: groups.map((group) => group.id) },
     actor
+  );
+}
+
+function importRowFromDatabase(row: Row): UserImportPreviewRow {
+  const raw = parseJsonValue<UserImportPreviewRow["raw"]>(
+    row.raw_payload,
+    {}
+  );
+  const value = parseJsonValue<UserImportPreviewRow["value"]>(
+    row.normalized_payload,
+    undefined
+  );
+  const conflicts = parseJsonValue<UserImportPreviewRow["conflicts"]>(
+    row.conflict_json,
+    []
+  );
+  const decision = parseJsonValue<UserImportPreviewRow["decision"]>(
+    row.decision_json,
+    undefined
+  );
+  const allowedActions = parseJsonValue<UserImportPreviewRow["allowedActions"]>(
+    row.message,
+    conflicts.length ? ["skip"] : ["add", "skip"]
+  );
+  return {
+    id: String(row.id),
+    rowNumber: Number(row.row_number),
+    raw,
+    ...(value ? { value } : {}),
+    conflicts,
+    allowedActions,
+    selectable: allowedActions.some((action) => action !== "skip"),
+    ...(decision ? { decision } : {})
+  };
+}
+
+export async function saveUserImportPreview(
+  connection: DatabaseConnection,
+  preview: PersistedUserImportPreview
+) {
+  const now = new Date();
+  await execute(
+    connection,
+    `INSERT INTO import_jobs (
+       id, type, source_name, status, total_rows, success_rows, failed_rows,
+       owner_account_id, source_hash, preview_version, created_at,
+       completed_at, updated_at
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      preview.jobId,
+      "people",
+      preview.sourceName,
+      "preview",
+      preview.rows.length,
+      0,
+      0,
+      preview.ownerAccountId,
+      preview.sourceHash,
+      preview.previewVersion,
+      now,
+      null,
+      now
+    ]
+  );
+  for (const row of preview.rows) {
+    await execute(
+      connection,
+      `INSERT INTO import_job_rows (
+         id, job_id, \`row_number\`, status, message, raw_payload,
+         normalized_payload, conflict_json, decision_json, result_action,
+         created_at, updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        row.id,
+        preview.jobId,
+        row.rowNumber,
+        "preview",
+        json(row.allowedActions),
+        json(row.raw),
+        row.value ? json(row.value) : null,
+        json(row.conflicts),
+        null,
+        null,
+        now,
+        now
+      ]
+    );
+  }
+}
+
+export async function getUserImportJobRows(
+  connection: DatabaseConnection,
+  jobId: string,
+  actor: AuthenticatedActor
+): Promise<UserImportPreview> {
+  const [job] = await rows<Row>(
+    connection,
+    `SELECT *
+     FROM import_jobs
+     WHERE id = ? AND type = 'people' AND owner_account_id = ?
+     LIMIT 1`,
+    [jobId, actor.accountId]
+  );
+  if (!job) throw new Error("User import preview job was not found");
+  const rowRecords = await rows<Row>(
+    connection,
+    `SELECT *
+     FROM import_job_rows
+     WHERE job_id = ?
+     ORDER BY \`row_number\`, id`,
+    [jobId]
+  );
+  const importRows = rowRecords.map(importRowFromDatabase);
+  return {
+    jobId: String(job.id),
+    previewVersion: String(job.preview_version ?? ""),
+    sourceName: String(job.source_name),
+    sourceHash: String(job.source_hash ?? ""),
+    rows: importRows,
+    summary: summarizeUserImportRows(importRows)
+  };
+}
+
+export async function saveUserImportDecisions(
+  connection: DatabaseConnection,
+  jobId: string,
+  decisions: UserImportDecisionPatch[],
+  actor: AuthenticatedActor
+) {
+  const preview = await getUserImportJobRows(connection, jobId, actor);
+  const rowById = new Map(preview.rows.map((row) => [row.id, row]));
+  const now = new Date();
+  for (const patch of decisions) {
+    const row = rowById.get(patch.rowId);
+    if (!row) throw new Error("User import row was not found");
+    assertValidUserImportDecision(row, patch.decision);
+    await execute(
+      connection,
+      `UPDATE import_job_rows
+       SET decision_json = ?, result_action = ?, updated_at = ?
+       WHERE id = ? AND job_id = ?`,
+      [
+        json(patch.decision),
+        patch.decision.action,
+        now,
+        patch.rowId,
+        jobId
+      ]
+    );
+  }
+  await execute(
+    connection,
+    "UPDATE import_jobs SET updated_at = ? WHERE id = ?",
+    [now, jobId]
   );
 }

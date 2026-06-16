@@ -1512,4 +1512,67 @@ describe("file access repository", () => {
       groupId: "builder"
     })).rejects.toThrow(/phone|mobile/i);
   });
+
+  it("persists user import preview jobs and validates decisions without mutating users", async () => {
+    const store = memoryStore();
+    const repository = createFileAppRepository(store);
+
+    const preview = await repository.saveUserImportPreview({
+      sourceName: "users.xlsx",
+      sourceHash: "b".repeat(64),
+      rows: [
+        {
+          姓名: "张三",
+          手机号: "138 0013 8000",
+          分组: "Builder",
+          分组锁定: "是",
+          启用状态: "启用",
+          微信账号标识: "wxid-zhang",
+          企微账号标识: "wecom-zhang",
+          无关列: "discard me"
+        }
+      ]
+    }, adminActor());
+
+    expect(preview).toMatchObject({
+      jobId: expect.stringMatching(/^import-/),
+      previewVersion: expect.any(String),
+      summary: { total: 1, selectable: 1, blocked: 0 }
+    });
+
+    await repository.saveUserImportDecisions(preview.jobId, [
+      {
+        rowId: preview.rows[0].id,
+        decision: {
+          action: "add",
+          confirmWechatRebind: false,
+          confirmWecomRebind: false
+        }
+      }
+    ], adminActor());
+
+    const saved = await repository.getUserImportJobRows(
+      preview.jobId,
+      adminActor()
+    );
+    expect(saved.rows[0]).toMatchObject({
+      value: {
+        name: "张三",
+        phone: "13800138000",
+        groupId: "builder",
+        groupLocked: true,
+        enabled: true,
+        wechatExternalUserId: "wxid-zhang",
+        wecomExternalUserId: "wecom-zhang"
+      },
+      decision: {
+        action: "add",
+        confirmWechatRebind: false,
+        confirmWecomRebind: false
+      }
+    });
+    expect(saved.rows[0].value).not.toHaveProperty("无关列");
+    expect(store.snapshot().people).toHaveLength(0);
+    expect(store.snapshot().accounts).toHaveLength(0);
+  });
 });

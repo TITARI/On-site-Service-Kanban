@@ -15,6 +15,7 @@ import type {
   Ticket,
   TicketReply,
   TicketTimelineItem,
+  MessageChannel,
   UserGroup
 } from "../domain/types";
 import { normalizeAiPromptConfig } from "../domain/ai-config";
@@ -31,6 +32,12 @@ import type {
   UserMutation,
   UserQuery
 } from "../domain/access-control";
+import type {
+  UserImportDecisionPatch,
+  UserImportPreview,
+  UserImportPreviewInput
+} from "../domain/user-import";
+import { previewUserImport } from "../domain/user-import";
 import { createTicketService, type SubmitTicketInput } from "../services/ticket-service";
 import { processWechatWatchtowerMessage, type WatchtowerResult } from "../services/wechat-watchtower-service";
 import {
@@ -54,6 +61,7 @@ import {
   deleteUser as deleteAccessUser,
   getUser as readAccessUser,
   identityByExternalId as readAccessIdentityByExternalId,
+  getUserImportJobRows as getAccessUserImportJobRows,
   listChatIdentities as listAccessChatIdentities,
   listUsers as listAccessUsers,
   readAccessGroups,
@@ -63,6 +71,8 @@ import {
   resolveAccountSession as resolveAccessAccountSession,
   revokeAccountSession as revokeAccessAccountSession,
   revokeAccountSessions as revokeAccessAccountSessions,
+  saveUserImportDecisions as saveAccessUserImportDecisions,
+  saveUserImportPreview as saveAccessUserImportPreview,
   setUserEnabled as setAccessUserEnabled,
   setUserPassword as setAccessUserPassword,
   syncAccessRoles as syncDatabaseAccessRoles,
@@ -2442,6 +2452,46 @@ export class MariaDbStateStore {
   ) {
     await withDatabaseTransaction(async (connection) => {
       await unbindAccessChatIdentity(connection, input, actor);
+    });
+  }
+
+  async saveUserImportPreview(
+    input: UserImportPreviewInput,
+    actor: AuthenticatedActor
+  ): Promise<UserImportPreview> {
+    const preview = await previewUserImport(this, input, actor);
+    await withDatabaseTransaction(async (connection) => {
+      await saveAccessUserImportPreview(connection, {
+        ...preview,
+        ownerAccountId: actor.accountId
+      });
+    });
+    return preview;
+  }
+
+  async getUserImportJobRows(
+    jobId: string,
+    actor: AuthenticatedActor
+  ) {
+    return await getAccessUserImportJobRows(
+      getDatabasePool(),
+      jobId,
+      actor
+    );
+  }
+
+  async saveUserImportDecisions(
+    jobId: string,
+    decisions: UserImportDecisionPatch[],
+    actor: AuthenticatedActor
+  ) {
+    await withDatabaseTransaction(async (connection) => {
+      await saveAccessUserImportDecisions(
+        connection,
+        jobId,
+        decisions,
+        actor
+      );
     });
   }
 

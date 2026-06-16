@@ -1,6 +1,15 @@
 import type { AppState } from "../domain/app-state";
 import type { ChatIdentity, ChatIdentityRebindExpectation, KeywordGroup, MessageChannel, Ticket, UserGroup } from "../domain/types";
 import type {
+  UserImportDecisionPatch,
+  UserImportPreview,
+  UserImportPreviewInput
+} from "../domain/user-import";
+import {
+  assertValidUserImportDecision,
+  previewUserImport
+} from "../domain/user-import";
+import type {
   AccountCredential,
   AccountSession,
   AuthenticatedActor,
@@ -128,6 +137,9 @@ export type AppRepository = {
     userId: string;
     platform: MessageChannel;
   }, actor: AuthenticatedActor): Promise<void>;
+  saveUserImportPreview(input: UserImportPreviewInput, actor: AuthenticatedActor): Promise<UserImportPreview>;
+  getUserImportJobRows(jobId: string, actor: AuthenticatedActor): Promise<UserImportPreview>;
+  saveUserImportDecisions(jobId: string, decisions: UserImportDecisionPatch[], actor: AuthenticatedActor): Promise<void>;
 };
 
 type StateFileRepository = {
@@ -145,6 +157,7 @@ type NormalizedAppState = AppState & {
   conversations: NonNullable<AppState["conversations"]>;
   pendingWorkOrderSessions: NonNullable<AppState["pendingWorkOrderSessions"]>;
   outboundMessages: NonNullable<AppState["outboundMessages"]>;
+  userImportJobs: NonNullable<AppState["userImportJobs"]>;
 };
 
 function stateCollections(state: AppState): NormalizedAppState {
@@ -154,8 +167,22 @@ function stateCollections(state: AppState): NormalizedAppState {
   state.conversations ??= [];
   state.pendingWorkOrderSessions ??= [];
   state.outboundMessages ??= [];
+  state.userImportJobs ??= [];
   normalizeAccessState(state);
   return state as NormalizedAppState;
+}
+
+function userImportPreviewFromJob(
+  job: NonNullable<AppState["userImportJobs"]>[number]
+): UserImportPreview {
+  return {
+    jobId: job.jobId,
+    previewVersion: job.previewVersion,
+    sourceName: job.sourceName,
+    sourceHash: job.sourceHash,
+    rows: job.rows.map((row) => ({ ...row })),
+    summary: job.summary
+  };
 }
 
 function createStateUpdater(store: StateFileRepository) {
@@ -369,6 +396,49 @@ export function createFileAppRepository(store: StateFileRepository = {
     )),
     unbindChatIdentity: (input, actor) => updateState((state) => {
       unbindChatIdentityInState(state, input, actor);
+    }),
+    saveUserImportPreview: (input, actor) => updateState(async (state) => {
+      const stateRepository = createFileAppRepository({
+        readState: async () => state,
+        updateState: async (operation) => operation(state)
+      });
+      const preview = await previewUserImport(
+        stateRepository,
+        input,
+        actor
+      );
+      const at = new Date().toISOString();
+      state.userImportJobs ??= [];
+      state.userImportJobs.push({
+        ...preview,
+        ownerAccountId: actor.accountId,
+        createdAt: at,
+        updatedAt: at
+      });
+      return preview;
+    }),
+    getUserImportJobRows: async (jobId, actor) => {
+      const state = stateCollections(await store.readState());
+      const job = state.userImportJobs.find((item) => item.jobId === jobId);
+      if (!job || job.ownerAccountId !== actor.accountId) {
+        throw new Error("User import preview job was not found");
+      }
+      return userImportPreviewFromJob(job);
+    },
+    saveUserImportDecisions: (jobId, decisions, actor) => updateState((state) => {
+      state.userImportJobs ??= [];
+      const job = state.userImportJobs.find((item) => item.jobId === jobId);
+      if (!job || job.ownerAccountId !== actor.accountId) {
+        throw new Error("User import preview job was not found");
+      }
+      const rowById = new Map(job.rows.map((row) => [row.id, row]));
+      for (const patch of decisions) {
+        const row = rowById.get(patch.rowId);
+        if (!row) throw new Error("User import row was not found");
+        assertValidUserImportDecision(row, patch.decision);
+        row.decision = patch.decision;
+      }
+      job.updatedAt = new Date().toISOString();
     })
   };
 }
@@ -445,6 +515,15 @@ export function createMariaDbAppRepository(store: AutoAcceptanceStore = new Mari
     ),
     unbindChatIdentity: (input, actor) => (
       store.unbindChatIdentity(input, actor)
+    ),
+    saveUserImportPreview: (input, actor) => (
+      store.saveUserImportPreview(input, actor)
+    ),
+    getUserImportJobRows: (jobId, actor) => (
+      store.getUserImportJobRows(jobId, actor)
+    ),
+    saveUserImportDecisions: (jobId, decisions, actor) => (
+      store.saveUserImportDecisions(jobId, decisions, actor)
     )
   };
 }

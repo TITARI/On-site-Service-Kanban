@@ -18,6 +18,7 @@ import {
   resolveAccountSession,
   revokeAccountSession,
   revokeAccountSessions,
+  saveUserImportPreview,
   setUserPassword,
   syncAccessRoles,
   updateUser,
@@ -2058,5 +2059,68 @@ describe("MariaDB access store", () => {
     )).rejects.toThrow(/valid ISO date string/i);
 
     expect(calls).toEqual([]);
+  });
+
+  it("persists user import preview rows with normalized payloads and no decisions", async () => {
+    const { calls, connection } = recordingConnection();
+
+    await saveUserImportPreview(connection, {
+      jobId: "import-job-1",
+      previewVersion: "preview-version-1",
+      ownerAccountId: "account-admin",
+      sourceName: "users.xlsx",
+      sourceHash: "c".repeat(64),
+      rows: [
+        {
+          id: "row-1",
+          rowNumber: 1,
+          raw: { 姓名: "张三" },
+          value: {
+            name: "张三",
+            phone: "13800138000",
+            groupId: "builder",
+            groupLocked: true,
+            enabled: true,
+            wechatExternalUserId: "wxid-zhang",
+            wecomExternalUserId: "wecom-zhang"
+          },
+          conflicts: [],
+          allowedActions: ["add"],
+          selectable: true
+        }
+      ]
+    });
+
+    expect(connection.execute).toHaveBeenCalledTimes(2);
+    expect(calls[0].sql).toContain("INSERT INTO import_jobs");
+    expect(calls[0].sql).toContain("owner_account_id");
+    expect(calls[0].params).toEqual(expect.arrayContaining([
+      "import-job-1",
+      "people",
+      "account-admin",
+      "preview",
+      "c".repeat(64),
+      "preview-version-1"
+    ]));
+    expect(calls[1].sql).toContain("INSERT INTO import_job_rows");
+    expect(calls[1].sql).toContain("normalized_payload");
+    expect(calls[1].sql).toContain("conflict_json");
+    expect(calls[1].sql).toContain("decision_json");
+    expect(calls[1].params).toEqual(expect.arrayContaining([
+      "row-1",
+      "import-job-1",
+      1,
+      "preview"
+    ]));
+    expect(JSON.parse(calls[1].params[6] as string)).toEqual({
+      name: "张三",
+      phone: "13800138000",
+      groupId: "builder",
+      groupLocked: true,
+      enabled: true,
+      wechatExternalUserId: "wxid-zhang",
+      wecomExternalUserId: "wecom-zhang"
+    });
+    expect(calls[1].params[8]).toBeNull();
   });
 });

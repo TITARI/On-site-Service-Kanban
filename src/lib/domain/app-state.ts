@@ -19,6 +19,16 @@ import type {
   RolePermission
 } from "./access-control";
 import type { AppConfig } from "../seed";
+import type {
+  PersistedUserImportPreview,
+  UserImportPreviewRow
+} from "./user-import";
+
+export type UserImportJobState = Omit<PersistedUserImportPreview, "rows"> & {
+  rows: UserImportPreviewRow[];
+  createdAt: string;
+  updatedAt: string;
+};
 
 export type AppState = {
   booths: BoothRecord[];
@@ -37,5 +47,6 @@ export type AppState = {
   accountSessions?: AccountSession[];
   auditLogs?: AccessAuditLogEntry[];
   authBootstrap?: AuthBootstrapState | null;
+  userImportJobs?: UserImportJobState[];
   config: AppConfig;
 };
