@@ -1,6 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { defaultConfig, type AppConfig } from "@/lib/seed";
 import type { AppRepository } from "@/lib/repositories/app-repository";
+import { SESSION_COOKIE_NAMES } from "@/lib/services/session-service";
+
+const MOBILE_TOKEN = Buffer.alloc(32, 2).toString("base64url");
 
 const store = vi.hoisted(() => ({
   getConfig: vi.fn(),
@@ -108,11 +111,35 @@ describe("admin backend route authorization", () => {
     expect(store.adminBootstrap).not.toHaveBeenCalled();
   });
 
-  it("keeps public bootstrap scopes available without an admin session", async () => {
+  it("keeps login bootstrap public and mobile bootstrap available with a mobile session", async () => {
     const route = await import("@/app/api/bootstrap/route");
+    store.resolveAccountSession.mockResolvedValueOnce({
+      actor: {
+        accountId: "account-mobile",
+        personId: "person-mobile",
+        name: "Mobile User",
+        phone: "13900139000",
+        groupId: "group-mobile",
+        groupName: "Mobile Group",
+        permissions: ["ticket.claim"],
+        sessionType: "mobile"
+      },
+      session: {
+        id: "session-mobile",
+        accountId: "account-mobile",
+        sessionType: "mobile",
+        tokenHash: "hash-mobile",
+        authVersion: 1,
+        expiresAt: new Date(Date.now() + 86_400_000).toISOString(),
+        lastSeenAt: new Date().toISOString(),
+        createdAt: new Date().toISOString()
+      }
+    });
 
     const loginResponse = await route.GET(new Request("http://localhost/api/bootstrap?scope=login"));
-    const mobileResponse = await route.GET(new Request("http://localhost/api/bootstrap?scope=mobile"));
+    const mobileResponse = await route.GET(new Request("http://localhost/api/bootstrap?scope=mobile", {
+      headers: { Cookie: `${SESSION_COOKIE_NAMES.mobile}=${MOBILE_TOKEN}` }
+    }));
 
     expect(loginResponse.status).toBe(200);
     expect(mobileResponse.status).toBe(200);

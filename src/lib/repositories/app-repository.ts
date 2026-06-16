@@ -3,6 +3,7 @@ import type { ChatIdentity, ChatIdentityRebindExpectation, KeywordGroup, Message
 import type {
   UserImportCommitInput,
   UserImportCommitResult,
+  UserImportConflictCode,
   UserImportDecisionPatch,
   UserImportPreview,
   UserImportPreviewInput,
@@ -236,7 +237,9 @@ function markImportRowsStale(
   const staleIds = new Set(rowIds);
   for (const row of job.rows) {
     if (!staleIds.has(row.id)) continue;
-    row.conflicts = [...new Set([...row.conflicts, "stale-preview"])];
+    const conflicts = new Set<UserImportConflictCode>(row.conflicts);
+    conflicts.add("stale-preview");
+    row.conflicts = [...conflicts];
     row.allowedActions = ["skip"];
     row.category = "blocked";
     row.selectable = false;

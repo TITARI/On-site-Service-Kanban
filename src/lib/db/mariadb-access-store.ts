@@ -21,6 +21,7 @@ import type {
   PersistedUserImportPreview,
   UserImportCommitInput,
   UserImportCommitResult,
+  UserImportConflictCode,
   UserImportDecisionPatch,
   UserImportPreview,
   UserImportPreviewRow,
@@ -2527,7 +2528,8 @@ export async function markUserImportRowsStale(
   const now = new Date();
   for (const row of preview.rows) {
     if (!staleIds.has(row.id)) continue;
-    const conflicts = [...new Set([...row.conflicts, "stale-preview"])];
+    const conflicts = new Set<UserImportConflictCode>(row.conflicts);
+    conflicts.add("stale-preview");
     await execute(
       connection,
       `UPDATE import_job_rows
@@ -2541,7 +2543,7 @@ export async function markUserImportRowsStale(
           category: "blocked",
           ...(row.baseline ? { baseline: row.baseline } : {})
         }),
-        json(conflicts),
+        json([...conflicts]),
         json({
           action: "skip",
           confirmWechatRebind: false,
