@@ -12,12 +12,10 @@ import type {
   UserImportReportRow
 } from "../domain/user-import";
 import {
+  STALE_IMPORT_MESSAGE,
   assertValidUserImportDecision
 } from "../domain/user-import";
 import type { AppRepository } from "../repositories/app-repository";
-
-const STALE_IMPORT_MESSAGE =
-  "\u5bfc\u5165\u6570\u636e\u5df2\u53d8\u5316\uff0c\u8bf7\u91cd\u65b0\u5904\u7406\u51b2\u7a81";
 
 type CommitRepository = AppRepository & {
   loadImportJob?: (

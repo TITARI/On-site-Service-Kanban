@@ -18,6 +18,9 @@ export const USER_IMPORT_TEMPLATE_COLUMNS = [
   "企微账号标识"
 ] as const;
 
+export const STALE_IMPORT_MESSAGE =
+  "\u5bfc\u5165\u6570\u636e\u5df2\u53d8\u5316\uff0c\u8bf7\u91cd\u65b0\u5904\u7406\u51b2\u7a81";
+
 export type UserImportTemplateColumn =
   typeof USER_IMPORT_TEMPLATE_COLUMNS[number];
 

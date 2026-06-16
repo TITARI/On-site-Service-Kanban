@@ -28,6 +28,7 @@ import type {
   UserImportReportRow
 } from "../domain/user-import";
 import {
+  STALE_IMPORT_MESSAGE,
   assertValidUserImportDecision,
   summarizeUserImportRows
 } from "../domain/user-import";
@@ -2581,6 +2582,292 @@ function expectedImportRebind(
   };
 }
 
+async function lockedUserImportJobRows(
+  connection: DatabaseConnection,
+  jobId: string,
+  actor: AuthenticatedActor
+) {
+  const [job] = await rows<Row>(
+    connection,
+    `SELECT *
+     FROM import_jobs
+     WHERE id = ? AND type = 'people' AND owner_account_id = ?
+     LIMIT 1
+     FOR UPDATE`,
+    [jobId, actor.accountId]
+  );
+  if (!job) throw new Error("User import preview job was not found");
+  const rowRecords = await rows<Row>(
+    connection,
+    `SELECT *
+     FROM import_job_rows
+     WHERE job_id = ?
+     ORDER BY \`row_number\`, id
+     FOR UPDATE`,
+    [jobId]
+  );
+  return rowRecords.map(importRowFromDatabase);
+}
+
+async function lockedUserByPhone(
+  connection: DatabaseConnection,
+  phone: string,
+  baselinePersonId?: string
+) {
+  const [record] = await rows<Row>(
+    connection,
+    `SELECT
+       p.id AS person_id,
+       p.updated_at AS person_updated_at,
+       a.updated_at AS account_updated_at
+     FROM people p
+     JOIN accounts a ON a.person_id = p.id
+     WHERE p.phone = ?
+        OR a.login_name = ?
+        OR (? IS NOT NULL AND p.id = ?)
+     ORDER BY
+       CASE WHEN p.phone = ? OR a.login_name = ? THEN 0 ELSE 1 END,
+       p.id
+     LIMIT 1
+     FOR UPDATE`,
+    [
+      phone,
+      phone,
+      baselinePersonId ?? null,
+      baselinePersonId ?? null,
+      phone,
+      phone
+    ]
+  );
+  if (!record) return undefined;
+  const personUpdatedAt = requiredIso(record.person_updated_at);
+  const accountUpdatedAt = requiredIso(record.account_updated_at);
+  return {
+    personId: String(record.person_id),
+    updatedAt: personUpdatedAt > accountUpdatedAt
+      ? personUpdatedAt
+      : accountUpdatedAt
+  };
+}
+
+async function lockedUserGroup(
+  connection: DatabaseConnection,
+  groupId: string
+) {
+  const [group] = await rows<Row>(
+    connection,
+    `SELECT id, enabled
+     FROM user_groups
+     WHERE id = ?
+     LIMIT 1
+     FOR UPDATE`,
+    [groupId]
+  );
+  return group
+    ? { groupId: String(group.id), enabled: bool(group.enabled) }
+    : undefined;
+}
+
+async function lockedChatIdentityByExternalId(
+  connection: DatabaseConnection,
+  platform: MessageChannel,
+  externalUserId: string
+) {
+  const identity = await lockedIdentityByExternalId(
+    connection,
+    platform,
+    externalUserId
+  );
+  return identity ? chatIdentityFromRow(identity) : undefined;
+}
+
+function importIdentityChanged(
+  current: ChatIdentity | undefined,
+  baseline: NonNullable<NonNullable<UserImportPreviewRow["baseline"]>["identities"]>[MessageChannel] | undefined
+) {
+  if (!baseline) return Boolean(current?.personId);
+  return (
+    !current ||
+    current.id !== baseline.identityId ||
+    current.personId !== baseline.personId ||
+    current.lastSeenAt !== baseline.updatedAt
+  );
+}
+
+function importDecisionConfirmedRebind(
+  row: UserImportPreviewRow,
+  platform: MessageChannel
+) {
+  if (!row.decision || row.decision.action === "skip") return false;
+  return platform === "wechat"
+    ? row.decision.confirmWechatRebind
+    : row.decision.confirmWecomRebind;
+}
+
+function sameImportDecision(
+  first: UserImportPreviewRow["decision"],
+  second: UserImportPreviewRow["decision"]
+) {
+  return (
+    first?.action === second?.action &&
+    first?.confirmWechatRebind === second?.confirmWechatRebind &&
+    first?.confirmWecomRebind === second?.confirmWecomRebind
+  );
+}
+
+async function userImportRowIsStaleInTransaction(
+  connection: DatabaseConnection,
+  row: UserImportPreviewRow
+) {
+  const value = row.value;
+  const decision = row.decision;
+  if (!value || !decision) return true;
+  try {
+    assertValidUserImportDecision(row, decision);
+  } catch {
+    return true;
+  }
+
+  const currentUser = await lockedUserByPhone(
+    connection,
+    value.phone,
+    row.baseline?.person?.personId
+  );
+  if (row.baseline?.person) {
+    if (
+      !currentUser ||
+      currentUser.personId !== row.baseline.person.personId ||
+      currentUser.updatedAt !== row.baseline.person.updatedAt
+    ) {
+      return true;
+    }
+  }
+
+  const liveActions = currentUser ? ["overwrite", "skip"] : ["add", "skip"];
+  if (!liveActions.includes(decision.action)) return true;
+
+  const group = await lockedUserGroup(connection, value.groupId);
+  if (
+    !group?.enabled ||
+    (row.baseline?.group &&
+      (
+        group.groupId !== row.baseline.group.groupId ||
+        group.enabled !== row.baseline.group.enabled
+      ))
+  ) {
+    return true;
+  }
+
+  for (const [platform, externalUserId] of [
+    ["wechat", value.wechatExternalUserId],
+    ["wecom", value.wecomExternalUserId]
+  ] as const) {
+    if (!externalUserId) continue;
+    const baseline = row.baseline?.identities?.[platform];
+    const identity = await lockedChatIdentityByExternalId(
+      connection,
+      platform,
+      externalUserId
+    );
+    if (importIdentityChanged(identity, baseline)) return true;
+    if (
+      row.conflicts.includes(`${platform}-occupied`) &&
+      !importDecisionConfirmedRebind(row, platform)
+    ) {
+      return true;
+    }
+    if (
+      identity?.personId &&
+      currentUser?.personId &&
+      identity.personId !== currentUser.personId &&
+      !row.conflicts.includes(`${platform}-occupied`)
+    ) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+async function markLockedUserImportRowsStale(
+  connection: DatabaseConnection,
+  jobId: string,
+  importRows: UserImportPreviewRow[],
+  rowIds: string[]
+) {
+  const staleIds = new Set(rowIds);
+  const now = new Date();
+  for (const row of importRows) {
+    if (!staleIds.has(row.id)) continue;
+    const conflicts = new Set<UserImportConflictCode>(row.conflicts);
+    conflicts.add("stale-preview");
+    await execute(
+      connection,
+      `UPDATE import_job_rows
+       SET status = ?, message = ?, conflict_json = ?, decision_json = ?,
+           result_action = ?, updated_at = ?
+       WHERE id = ? AND job_id = ?`,
+      [
+        "stale",
+        json({
+          allowedActions: ["skip"],
+          category: "blocked",
+          ...(row.baseline ? { baseline: row.baseline } : {})
+        }),
+        json([...conflicts]),
+        json({
+          action: "skip",
+          confirmWechatRebind: false,
+          confirmWecomRebind: false
+        }),
+        "skip",
+        now,
+        row.id,
+        jobId
+      ]
+    );
+  }
+  await execute(
+    connection,
+    "UPDATE import_jobs SET updated_at = ? WHERE id = ?",
+    [now, jobId]
+  );
+}
+
+async function revalidateUserImportRowsInTransaction(
+  connection: DatabaseConnection,
+  input: UserImportCommitInput,
+  actor: AuthenticatedActor
+) {
+  const lockedRows = await lockedUserImportJobRows(
+    connection,
+    input.jobId,
+    actor
+  );
+  const lockedById = new Map(lockedRows.map((row) => [row.id, row]));
+  const staleRowIds: string[] = [];
+  for (const row of input.rows) {
+    const lockedRow = lockedById.get(row.id);
+    if (
+      !lockedRow ||
+      !lockedRow.decision ||
+      !sameImportDecision(lockedRow.decision, row.decision) ||
+      await userImportRowIsStaleInTransaction(connection, lockedRow)
+    ) {
+      staleRowIds.push(row.id);
+    }
+  }
+  if (staleRowIds.length) {
+    await markLockedUserImportRowsStale(
+      connection,
+      input.jobId,
+      lockedRows,
+      staleRowIds
+    );
+    throw new Error(STALE_IMPORT_MESSAGE);
+  }
+}
+
 export async function applyUserImport(
   connection: DatabaseConnection,
   input: UserImportCommitInput,
@@ -2588,6 +2875,7 @@ export async function applyUserImport(
 ): Promise<UserImportCommitResult> {
   const now = new Date();
   let committed = 0;
+  await revalidateUserImportRowsInTransaction(connection, input, actor);
   for (const row of input.rows) {
     if (!row.value || !row.decision || row.decision.action === "skip") {
       continue;

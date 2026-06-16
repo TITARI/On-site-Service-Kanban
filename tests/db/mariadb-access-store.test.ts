@@ -6,6 +6,7 @@ import { defaultConfig } from "@/lib/seed";
 import { initialState } from "@/lib/storage/file-store";
 import { syncAccessRolesInState } from "@/lib/services/access-state-service";
 import {
+  applyUserImport,
   bindChatIdentity,
   createUser,
   createAccountSession,
@@ -2207,5 +2208,138 @@ describe("MariaDB access store", () => {
         message: expect.stringContaining("stale-preview")
       })
     ]);
+  });
+
+  it("marks import rows stale and aborts before mutation when the live user changed after preview", async () => {
+    const { calls, connection } = recordingConnection((sql) => {
+      if (sql.includes("FROM import_jobs")) {
+        return [{
+          id: "import-job-1",
+          preview_version: "preview-1",
+          source_name: "users.xlsx",
+          source_hash: "f".repeat(64)
+        }];
+      }
+      if (sql.includes("FROM import_job_rows")) {
+        return [{
+          id: "row-1",
+          row_number: 1,
+          raw_payload: JSON.stringify({ name: "Alice Import" }),
+          normalized_payload: JSON.stringify({
+            name: "Alice Import",
+            phone: "13800138000",
+            groupId: "builder",
+            groupLocked: false,
+            enabled: true
+          }),
+          conflict_json: JSON.stringify(["phone-occupied"]),
+          decision_json: JSON.stringify({
+            action: "overwrite",
+            confirmWechatRebind: false,
+            confirmWecomRebind: false
+          }),
+          message: JSON.stringify({
+            allowedActions: ["overwrite", "skip"],
+            category: "overwrite",
+            baseline: {
+              person: {
+                personId: "person-1",
+                updatedAt: "2026-06-14T01:00:00.000Z"
+              },
+              group: {
+                groupId: "builder",
+                enabled: true
+              }
+            }
+          })
+        }];
+      }
+      if (sql.includes("FROM people p") && sql.includes("p.updated_at")) {
+        return [{
+          person_id: "person-1",
+          person_updated_at: new Date("2026-06-15T01:00:00.000Z"),
+          account_updated_at: new Date("2026-06-15T01:00:00.000Z")
+        }];
+      }
+      if (sql.includes("FROM accounts a") && sql.includes("FOR UPDATE")) {
+        return [{
+          account_id: "account-person-1",
+          login_name: "13800138000",
+          account_enabled: 1,
+          person_id: "person-1",
+          person_name: "Alice",
+          phone: "13800138000",
+          role: "staff",
+          group_id: "builder",
+          group_name_snapshot: "Builder",
+          group_locked: 0,
+          person_enabled: 1,
+          group_enabled: 1
+        }];
+      }
+      if (sql.includes("FROM user_groups")) {
+        return [enabledGroupRow()];
+      }
+      if (sql.includes("FROM account_sessions")) {
+        return [];
+      }
+      if (sql.includes("FROM accounts a") && sql.includes("permission_code")) {
+        return [userDetailRow({
+          person_name: "Alice Import",
+          person_updated_at: new Date("2026-06-15T01:00:00.000Z"),
+          account_updated_at: new Date("2026-06-15T01:00:00.000Z")
+        })];
+      }
+      return { affectedRows: 1 };
+    });
+
+    await expect(applyUserImport(connection, {
+      jobId: "import-job-1",
+      previewVersion: "preview-1",
+      sourceName: "users.xlsx",
+      sourceHash: "f".repeat(64),
+      rows: [{
+        id: "row-1",
+        rowNumber: 1,
+        raw: { name: "Alice Import" },
+        value: {
+          name: "Alice Import",
+          phone: "13800138000",
+          groupId: "builder",
+          groupLocked: false,
+          enabled: true
+        },
+        conflicts: ["phone-occupied"],
+        allowedActions: ["overwrite", "skip"],
+        category: "overwrite",
+        selectable: true,
+        decision: {
+          action: "overwrite",
+          confirmWechatRebind: false,
+          confirmWecomRebind: false
+        },
+        baseline: {
+          person: {
+            personId: "person-1",
+            updatedAt: "2026-06-14T01:00:00.000Z"
+          },
+          group: {
+            groupId: "builder",
+            enabled: true
+          }
+        }
+      }]
+    }, actor())).rejects.toThrow(
+      "\u5bfc\u5165\u6570\u636e\u5df2\u53d8\u5316\uff0c\u8bf7\u91cd\u65b0\u5904\u7406\u51b2\u7a81"
+    );
+
+    expect(calls.some((call) =>
+      call.sql.includes("SET status = ?") &&
+      call.params.includes("stale")
+    )).toBe(true);
+    expect(calls.some((call) =>
+      call.sql.includes("UPDATE people") ||
+      call.sql.includes("UPDATE accounts")
+    )).toBe(false);
   });
 });
