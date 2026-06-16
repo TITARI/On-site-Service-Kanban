@@ -59,12 +59,24 @@ describe("db import stable ids", () => {
           canClaim: true,
           canProcess: true,
           canAccept: false,
-          canAdmin: false,
           enabled: true
         }]
       }
     }, "legacy-state.json");
 
+    const userGroupInsert = calls.find((call) =>
+      call.sql.includes("INSERT INTO user_groups")
+    );
+    expect(userGroupInsert?.params.slice(0, 8)).toEqual([
+      "builder",
+      "Builder",
+      "",
+      true,
+      true,
+      false,
+      false,
+      true
+    ]);
     const peopleInsert = calls.find((call) =>
       call.sql.includes("INSERT INTO people")
     );
@@ -105,5 +117,9 @@ describe("db import stable ids", () => {
         ])
       })
     ]));
+    expect(calls.some((call) =>
+      call.sql.includes("INSERT INTO role_permissions") &&
+      call.params.includes("admin.access")
+    )).toBe(false);
   });
 });

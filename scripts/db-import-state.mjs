@@ -77,12 +77,16 @@ function roleIdForGroup(groupId) {
   return `role-${groupId}`;
 }
 
+function groupCanAdmin(group) {
+  return group.canAdmin === true;
+}
+
 function permissionCodesForGroup(group) {
   return [
     group.canClaim ? "ticket.claim" : undefined,
     group.canProcess ? "ticket.process" : undefined,
     group.canAccept ? "ticket.accept" : undefined,
-    group.canAdmin ? "admin.access" : undefined
+    groupCanAdmin(group) ? "admin.access" : undefined
   ].filter(Boolean);
 }
 
@@ -157,7 +161,7 @@ async function importConfig(connection, config, now) {
       `INSERT INTO user_groups (
         id, name, description, can_claim, can_process, can_accept, can_admin, enabled, created_at, updated_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [group.id, group.name, group.description, group.canClaim, group.canProcess, group.canAccept, group.canAdmin, group.enabled, now, now]
+      [group.id, group.name, group.description, group.canClaim, group.canProcess, group.canAccept, groupCanAdmin(group), group.enabled, now, now]
     );
   }
 
