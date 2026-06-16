@@ -22,7 +22,8 @@ import {
   setUserPassword,
   syncAccessRoles,
   updateUser,
-  upsertMobileAccount
+  upsertMobileAccount,
+  userImportReport
 } from "@/lib/db/mariadb-access-store";
 
 type RecordedCall = {
@@ -2154,5 +2155,57 @@ describe("MariaDB access store", () => {
       wecomExternalUserId: "wecom-zhang"
     });
     expect(calls[1].params[8]).toBeNull();
+  });
+
+  it("reports stale import rows as failed instead of user-skipped", async () => {
+    const { connection } = recordingConnection((sql) => {
+      if (sql.includes("FROM import_jobs")) {
+        return [{
+          id: "import-job-1",
+          preview_version: "preview-1",
+          source_name: "users.xlsx",
+          source_hash: "f".repeat(64)
+        }];
+      }
+      if (sql.includes("FROM import_job_rows")) {
+        return [{
+          id: "row-1",
+          row_number: 1,
+          raw_payload: JSON.stringify({ 濮撳悕: "Stale User" }),
+          normalized_payload: JSON.stringify({
+            name: "Stale User",
+            phone: "13800138001",
+            groupId: "builder",
+            groupLocked: false,
+            enabled: true
+          }),
+          conflict_json: JSON.stringify(["stale-preview"]),
+          decision_json: JSON.stringify({
+            action: "skip",
+            confirmWechatRebind: false,
+            confirmWecomRebind: false
+          }),
+          message: JSON.stringify({
+            allowedActions: ["skip"],
+            category: "blocked"
+          })
+        }];
+      }
+      return [];
+    });
+
+    await expect(userImportReport(
+      connection,
+      "import-job-1",
+      actor()
+    )).resolves.toEqual([
+      expect.objectContaining({
+        rowNumber: 1,
+        name: "Stale User",
+        action: "blocked",
+        status: "failed",
+        message: expect.stringContaining("stale-preview")
+      })
+    ]);
   });
 });

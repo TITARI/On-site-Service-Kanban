@@ -2659,24 +2659,33 @@ export async function userImportReport(
   actor: AuthenticatedActor
 ): Promise<UserImportReportRow[]> {
   const preview = await getUserImportJobRows(connection, jobId, actor);
-  return preview.rows.map((row) => ({
-    rowNumber: row.rowNumber,
-    name: row.value?.name ?? Object.values(row.raw)[0] ?? "",
-    phone: row.value?.phone ?? "",
-    action: row.decision?.action ?? (row.selectable ? "" : "blocked"),
-    status: row.decision?.action === "skip"
-      ? "skipped"
-      : row.decision
-        ? "success"
-        : row.selectable
-          ? "pending"
-          : "failed",
-    message: row.decision?.action === "skip"
-      ? "skipped"
-      : row.decision
-        ? "imported"
-        : row.conflicts.length
-          ? row.conflicts.join(", ")
-          : "pending"
-  }));
+  return preview.rows.map((row) => {
+    const stale = row.conflicts.includes("stale-preview");
+    return {
+      rowNumber: row.rowNumber,
+      name: row.value?.name ?? Object.values(row.raw)[0] ?? "",
+      phone: row.value?.phone ?? "",
+      action: stale
+        ? "blocked"
+        : row.decision?.action ?? (row.selectable ? "" : "blocked"),
+      status: stale
+        ? "failed"
+        : row.decision?.action === "skip"
+          ? "skipped"
+          : row.decision
+            ? "success"
+            : row.selectable
+              ? "pending"
+              : "failed",
+      message: stale
+        ? row.conflicts.join(", ")
+        : row.decision?.action === "skip"
+          ? "skipped"
+          : row.decision
+            ? "imported"
+            : row.conflicts.length
+              ? row.conflicts.join(", ")
+              : "pending"
+    };
+  });
 }

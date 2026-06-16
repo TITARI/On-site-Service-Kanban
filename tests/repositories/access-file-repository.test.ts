@@ -1638,4 +1638,44 @@ describe("file access repository", () => {
       detail: { committed: 1, sourceName: "users.xlsx" }
     });
   });
+
+  it("reports stale import rows as failed instead of user-skipped", async () => {
+    const repository = createFileAppRepository(memoryStore());
+    const actor = adminActor();
+    const preview = await repository.saveUserImportPreview({
+      sourceName: "users.xlsx",
+      sourceHash: "e".repeat(64),
+      rows: [{
+        [IMPORT_NAME_COLUMN]: "Stale User",
+        [IMPORT_PHONE_COLUMN]: "13800138001",
+        [IMPORT_GROUP_COLUMN]: "Builder",
+        [IMPORT_GROUP_LOCKED_COLUMN]: "false",
+        [IMPORT_ENABLED_COLUMN]: "true"
+      }]
+    }, actor);
+    await repository.saveUserImportDecisions(preview.jobId, [{
+      rowId: preview.rows[0].id,
+      decision: {
+        action: "add",
+        confirmWechatRebind: false,
+        confirmWecomRebind: false
+      }
+    }], actor);
+
+    await repository.markUserImportRowsStale(
+      preview.jobId,
+      [preview.rows[0].id],
+      actor
+    );
+
+    await expect(repository.userImportReport(preview.jobId, actor)).resolves.toEqual([
+      expect.objectContaining({
+        rowNumber: 1,
+        name: "Stale User",
+        action: "blocked",
+        status: "failed",
+        message: expect.stringContaining("stale-preview")
+      })
+    ]);
+  });
 });
