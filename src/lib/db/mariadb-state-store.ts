@@ -818,6 +818,31 @@ async function assertRuntimeAccountConsistent(
   }
 }
 
+async function runtimeAccountFingerprint(
+  connection: DatabaseConnection,
+  accountId: string
+) {
+  const [row] = await rows<Row>(
+    connection,
+    `SELECT
+       a.id AS account_id,
+       a.login_name,
+       a.enabled,
+       ar.role_id
+     FROM accounts a
+     LEFT JOIN account_roles ar ON ar.account_id = a.id
+     WHERE a.id = ?
+     LIMIT 1`,
+    [accountId]
+  );
+  if (!row) return undefined;
+  return {
+    loginName: String(row.login_name ?? ""),
+    enabled: bool(row.enabled),
+    roleId: row.role_id ? String(row.role_id) : undefined
+  };
+}
+
 async function upsertRuntimeAccessAccounts(
   connection: DatabaseConnection,
   people: Person[],
@@ -826,6 +851,16 @@ async function upsertRuntimeAccessAccounts(
   for (const person of people) {
     const accountId = `account-${person.id}`;
     await assertRuntimeAccountConsistent(connection, person, accountId);
+    const nextRoleId = person.groupId ? `role-${person.groupId}` : undefined;
+    const before = await runtimeAccountFingerprint(connection, accountId);
+    const authorizationChanged = Boolean(
+      before &&
+      (
+        before.loginName !== person.phone ||
+        before.enabled !== person.enabled ||
+        before.roleId !== nextRoleId
+      )
+    );
     await execute(
       connection,
       `INSERT INTO accounts (
@@ -847,6 +882,15 @@ async function upsertRuntimeAccessAccounts(
         dateOrNull(person.updatedAt) ?? now
       ]
     );
+    if (authorizationChanged) {
+      await execute(
+        connection,
+        `UPDATE accounts
+         SET auth_version = auth_version + 1, updated_at = ?
+         WHERE id = ?`,
+        [now, accountId]
+      );
+    }
     if (!person.groupId) continue;
     await execute(
       connection,

@@ -717,6 +717,93 @@ describe("MariaDbStateStore", () => {
     ]);
   });
 
+  it("invalidates MariaDB runtime sessions when WeChat registration changes the account role", async () => {
+    const { calls, connection } = wechatProcessingConnection();
+    const baseExecute = vi.mocked(connection.execute);
+    const originalExecute = baseExecute.getMockImplementation();
+    baseExecute.mockImplementation(async (sql: string, params: unknown[] = []) => {
+      if (sql.includes("FROM accounts") && sql.includes("FOR UPDATE")) {
+        calls.push({ sql, params });
+        return [[{
+          id: params[0],
+          person_id: params[1],
+          login_name: params[2]
+        }]];
+      }
+      if (sql.includes("FROM accounts a") && sql.includes("account_roles ar")) {
+        calls.push({ sql, params });
+        return [[{
+          account_id: params[0],
+          auth_version: 3,
+          enabled: 1,
+          login_name: "13800138088",
+          role_id: "role-business"
+        }]];
+      }
+      return originalExecute?.(sql, params) ?? [[]];
+    });
+    databaseMocks.setConnection(connection);
+
+    await new MariaDbStateStore().processWechatMessage({
+      channel: "wechat",
+      externalMessageId: "message-register-runtime",
+      senderId: "wxid-runtime",
+      senderName: "Alice WeChat",
+      senderGroup: "Runtime Group",
+      sourceConversationId: "runtime-group",
+      text: "娉ㄥ唽 Builder Alice 13800138088"
+    });
+
+    const invalidation = calls.find((call) =>
+      call.sql.includes("UPDATE accounts") &&
+      call.sql.includes("auth_version = auth_version + 1")
+    );
+    expect(invalidation).toBeDefined();
+  });
+
+  it("does not invalidate MariaDB runtime sessions when the account role is unchanged", async () => {
+    const { calls, connection } = wechatProcessingConnection();
+    const baseExecute = vi.mocked(connection.execute);
+    const originalExecute = baseExecute.getMockImplementation();
+    baseExecute.mockImplementation(async (sql: string, params: unknown[] = []) => {
+      if (sql.includes("FROM accounts") && sql.includes("FOR UPDATE")) {
+        calls.push({ sql, params });
+        return [[{
+          id: params[0],
+          person_id: params[1],
+          login_name: params[2]
+        }]];
+      }
+      if (sql.includes("FROM accounts a") && sql.includes("account_roles ar")) {
+        calls.push({ sql, params });
+        return [[{
+          account_id: params[0],
+          auth_version: 3,
+          enabled: 1,
+          login_name: "13800138088",
+          role_id: "role-builder"
+        }]];
+      }
+      return originalExecute?.(sql, params) ?? [[]];
+    });
+    databaseMocks.setConnection(connection);
+
+    await new MariaDbStateStore().processWechatMessage({
+      channel: "wechat",
+      externalMessageId: "message-register-runtime",
+      senderId: "wxid-runtime",
+      senderName: "Alice WeChat",
+      senderGroup: "Runtime Group",
+      sourceConversationId: "runtime-group",
+      text: "娉ㄥ唽 Builder Alice 13800138088"
+    });
+
+    expect(calls.some((call) =>
+      call.sql.includes("UPDATE accounts") &&
+      call.sql.includes("auth_version = auth_version + 1")
+    )).toBe(false);
+  });
+
   it("rejects runtime account upserts when login belongs to a different person", async () => {
     const { calls, connection } = wechatProcessingConnection();
     const baseExecute = vi.mocked(connection.execute);
