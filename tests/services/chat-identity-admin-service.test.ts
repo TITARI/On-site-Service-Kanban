@@ -151,7 +151,13 @@ describe("chat identity admin service", () => {
         userId: "person-1",
         platform: "wechat",
         externalUserId: "wxid-1",
-        confirmedRebind: true
+        confirmedRebind: true,
+        expectedRebind: {
+          platform: "wechat",
+          identityId: "identity-wxid-1",
+          fromPersonId: "person-other",
+          toPersonId: "person-1"
+        }
       }),
       expect.anything()
     );
@@ -392,6 +398,106 @@ describe("chat identity access-state mutations", () => {
     });
     expect(state.chatIdentities?.find((item) => item.id === "identity-occupied")).toMatchObject({
       personId: "person-other"
+    });
+    expect(state.auditLogs).toEqual([]);
+  });
+
+  it("rejects confirmed rebinds when the occupied owner changed after confirmation", () => {
+    const state: AppState = {
+      booths: [],
+      tickets: [],
+      messageRecords: [],
+      people: [
+        {
+          id: "person-1",
+          name: "Alice",
+          phone: "13800138000",
+          role: "handler",
+          groupId: "builder",
+          groupName: "Builder",
+          enabled: true,
+          createdAt: "2026-06-15T00:00:00.000Z",
+          updatedAt: "2026-06-15T00:00:00.000Z"
+        },
+        {
+          id: "person-new-owner",
+          name: "Carol",
+          phone: "13700137000",
+          role: "handler",
+          groupId: "builder",
+          groupName: "Builder",
+          enabled: true,
+          createdAt: "2026-06-15T00:00:00.000Z",
+          updatedAt: "2026-06-15T00:00:00.000Z"
+        }
+      ],
+      chatIdentities: [
+        identity({
+          id: "identity-current",
+          externalUserId: "wxid-current",
+          displayName: "Alice Current",
+          personId: "person-1",
+          verifiedBy: "admin",
+          verifiedAt: "2026-06-15T00:00:00.000Z"
+        }),
+        identity({
+          id: "identity-occupied",
+          externalUserId: "wxid-occupied",
+          displayName: "Carol WeChat",
+          personId: "person-new-owner",
+          verifiedBy: "admin",
+          verifiedAt: "2026-06-15T00:00:00.000Z"
+        })
+      ],
+      accounts: [
+        {
+          id: "account-person-1",
+          personId: "person-1",
+          loginName: "13800138000",
+          enabled: true,
+          authVersion: 1,
+          createdAt: "2026-06-15T00:00:00.000Z",
+          updatedAt: "2026-06-15T00:00:00.000Z"
+        },
+        {
+          id: "account-person-new-owner",
+          personId: "person-new-owner",
+          loginName: "13700137000",
+          enabled: true,
+          authVersion: 1,
+          createdAt: "2026-06-15T00:00:00.000Z",
+          updatedAt: "2026-06-15T00:00:00.000Z"
+        }
+      ],
+      accountCredentials: [],
+      roles: [],
+      accountRoles: [],
+      rolePermissions: [],
+      accountSessions: [],
+      auditLogs: [],
+      config: {
+        userGroups: []
+      } as AppState["config"]
+    };
+
+    expect(() => bindChatIdentityInState(state, {
+      userId: "person-1",
+      platform: "wechat",
+      externalUserId: "wxid-occupied",
+      confirmedRebind: true,
+      expectedRebind: {
+        platform: "wechat",
+        identityId: "identity-occupied",
+        fromPersonId: "person-other",
+        toPersonId: "person-1"
+      }
+    }, adminActor())).toThrow(/changed.*retry|retry.*changed/i);
+
+    expect(state.chatIdentities?.find((item) => item.id === "identity-current")).toMatchObject({
+      personId: "person-1"
+    });
+    expect(state.chatIdentities?.find((item) => item.id === "identity-occupied")).toMatchObject({
+      personId: "person-new-owner"
     });
     expect(state.auditLogs).toEqual([]);
   });

@@ -18,7 +18,7 @@ import {
   type UserMutation,
   type UserQuery
 } from "../domain/access-control";
-import type { ChatIdentity, MessageChannel, Person, PersonRole, UserGroup } from "../domain/types";
+import type { ChatIdentity, ChatIdentityRebindExpectation, MessageChannel, Person, PersonRole, UserGroup } from "../domain/types";
 
 type AccessState = AppState & {
   people: NonNullable<AppState["people"]>;
@@ -1354,6 +1354,21 @@ export function identityByExternalIdFromState(
   ));
 }
 
+function assertExpectedChatIdentityRebind(
+  expected: ChatIdentityRebindExpectation | undefined,
+  actual: ChatIdentityRebindExpectation
+) {
+  if (
+    !expected ||
+    expected.platform !== actual.platform ||
+    expected.identityId !== actual.identityId ||
+    expected.fromPersonId !== actual.fromPersonId ||
+    expected.toPersonId !== actual.toPersonId
+  ) {
+    throw new Error("Chat identity binding changed; retry confirmation");
+  }
+}
+
 export function bindChatIdentityInState(
   stateInput: AppState,
   input: {
@@ -1362,6 +1377,7 @@ export function bindChatIdentityInState(
     externalUserId: string;
     displayName?: string;
     confirmedRebind?: boolean;
+    expectedRebind?: ChatIdentityRebindExpectation;
   },
   actor: AuthenticatedActor
 ) {
@@ -1374,6 +1390,9 @@ export function bindChatIdentityInState(
     item.externalUserId === input.externalUserId
   ));
   if (!identity) {
+    if (input.expectedRebind) {
+      throw new Error("Chat identity binding changed; retry confirmation");
+    }
     identity = {
       id: stableId("chat", `${input.platform}:${input.externalUserId}`),
       platform: input.platform,
@@ -1392,10 +1411,24 @@ export function bindChatIdentityInState(
   const previousPersonId = identity.personId;
   if (
     previousPersonId &&
-    previousPersonId !== user.personId &&
-    !input.confirmedRebind
+    previousPersonId !== user.personId
   ) {
-    throw new Error("Chat identity is assigned to another user");
+    if (!input.confirmedRebind) {
+      throw new Error("Chat identity is assigned to another user");
+    }
+    assertExpectedChatIdentityRebind(input.expectedRebind, {
+      platform: identity.platform,
+      identityId: identity.id,
+      fromPersonId: previousPersonId,
+      toPersonId: user.personId
+    });
+  } else if (input.expectedRebind) {
+    assertExpectedChatIdentityRebind(input.expectedRebind, {
+      platform: identity.platform,
+      identityId: identity.id,
+      fromPersonId: previousPersonId ?? "",
+      toPersonId: user.personId
+    });
   }
   for (const current of state.chatIdentities) {
     if (

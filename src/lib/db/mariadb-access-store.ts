@@ -16,7 +16,7 @@ import {
   type UserMutation,
   type UserQuery
 } from "../domain/access-control";
-import type { ChatIdentity, MessageChannel, PersonRole, UserGroup } from "../domain/types";
+import type { ChatIdentity, ChatIdentityRebindExpectation, MessageChannel, PersonRole, UserGroup } from "../domain/types";
 import type { AppConfig } from "../seed";
 import {
   normalizeMobilePhone,
@@ -2108,6 +2108,21 @@ async function lockedIdentityByExternalId(
   return identity;
 }
 
+function assertExpectedChatIdentityRebind(
+  expected: ChatIdentityRebindExpectation | undefined,
+  actual: ChatIdentityRebindExpectation
+) {
+  if (
+    !expected ||
+    expected.platform !== actual.platform ||
+    expected.identityId !== actual.identityId ||
+    expected.fromPersonId !== actual.fromPersonId ||
+    expected.toPersonId !== actual.toPersonId
+  ) {
+    throw new Error("Chat identity binding changed; retry confirmation");
+  }
+}
+
 export async function bindChatIdentity(
   connection: DatabaseConnection,
   input: {
@@ -2116,6 +2131,7 @@ export async function bindChatIdentity(
     externalUserId: string;
     displayName?: string;
     confirmedRebind?: boolean;
+    expectedRebind?: ChatIdentityRebindExpectation;
   },
   actor: AuthenticatedActor
 ) {
@@ -2127,6 +2143,9 @@ export async function bindChatIdentity(
     input.externalUserId
   );
   if (!identity) {
+    if (input.expectedRebind) {
+      throw new Error("Chat identity binding changed; retry confirmation");
+    }
     const identityId = `chat-${createHash("sha256")
       .update(`${input.platform}:${input.externalUserId}`)
       .digest("base64url")}`;
@@ -2165,10 +2184,24 @@ export async function bindChatIdentity(
     : undefined;
   if (
     fromPersonId &&
-    fromPersonId !== personId &&
-    !input.confirmedRebind
+    fromPersonId !== personId
   ) {
-    throw new Error("Chat identity is assigned to another user");
+    if (!input.confirmedRebind) {
+      throw new Error("Chat identity is assigned to another user");
+    }
+    assertExpectedChatIdentityRebind(input.expectedRebind, {
+      platform: String(identity.platform) as MessageChannel,
+      identityId,
+      fromPersonId,
+      toPersonId: personId
+    });
+  } else if (input.expectedRebind) {
+    assertExpectedChatIdentityRebind(input.expectedRebind, {
+      platform: String(identity.platform) as MessageChannel,
+      identityId,
+      fromPersonId: fromPersonId ?? "",
+      toPersonId: personId
+    });
   }
 
   await execute(

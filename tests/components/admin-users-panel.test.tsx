@@ -69,6 +69,66 @@ afterEach(() => {
 });
 
 describe("AdminUsersPanel chat identity controls", () => {
+  it("updates the open editor immediately after binding an initially unbound identity", async () => {
+    const boundIdentity = {
+      id: "identity-wxid-new",
+      platform: "wechat",
+      externalUserId: "wxid-new",
+      displayName: "New WeChat",
+      personId: "person-1",
+      firstSeenAt: "2026-06-15T00:00:00.000Z",
+      lastSeenAt: "2026-06-15T00:00:00.000Z"
+    };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "/api/admin/chat-identities?platform=wechat") {
+        return new Response(JSON.stringify({
+          identities: [boundIdentity]
+        }), { status: 200 });
+      }
+      if (url === "/api/admin/chat-identities?platform=wecom") {
+        return new Response(JSON.stringify({ identities: [] }), { status: 200 });
+      }
+      if (url === "/api/admin/users/person-1/chat-identities/wechat" && init?.method === "PUT") {
+        return new Response(JSON.stringify({
+          identity: boundIdentity
+        }), { status: 200 });
+      }
+      if (url.startsWith("/api/admin/users")) {
+        return new Response(JSON.stringify({
+          users: [user({ identities: {} })],
+          total: 1,
+          page: 1,
+          pageSize: 20
+        }), { status: 200 });
+      }
+      throw new Error(`Unexpected request ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const userDriver = userEvent.setup();
+
+    render(<AdminUsersPanel groups={groups} />);
+
+    await userDriver.click(await screen.findByRole("button", { name: "编辑张三" }));
+    const editor = await screen.findByRole("complementary", { name: "编辑用户张三" });
+    const wechatSection = await within(editor).findByRole("region", { name: "WeChat identity binding" });
+    expect(within(wechatSection).getByText("No current binding")).not.toBeNull();
+    expect(
+      (within(wechatSection).getByRole("button", { name: "Unbind WeChat identity" }) as HTMLButtonElement).disabled
+    ).toBe(true);
+
+    await userDriver.selectOptions(
+      within(wechatSection).getByLabelText("WeChat stable identity"),
+      "wxid-new"
+    );
+    await userDriver.click(within(wechatSection).getByRole("button", { name: "Bind WeChat identity" }));
+
+    expect(await within(wechatSection).findByText("Bound to New WeChat (wxid-new)")).not.toBeNull();
+    expect(
+      (within(wechatSection).getByRole("button", { name: "Unbind WeChat identity" }) as HTMLButtonElement).disabled
+    ).toBe(false);
+  });
+
   it("binds chat identities from the editor after explicit conflict confirmation", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);

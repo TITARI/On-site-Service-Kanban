@@ -1,14 +1,10 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import type { AuthenticatedActor } from "@/lib/domain/access-control";
-import type { MessageChannel } from "@/lib/domain/types";
+import type { ChatIdentityRebindExpectation, MessageChannel } from "@/lib/domain/types";
 import type { AppRepository } from "@/lib/repositories/app-repository";
 
-type RebindClaim = {
-  platform: MessageChannel;
-  identityId: string;
-  fromPersonId: string;
-  toPersonId: string;
+type RebindClaim = ChatIdentityRebindExpectation & {
   expiresAt: string;
 };
 
@@ -185,8 +181,9 @@ export function createChatIdentityAdminService(
         ownerPersonId !== user.personId
       );
       let confirmedRebind = false;
+      let expectedRebind: ChatIdentityRebindExpectation | undefined;
       if (rebindsOccupiedIdentity) {
-        const expected = {
+        expectedRebind = {
           platform: parsed.platform,
           identityId: identity?.id ?? "",
           fromPersonId: ownerPersonId as string,
@@ -198,7 +195,7 @@ export function createChatIdentityAdminService(
           throw new ChatIdentityConflictError(
             "Identity already belongs to another user",
             signClaim({
-              ...expected,
+              ...expectedRebind,
               expiresAt: new Date(Date.now() + CONFIRMATION_TTL_MS).toISOString()
             }, secret),
             {
@@ -209,7 +206,7 @@ export function createChatIdentityAdminService(
         }
         assertClaimMatches(
           parseToken(parsed.confirmationToken, secret),
-          expected
+          expectedRebind
         );
         confirmedRebind = true;
       }
@@ -219,7 +216,8 @@ export function createChatIdentityAdminService(
         platform: parsed.platform,
         externalUserId: parsed.externalUserId,
         displayName: parsed.displayName,
-        confirmedRebind
+        confirmedRebind,
+        expectedRebind
       }, actor);
     },
 

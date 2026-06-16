@@ -6,6 +6,7 @@ import { defaultConfig } from "@/lib/seed";
 import { initialState } from "@/lib/storage/file-store";
 import { syncAccessRolesInState } from "@/lib/services/access-state-service";
 import {
+  bindChatIdentity,
   createUser,
   createAccountSession,
   deleteUser,
@@ -1414,6 +1415,52 @@ describe("MariaDB access store", () => {
       phone: "13800138000",
       groupId: "builder"
     });
+  });
+
+  it("rejects confirmed chat identity rebinds when the locked owner no longer matches the claim", async () => {
+    const { calls, connection } = recordingConnection((sql) => {
+      if (sql.includes("SELECT p.id AS person_id")) {
+        return [{ person_id: "person-1" }];
+      }
+      if (
+        sql.includes("FROM chat_identities") &&
+        sql.includes("external_user_id")
+      ) {
+        return [{
+          id: "identity-occupied",
+          platform: "wechat",
+          external_user_id: "wxid-occupied",
+          display_name: "Carol WeChat",
+          is_temporary: 0,
+          person_id: "person-new-owner",
+          verified_by: "admin",
+          verified_at: new Date("2026-06-15T00:00:00.000Z"),
+          first_seen_at: new Date("2026-06-15T00:00:00.000Z"),
+          last_seen_at: new Date("2026-06-15T00:00:00.000Z")
+        }];
+      }
+      return { affectedRows: 1 };
+    });
+
+    await expect(bindChatIdentity(connection, {
+      userId: "person-1",
+      platform: "wechat",
+      externalUserId: "wxid-occupied",
+      confirmedRebind: true,
+      expectedRebind: {
+        platform: "wechat",
+        identityId: "identity-occupied",
+        fromPersonId: "person-other",
+        toPersonId: "person-1"
+      }
+    }, actor())).rejects.toThrow(/changed.*retry|retry.*changed/i);
+
+    expect(calls.some((call) =>
+      call.sql.includes("UPDATE chat_identities")
+    )).toBe(false);
+    expect(calls.some((call) =>
+      call.sql.includes("INSERT INTO audit_logs")
+    )).toBe(false);
   });
 
   it("checks business history before deleting but ignores target-only audit rows", async () => {

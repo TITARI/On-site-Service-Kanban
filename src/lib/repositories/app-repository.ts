@@ -1,5 +1,5 @@
 import type { AppState } from "../domain/app-state";
-import type { ChatIdentity, KeywordGroup, MessageChannel, Ticket, UserGroup } from "../domain/types";
+import type { ChatIdentity, ChatIdentityRebindExpectation, KeywordGroup, MessageChannel, Ticket, UserGroup } from "../domain/types";
 import type {
   AccountCredential,
   AccountSession,
@@ -122,6 +122,7 @@ export type AppRepository = {
     externalUserId: string;
     displayName?: string;
     confirmedRebind?: boolean;
+    expectedRebind?: ChatIdentityRebindExpectation;
   }, actor: AuthenticatedActor): Promise<ChatIdentity>;
   unbindChatIdentity(input: {
     userId: string;

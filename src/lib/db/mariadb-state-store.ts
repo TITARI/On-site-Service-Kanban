@@ -4,6 +4,7 @@ import type {
   AiDecision,
   BoothRecord,
   ChatIdentity,
+  ChatIdentityRebindExpectation,
   Conversation,
   InboundMessageRecord,
   KeywordGroup,
@@ -2426,6 +2427,7 @@ export class MariaDbStateStore {
       externalUserId: string;
       displayName?: string;
       confirmedRebind?: boolean;
+      expectedRebind?: ChatIdentityRebindExpectation;
     },
     actor: AuthenticatedActor
   ) {

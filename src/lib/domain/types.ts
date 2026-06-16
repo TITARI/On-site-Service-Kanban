@@ -93,6 +93,13 @@ export type ChatIdentity = {
   lastSeenAt: string;
 };
 
+export type ChatIdentityRebindExpectation = {
+  platform: MessageChannel;
+  identityId: string;
+  fromPersonId: string;
+  toPersonId: string;
+};
+
 export type Conversation = {
   id: string;
   platform: MessageChannel;

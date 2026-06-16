@@ -263,6 +263,29 @@ export function AdminUsersPanel({
     ));
   }
 
+  function updateEditorIdentity(platform: MessageChannel, identity?: ChatIdentity) {
+    setEditor((current) => {
+      if (!current?.user) return current;
+      const identities = { ...current.user.identities };
+      if (identity) {
+        identities[platform] = {
+          id: identity.id,
+          externalUserId: identity.externalUserId,
+          displayName: identity.displayName
+        };
+      } else {
+        delete identities[platform];
+      }
+      return {
+        ...current,
+        user: {
+          ...current.user,
+          identities
+        }
+      };
+    });
+  }
+
   async function bindIdentity(platform: MessageChannel, confirmationToken?: string) {
     if (!editor?.user) return;
     const draftIdentity = identityDrafts[platform];
@@ -308,7 +331,11 @@ export function AdminUsersPanel({
         throw new Error(payload.message ?? `${PLATFORM_LABELS[platform]} binding failed`);
       }
       if (!response.ok) throw new Error(await responseMessage(response, `${PLATFORM_LABELS[platform]} binding failed`));
+      const payload = await response.json() as { identity?: ChatIdentity };
       setIdentityConflict(null);
+      if (payload.identity) {
+        updateEditorIdentity(platform, payload.identity);
+      }
       await loadUsers();
       await loadChatIdentities(platform);
       onRefresh?.();
@@ -331,6 +358,7 @@ export function AdminUsersPanel({
         method: "DELETE"
       });
       if (!response.ok) throw new Error(await responseMessage(response, `${PLATFORM_LABELS[platform]} unbind failed`));
+      updateEditorIdentity(platform);
       await loadUsers();
       onRefresh?.();
     } catch (error) {
