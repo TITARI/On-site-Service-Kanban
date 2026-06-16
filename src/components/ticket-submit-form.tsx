@@ -10,10 +10,11 @@ import { StatusMessage } from "./status-message";
 type Props = {
   config: AppConfig;
   currentUser: CurrentUser;
+  onUnauthorized?: () => void;
   onSubmitted: () => void;
 };
 
-export function TicketSubmitForm({ config, currentUser, onSubmitted }: Props) {
+export function TicketSubmitForm({ config, currentUser, onSubmitted, onUnauthorized }: Props) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [imageUrls, setImageUrls] = useState<string[]>([]);
@@ -48,6 +49,10 @@ export function TicketSubmitForm({ config, currentUser, onSubmitted }: Props) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
       });
+      if (response.status === 401) {
+        onUnauthorized?.();
+        return;
+      }
       if (!response.ok) throw new Error("submit failed");
       form.reset();
       setImageUrls([]);

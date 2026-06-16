@@ -55,8 +55,47 @@ const ticket: Ticket = {
 };
 
 afterEach(() => {
+  localStorage.clear();
   vi.unstubAllGlobals();
 });
+
+const pageConfig = {
+  issueTypes: [{ id: "build", name: "搭建", urgencyMinutes: 20, priorityWeight: 25, assignmentGroup: "搭建组", enabled: true }],
+  aiModels: [],
+  userGroups: [{
+    id: "builder",
+    name: "搭建组",
+    description: "",
+    canClaim: true,
+    canProcess: true,
+    canAccept: false,
+    canAdmin: false,
+    enabled: true
+  }],
+  assignmentRules: []
+};
+
+function pageFetchForTicketMutation(mutationPath: string) {
+  return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    if (url === "/api/auth/session?type=mobile") {
+      return new Response(JSON.stringify({ user: builderUser }), { status: 200 });
+    }
+    if (url === "/api/bootstrap?scope=mobile") {
+      return new Response(JSON.stringify({ tickets: [ticket], config: pageConfig }), { status: 200 });
+    }
+    if (url === "/api/bootstrap?scope=login") {
+      return new Response(JSON.stringify({ config: pageConfig }), { status: 200 });
+    }
+    if (url === `/api/tickets/${ticket.id}` && init?.method !== "PATCH") {
+      return new Response(JSON.stringify({ ticket }), { status: 200 });
+    }
+    if (url === mutationPath) {
+      return new Response(JSON.stringify({ message: "Unauthenticated" }), { status: 401 });
+    }
+    return new Response(null, { status: 404 });
+  });
+}
 
 describe("TicketDetail", () => {
   it("exposes a level-one heading for the detail route", () => {
@@ -468,5 +507,75 @@ describe("TicketDetail", () => {
     expect(await screen.findByRole("button", { name: /进入|杩涘叆/ })).not.toBeNull();
     expect(screen.queryByText("搭建王工")).toBeNull();
     expect(fetchMock).toHaveBeenCalledWith("/api/bootstrap?scope=login", { cache: "no-store" });
+  });
+
+  it("returns to login when ticket submit receives 401 and keeps submit payload business-only", async () => {
+    const fetchMock = pageFetchForTicketMutation("/api/tickets");
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+
+    render(<HomePage />);
+
+    await screen.findByText("A01 星河科技 搭建");
+    await user.click(screen.getByRole("button", { name: "提交" }));
+    await user.type(screen.getByRole("textbox", { name: "展位号" }), "A01");
+    await user.type(screen.getByRole("textbox", { name: "问题描述" }), "门头结构松动，需要处理");
+    await user.click(screen.getByRole("button", { name: "提交工单" }));
+
+    expect(await screen.findByRole("button", { name: /进入|杩涘叆/ })).not.toBeNull();
+    expect(screen.queryByText("A01 星河科技 搭建")).toBeNull();
+    expect(screen.queryByText("搭建王工")).toBeNull();
+    const submitCall = fetchMock.mock.calls.find(([input, init]) => String(input) === "/api/tickets" && init?.method === "POST");
+    const body = JSON.parse(String(submitCall?.[1]?.body));
+    expect(body).not.toHaveProperty("submitterId");
+    expect(body).not.toHaveProperty("submitterName");
+    expect(body).not.toHaveProperty("submitterPhone");
+  });
+
+  it("returns to login when a ticket action receives 401 and keeps action payload business-only", async () => {
+    const fetchMock = pageFetchForTicketMutation(`/api/tickets/${ticket.id}`);
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+
+    render(<HomePage />);
+
+    await screen.findByText("A01 星河科技 搭建");
+    await user.click(screen.getByRole("button", { name: /A01 星河科技 搭建/ }));
+    await screen.findByRole("button", { name: "认领工单" });
+    await user.click(screen.getByRole("button", { name: "认领工单" }));
+
+    expect(await screen.findByRole("button", { name: /进入|杩涘叆/ })).not.toBeNull();
+    expect(screen.queryByText("A01 星河科技 搭建")).toBeNull();
+    expect(screen.queryByText("搭建王工")).toBeNull();
+    const actionCall = fetchMock.mock.calls.find(([input, init]) => String(input) === `/api/tickets/${ticket.id}` && init?.method === "PATCH");
+    const body = JSON.parse(String(actionCall?.[1]?.body));
+    expect(body).not.toHaveProperty("actorId");
+    expect(body).not.toHaveProperty("actorName");
+    expect(body).not.toHaveProperty("handlerId");
+    expect(body).not.toHaveProperty("handlerName");
+  });
+
+  it("returns to login when a ticket reply receives 401 and keeps reply payload business-only", async () => {
+    const fetchMock = pageFetchForTicketMutation(`/api/tickets/${ticket.id}/replies`);
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+
+    render(<HomePage />);
+
+    await screen.findByText("A01 星河科技 搭建");
+    await user.click(screen.getByRole("button", { name: /A01 星河科技 搭建/ }));
+    await screen.findByRole("textbox", { name: "回复内容" });
+    await user.type(screen.getByRole("textbox", { name: "回复内容" }), "现场已补充照片");
+    await user.click(screen.getByRole("button", { name: "回复" }));
+
+    expect(await screen.findByRole("button", { name: /进入|杩涘叆/ })).not.toBeNull();
+    expect(screen.queryByText("A01 星河科技 搭建")).toBeNull();
+    expect(screen.queryByText("搭建王工")).toBeNull();
+    const replyCall = fetchMock.mock.calls.find(([input, init]) => String(input) === `/api/tickets/${ticket.id}/replies` && init?.method === "POST");
+    const body = JSON.parse(String(replyCall?.[1]?.body));
+    expect(body).not.toHaveProperty("authorId");
+    expect(body).not.toHaveProperty("authorName");
+    expect(body).not.toHaveProperty("authorPhone");
+    expect(body).not.toHaveProperty("role");
   });
 });

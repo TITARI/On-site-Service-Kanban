@@ -275,7 +275,14 @@ export default function HomePage() {
 
   return (
     <MobileShell activeTab={tab} currentUser={user} hideHero={isDetailPage} metrics={metrics} onLogout={() => void logout()} onTabChange={changeTab}>
-      {tab === "submit" && <TicketSubmitForm config={data.config} currentUser={user} onSubmitted={() => { changeTab("tickets"); void refresh(); }} />}
+      {tab === "submit" && (
+        <TicketSubmitForm
+          config={data.config}
+          currentUser={user}
+          onSubmitted={() => { changeTab("tickets"); void refresh(); }}
+          onUnauthorized={clearSessionState}
+        />
+      )}
       {tab === "tickets" && !selectedTicket && <TicketList tickets={data.tickets} onSelect={setSelectedId} />}
       {tab === "tickets" && selectedTicket && (
         <section className="detail-route">
@@ -285,7 +292,7 @@ export default function HomePage() {
           ) : detailError && !activeDetailTicket ? (
             <section className="empty-state">{detailError}</section>
           ) : (
-            <TicketDetail ticket={activeDetailTicket} currentUser={user} onRefresh={refreshCurrentDetail} />
+            <TicketDetail ticket={activeDetailTicket} currentUser={user} onRefresh={refreshCurrentDetail} onUnauthorized={clearSessionState} />
           )}
         </section>
       )}
@@ -299,7 +306,7 @@ export default function HomePage() {
           ) : detailError && !activeDetailTicket ? (
             <section className="empty-state">{detailError}</section>
           ) : (
-            <TicketDetail ticket={activeDetailTicket} currentUser={user} onRefresh={refreshCurrentDetail} />
+            <TicketDetail ticket={activeDetailTicket} currentUser={user} onRefresh={refreshCurrentDetail} onUnauthorized={clearSessionState} />
           )}
         </section>
       )}

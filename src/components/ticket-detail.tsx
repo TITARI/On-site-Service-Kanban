@@ -133,7 +133,17 @@ function GalleryImageGrid({
   );
 }
 
-export function TicketDetail({ ticket, currentUser, onRefresh }: { ticket?: Ticket; currentUser?: CurrentUser; onRefresh: () => void }) {
+export function TicketDetail({
+  currentUser,
+  onRefresh,
+  onUnauthorized,
+  ticket
+}: {
+  ticket?: Ticket;
+  currentUser?: CurrentUser;
+  onRefresh: () => void;
+  onUnauthorized?: () => void;
+}) {
   const [isReplying, setIsReplying] = useState(false);
   const [isActing, setIsActing] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -314,6 +324,10 @@ export function TicketDetail({ ticket, currentUser, onRefresh }: { ticket?: Tick
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
       });
+      if (response.status === 401) {
+        onUnauthorized?.();
+        return;
+      }
       if (!response.ok) throw new Error("ticket action failed");
       setProcessImageUrls([]);
       onRefresh();
@@ -392,6 +406,10 @@ export function TicketDetail({ ticket, currentUser, onRefresh }: { ticket?: Tick
           imageUrls: replyImageUrls
         })
       });
+      if (response.status === 401) {
+        onUnauthorized?.();
+        return;
+      }
       if (!response.ok) throw new Error("reply failed");
       form.reset();
       setReplyImageUrls([]);
