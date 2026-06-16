@@ -22,7 +22,8 @@ const fallbackStore = vi.hoisted(() => ({
   runAutoAcceptance: vi.fn(),
   adminBootstrap: vi.fn(),
   mobileBootstrap: vi.fn(),
-  getConfig: vi.fn()
+  getConfig: vi.fn(),
+  resolveAccountSession: vi.fn()
 }));
 
 vi.mock("@/lib/repositories/app-repository", () => ({
@@ -31,7 +32,8 @@ vi.mock("@/lib/repositories/app-repository", () => ({
     runAutoAcceptance: fallbackStore.runAutoAcceptance,
     adminBootstrap: fallbackStore.adminBootstrap,
     mobileBootstrap: fallbackStore.mobileBootstrap,
-    getConfig: fallbackStore.getConfig
+    getConfig: fallbackStore.getConfig,
+    resolveAccountSession: fallbackStore.resolveAccountSession
   } as unknown as AppRepository),
   getAppRepository: (): AppRepository => ({
     kind: "mariadb",
@@ -169,6 +171,7 @@ describe("bootstrap route", () => {
     fallbackStore.adminBootstrap.mockReset();
     fallbackStore.mobileBootstrap.mockReset();
     fallbackStore.getConfig.mockReset();
+    fallbackStore.resolveAccountSession.mockReset();
     store.runAutoAcceptance.mockResolvedValue(undefined);
     store.adminBootstrap.mockResolvedValue(store.state);
     store.mobileBootstrap.mockResolvedValue({
@@ -189,6 +192,7 @@ describe("bootstrap route", () => {
       config: defaultConfig()
     });
     fallbackStore.getConfig.mockResolvedValue(defaultConfig());
+    fallbackStore.resolveAccountSession.mockResolvedValue(mobileSession());
   });
 
   it("opts out of route caching so query scoped responses stay separate", async () => {
@@ -249,6 +253,34 @@ describe("bootstrap route", () => {
     expect(payload.tickets).toEqual([expect.objectContaining({ id: "fallback-ticket" })]);
     expect(payload.storage).toEqual(expect.objectContaining({ mode: "file", fallback: true }));
     expect(fallbackStore.mobileBootstrap).toHaveBeenCalled();
+  });
+
+  it("falls back to JSON mobile bootstrap when primary session resolution has a recoverable outage", async () => {
+    const route = await import("@/app/api/bootstrap/route");
+    store.resolveAccountSession.mockRejectedValueOnce(Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:3306"), { code: "ECONNREFUSED" }));
+
+    const response = await route.GET(mobileRequest());
+    const payload = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(payload.tickets).toEqual([expect.objectContaining({ id: "fallback-ticket" })]);
+    expect(payload.storage).toEqual(expect.objectContaining({ mode: "file", fallback: true }));
+    expect(fallbackStore.resolveAccountSession).toHaveBeenCalled();
+    expect(fallbackStore.runAutoAcceptance).toHaveBeenCalledOnce();
+    expect(fallbackStore.mobileBootstrap).toHaveBeenCalledOnce();
+  });
+
+  it("returns 401 when primary is down and fallback mobile session is invalid", async () => {
+    const route = await import("@/app/api/bootstrap/route");
+    store.resolveAccountSession.mockRejectedValueOnce(Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:3306"), { code: "ECONNREFUSED" }));
+    fallbackStore.resolveAccountSession.mockResolvedValueOnce(undefined);
+
+    const response = await route.GET(mobileRequest());
+    const payload = await response.json();
+
+    expect(response.status).toBe(401);
+    expect(payload).toEqual({ message: "Unauthenticated" });
+    expect(fallbackStore.mobileBootstrap).not.toHaveBeenCalled();
   });
 
   it("returns 401 for mobile bootstrap when the mobile session is missing or revoked", async () => {

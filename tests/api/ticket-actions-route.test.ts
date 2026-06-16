@@ -247,6 +247,50 @@ describe("ticket action route", () => {
     expect(updated.timeline.at(-1).body).toContain("认领工单");
   });
 
+  it("rejects direct claim of an already assigned ticket outside the actor group", async () => {
+    store.state!.tickets[0] = {
+      ...ticket,
+      handlerId: "network-1",
+      handlerName: "网络值班",
+      handlerPhone: "13600136000",
+      assignmentGroup: "网络组"
+    };
+
+    const response = await patch({
+      action: "claim",
+      status: "处理中"
+    });
+
+    expect(response.status).toBe(403);
+    expect(store.saveTicket).not.toHaveBeenCalled();
+    expect(store.state!.tickets[0]).toMatchObject({
+      handlerId: "network-1",
+      handlerName: "网络值班",
+      handlerPhone: "13600136000",
+      assignmentGroup: "网络组"
+    });
+  });
+
+  it("allows direct claim of an already assigned ticket in the actor group", async () => {
+    store.state!.tickets[0] = {
+      ...ticket,
+      handlerId: "builder-old",
+      handlerName: "搭建旧处理人",
+      handlerPhone: "13500135000",
+      assignmentGroup: "搭建组"
+    };
+
+    const response = await patch({
+      action: "claim",
+      status: "处理中"
+    });
+
+    expect(response.status).toBe(200);
+    const { ticket: updated } = await response.json();
+    expect(updated.handlerId).toBe("member-13700137000");
+    expect(updated.assignmentGroup).toBe("搭建组");
+  });
+
   it("rejects progress updates without processing content and photos", async () => {
     store.state!.tickets[0] = { ...ticket, status: "处理中", handlerId: "member-13700137000", handlerName: "搭建王工" };
 

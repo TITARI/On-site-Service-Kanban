@@ -33,6 +33,10 @@ function canActorProcessTicket(
   return ticket.handlerId === actor.personId || ticket.assignmentGroup === actor.groupName;
 }
 
+function canActorClaimTicket(actor: { groupName: string }, ticket: { handlerId?: string; assignmentGroup?: string }) {
+  return !ticket.handlerId || ticket.assignmentGroup === actor.groupName;
+}
+
 export async function GET(request: Request, { params }: { params: Promise<{ ticketId: string }> }) {
   const { ticketId } = await params;
   const repository = getAppRepository();
@@ -78,6 +82,9 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ ti
 
   const ticket = await repository.getTicket(ticketId);
   if (!ticket) return NextResponse.json({ message: "工单不存在" }, { status: 404 });
+  if (input.action === "claim" && !canActorClaimTicket(actor, ticket)) {
+    return NextResponse.json({ message: "Forbidden" }, { status: 403 });
+  }
   if ((input.action === "progress" || input.action === "status") && !canActorProcessTicket(actor, ticket)) {
     return NextResponse.json({ message: "Forbidden" }, { status: 403 });
   }

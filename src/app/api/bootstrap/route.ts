@@ -3,7 +3,7 @@ import { requireAdminAccess } from "@/lib/api/admin-guard";
 import { createFileAppRepository, getAppRepository, type AppRepository } from "@/lib/repositories/app-repository";
 import { stripConfigSecrets } from "@/lib/services/config-service";
 import type { StorageMode } from "@/lib/db/storage-mode";
-import { authErrorResponse, resolveRequestActor } from "@/lib/services/auth-service";
+import { AuthError, resolveRequestActor } from "@/lib/services/auth-service";
 
 export const dynamic = "force-dynamic";
 
@@ -13,9 +13,17 @@ type BootstrapStorage = {
   message?: string;
 };
 
+type BootstrapErrorPayload = {
+  message: string;
+  storage?: BootstrapStorage;
+  details?: { primary?: string; fallback?: string };
+};
+
 type BootstrapResult<T> =
   | { ok: true; data: T; storage?: BootstrapStorage }
-  | { ok: false; status: number; payload: { message: string; storage: BootstrapStorage; details?: { primary?: string; fallback?: string } } };
+  | { ok: false; status: number; payload: BootstrapErrorPayload };
+
+const DEGRADED_MESSAGE = "\u6570\u636e\u6e90\u6682\u4e0d\u53ef\u7528";
 
 const RECOVERABLE_DATABASE_CODES = new Set([
   "ECONNREFUSED",
@@ -45,7 +53,30 @@ function isRecoverableDatabaseError(error: unknown) {
 
 function successStorage(repository: AppRepository): BootstrapStorage | undefined {
   if (repository.kind !== "file") return undefined;
-  return { mode: "file", fallback: false, message: "使用 JSON 数据源启动。" };
+  return { mode: "file", fallback: false, message: "\u4f7f\u7528 JSON \u6570\u636e\u6e90\u542f\u52a8\u3002" };
+}
+
+function fallbackStorage(): BootstrapStorage {
+  return {
+    mode: "file",
+    fallback: true,
+    message: "MariaDB \u6682\u4e0d\u53ef\u7528\uff0c\u5df2\u4f7f\u7528 JSON \u6570\u636e\u6e90\u542f\u52a8\u3002"
+  };
+}
+
+function failedFallbackPayload(primaryError: unknown, fallbackError: unknown): BootstrapErrorPayload {
+  return {
+    message: DEGRADED_MESSAGE,
+    storage: {
+      mode: "file",
+      fallback: false,
+      message: "MariaDB \u6682\u4e0d\u53ef\u7528\uff0cJSON \u6570\u636e\u6e90\u4e5f\u52a0\u8f7d\u5931\u8d25\u3002"
+    },
+    details: {
+      primary: errorMessage(primaryError),
+      fallback: errorMessage(fallbackError)
+    }
+  };
 }
 
 async function loadWithJsonFallback<T>(
@@ -60,30 +91,41 @@ async function loadWithJsonFallback<T>(
 
     try {
       const repository = createFileAppRepository();
-      return {
-        ok: true,
-        data: await fallback(repository),
-        storage: { mode: "file", fallback: true, message: "MariaDB 暂不可用，已使用 JSON 数据源启动。" }
-      };
+      return { ok: true, data: await fallback(repository), storage: fallbackStorage() };
     } catch (fallbackError) {
-      return {
-        ok: false,
-        status: 503,
-        payload: {
-          message: "数据源暂不可用",
-          storage: { mode: "file", fallback: false, message: "MariaDB 暂不可用，JSON 数据源也加载失败。" },
-          details: {
-            primary: errorMessage(primaryError),
-            fallback: errorMessage(fallbackError)
-          }
-        }
-      };
+      return { ok: false, status: 503, payload: failedFallbackPayload(primaryError, fallbackError) };
     }
   }
 }
 
 function storagePayload(storage?: BootstrapStorage) {
   return storage ? { storage } : {};
+}
+
+function authFailure(error: AuthError): BootstrapResult<never> {
+  return { ok: false, status: error.status, payload: { message: error.message } };
+}
+
+async function loadMobileWithJsonFallback(request: Request): Promise<BootstrapResult<Awaited<ReturnType<AppRepository["mobileBootstrap"]>>>> {
+  try {
+    const repository = getAppRepository();
+    await resolveRequestActor(repository, request, "mobile");
+    await repository.runAutoAcceptance();
+    return { ok: true, data: await repository.mobileBootstrap(), storage: successStorage(repository) };
+  } catch (primaryError) {
+    if (primaryError instanceof AuthError) return authFailure(primaryError);
+    if (!isRecoverableDatabaseError(primaryError)) throw primaryError;
+
+    try {
+      const repository = createFileAppRepository();
+      await resolveRequestActor(repository, request, "mobile");
+      await repository.runAutoAcceptance();
+      return { ok: true, data: await repository.mobileBootstrap(), storage: fallbackStorage() };
+    } catch (fallbackError) {
+      if (fallbackError instanceof AuthError) return authFailure(fallbackError);
+      return { ok: false, status: 503, payload: failedFallbackPayload(primaryError, fallbackError) };
+    }
+  }
 }
 
 export async function GET(request: Request) {
@@ -102,23 +144,7 @@ export async function GET(request: Request) {
   }
 
   if (scope === "mobile") {
-    try {
-      await resolveRequestActor(getAppRepository(), request, "mobile");
-    } catch (error) {
-      const response = authErrorResponse(error);
-      return NextResponse.json({ message: response.message }, { status: response.status });
-    }
-
-    const result = await loadWithJsonFallback(
-      async (repository) => {
-        await repository.runAutoAcceptance();
-        return repository.mobileBootstrap();
-      },
-      async (repository) => {
-        await repository.runAutoAcceptance();
-        return repository.mobileBootstrap();
-      }
-    );
+    const result = await loadMobileWithJsonFallback(request);
     if (!result.ok) return NextResponse.json(result.payload, { status: result.status });
     const data = result.data;
     return NextResponse.json({
