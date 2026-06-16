@@ -110,6 +110,27 @@ export type UserImportDecisionPatch = {
   decision: UserImportDecision;
 };
 
+export type UserImportCommitInput = {
+  jobId: string;
+  previewVersion: string;
+  sourceName: string;
+  sourceHash: string;
+  rows: UserImportPreviewRow[];
+};
+
+export type UserImportCommitResult = {
+  committed: number;
+};
+
+export type UserImportReportRow = {
+  rowNumber: number;
+  name: string;
+  phone: string;
+  action: UserImportAction | "blocked" | "";
+  status: "success" | "skipped" | "failed" | "pending";
+  message: string;
+};
+
 export class UserImportValidationError extends Error {
   constructor(message: string) {
     super(message);

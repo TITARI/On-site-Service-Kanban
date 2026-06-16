@@ -1,13 +1,17 @@
 import type { AppState } from "../domain/app-state";
 import type { ChatIdentity, ChatIdentityRebindExpectation, KeywordGroup, MessageChannel, Ticket, UserGroup } from "../domain/types";
 import type {
+  UserImportCommitInput,
+  UserImportCommitResult,
   UserImportDecisionPatch,
   UserImportPreview,
-  UserImportPreviewInput
+  UserImportPreviewInput,
+  UserImportReportRow
 } from "../domain/user-import";
 import {
   assertValidUserImportDecision,
-  previewUserImport
+  previewUserImport,
+  summarizeUserImportRows
 } from "../domain/user-import";
 import type {
   AccountCredential,
@@ -140,6 +144,10 @@ export type AppRepository = {
   saveUserImportPreview(input: UserImportPreviewInput, actor: AuthenticatedActor): Promise<UserImportPreview>;
   getUserImportJobRows(jobId: string, actor: AuthenticatedActor): Promise<UserImportPreview>;
   saveUserImportDecisions(jobId: string, decisions: UserImportDecisionPatch[], actor: AuthenticatedActor): Promise<void>;
+  loadImportJob(jobId: string, actor: AuthenticatedActor): Promise<UserImportPreview>;
+  currentUserVersion(row: UserImportPreview["rows"][number], actor: AuthenticatedActor): Promise<string | undefined>;
+  applyUserImport(input: UserImportCommitInput, actor: AuthenticatedActor): Promise<UserImportCommitResult>;
+  userImportReport(jobId: string, actor: AuthenticatedActor): Promise<UserImportReportRow[]>;
 };
 
 type StateFileRepository = {
@@ -183,6 +191,31 @@ function userImportPreviewFromJob(
     rows: job.rows.map((row) => ({ ...row })),
     summary: job.summary
   };
+}
+
+function userImportReportFromJob(
+  job: NonNullable<AppState["userImportJobs"]>[number]
+): UserImportReportRow[] {
+  return job.rows.map((row) => ({
+    rowNumber: row.rowNumber,
+    name: row.value?.name ?? Object.values(row.raw)[0] ?? "",
+    phone: row.value?.phone ?? "",
+    action: row.decision?.action ?? (row.selectable ? "" : "blocked"),
+    status: row.decision?.action === "skip"
+      ? "skipped"
+      : row.decision
+        ? "success"
+        : row.selectable
+          ? "pending"
+          : "failed",
+    message: row.decision?.action === "skip"
+      ? "已跳过"
+      : row.decision
+        ? "导入成功"
+        : row.conflicts.length
+          ? row.conflicts.join(", ")
+          : "待处理"
+  }));
 }
 
 function createStateUpdater(store: StateFileRepository) {
@@ -438,7 +471,91 @@ export function createFileAppRepository(store: StateFileRepository = {
         row.decision = assertValidUserImportDecision(row, patch.decision);
       }
       job.updatedAt = new Date().toISOString();
-    })
+    }),
+    loadImportJob: async (jobId, actor) => {
+      const state = stateCollections(await store.readState());
+      const job = state.userImportJobs.find((item) => item.jobId === jobId);
+      if (!job || job.ownerAccountId !== actor.accountId) {
+        throw new Error("User import preview job was not found");
+      }
+      return userImportPreviewFromJob(job);
+    },
+    currentUserVersion: async (row) => {
+      if (!row.value) return undefined;
+      const { users } = await (createFileAppRepository({
+        readState: store.readState,
+        updateState: store.updateState
+      })).listUsers({
+        search: row.value.phone,
+        page: 1,
+        pageSize: 10
+      });
+      return users.find((user) => user.phone === row.value?.phone)?.updatedAt ?? "missing";
+    },
+    applyUserImport: (input, actor) => updateState((state) => {
+      state.userImportJobs ??= [];
+      const job = state.userImportJobs.find((item) => item.jobId === input.jobId);
+      if (!job || job.ownerAccountId !== actor.accountId) {
+        throw new Error("User import preview job was not found");
+      }
+      let committed = 0;
+      for (const row of input.rows) {
+        if (!row.value || !row.decision || row.decision.action === "skip") {
+          continue;
+        }
+        const existing = listUsersFromState(state, {
+          search: row.value.phone,
+          page: 1,
+          pageSize: 10
+        }).users.find((user) => user.phone === row.value?.phone);
+        const mutation = {
+          name: row.value.name,
+          phone: row.value.phone,
+          groupId: row.value.groupId,
+          groupLocked: row.value.groupLocked,
+          enabled: row.value.enabled
+        };
+        const user = existing
+          ? updateUserInState(state, existing.personId, mutation, actor)
+          : createUserInState(state, mutation, actor);
+        if (row.value.wechatExternalUserId) {
+          bindChatIdentityInState(state, {
+            userId: user.personId,
+            platform: "wechat",
+            externalUserId: row.value.wechatExternalUserId,
+            displayName: row.value.name,
+            confirmedRebind: row.decision.confirmWechatRebind
+          }, actor);
+        }
+        if (row.value.wecomExternalUserId) {
+          bindChatIdentityInState(state, {
+            userId: user.personId,
+            platform: "wecom",
+            externalUserId: row.value.wecomExternalUserId,
+            displayName: row.value.name,
+            confirmedRebind: row.decision.confirmWecomRebind
+          }, actor);
+        }
+        const persisted = job.rows.find((item) => item.id === row.id);
+        if (persisted) {
+          persisted.decision = row.decision;
+        }
+        committed += 1;
+      }
+      const now = new Date().toISOString();
+      job.updatedAt = now;
+      job.completedAt = now;
+      job.summary = summarizeUserImportRows(job.rows);
+      return { committed };
+    }),
+    userImportReport: async (jobId, actor) => {
+      const state = stateCollections(await store.readState());
+      const job = state.userImportJobs.find((item) => item.jobId === jobId);
+      if (!job || job.ownerAccountId !== actor.accountId) {
+        throw new Error("User import preview job was not found");
+      }
+      return userImportReportFromJob(job);
+    }
   };
 }
 
@@ -523,7 +640,11 @@ export function createMariaDbAppRepository(store: AutoAcceptanceStore = new Mari
     ),
     saveUserImportDecisions: (jobId, decisions, actor) => (
       store.saveUserImportDecisions(jobId, decisions, actor)
-    )
+    ),
+    loadImportJob: (jobId, actor) => store.loadImportJob(jobId, actor),
+    currentUserVersion: (row) => store.currentUserVersion(row),
+    applyUserImport: (input, actor) => store.applyUserImport(input, actor),
+    userImportReport: (jobId, actor) => store.userImportReport(jobId, actor)
   };
 }
 

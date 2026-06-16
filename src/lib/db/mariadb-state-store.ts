@@ -33,6 +33,7 @@ import type {
   UserQuery
 } from "../domain/access-control";
 import type {
+  UserImportCommitInput,
   UserImportDecisionPatch,
   UserImportPreview,
   UserImportPreviewInput
@@ -52,6 +53,7 @@ import { hashPassword } from "../services/password-service";
 import { getDatabasePool, type DatabaseConnection, withDatabaseTransaction } from "./connection";
 import {
   adminLoginRecord as readAdminLoginRecord,
+  applyUserImport as applyAccessUserImport,
   bindChatIdentity as bindAccessChatIdentity,
   bootstrapAdmin as bootstrapAdminAccess,
   bootstrapStatus as readBootstrapStatus,
@@ -79,6 +81,7 @@ import {
   unbindChatIdentity as unbindAccessChatIdentity,
   updateUser as updateAccessUser,
   userDeletionHistory as readAccessUserDeletionHistory,
+  userImportReport as readAccessUserImportReport,
   upsertMobileAccount as upsertAccessMobileAccount
 } from "./mariadb-access-store";
 
@@ -2493,6 +2496,45 @@ export class MariaDbStateStore {
         actor
       );
     });
+  }
+
+  async loadImportJob(
+    jobId: string,
+    actor: AuthenticatedActor
+  ) {
+    return await this.getUserImportJobRows(jobId, actor);
+  }
+
+  async currentUserVersion(
+    row: UserImportPreview["rows"][number]
+  ) {
+    if (!row.value) return undefined;
+    const { users } = await this.listUsers({
+      search: row.value.phone,
+      page: 1,
+      pageSize: 10
+    });
+    return users.find((user) => user.phone === row.value?.phone)?.updatedAt ?? "missing";
+  }
+
+  async applyUserImport(
+    input: UserImportCommitInput,
+    actor: AuthenticatedActor
+  ) {
+    return await withDatabaseTransaction(async (connection) => (
+      applyAccessUserImport(connection, input, actor)
+    ));
+  }
+
+  async userImportReport(
+    jobId: string,
+    actor: AuthenticatedActor
+  ) {
+    return await readAccessUserImportReport(
+      getDatabasePool(),
+      jobId,
+      actor
+    );
   }
 
   async listWechatOrderLogs(limit = 100, connection: DatabaseConnection = getDatabasePool()): Promise<WechatOrderLog[]> {

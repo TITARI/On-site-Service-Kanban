@@ -14,7 +14,14 @@ const store = vi.hoisted(() => ({
   resolveAccountSession: vi.fn(),
   saveUserImportPreview: vi.fn(),
   getUserImportJobRows: vi.fn(),
-  saveUserImportDecisions: vi.fn()
+  saveUserImportDecisions: vi.fn(),
+  loadImportJob: vi.fn(),
+  currentUserVersion: vi.fn(),
+  getConfig: vi.fn(),
+  listUsers: vi.fn(),
+  identityByExternalId: vi.fn(),
+  applyUserImport: vi.fn(),
+  userImportReport: vi.fn()
 }));
 
 vi.mock("@/lib/repositories/app-repository", () => ({
@@ -23,7 +30,14 @@ vi.mock("@/lib/repositories/app-repository", () => ({
     resolveAccountSession: store.resolveAccountSession,
     saveUserImportPreview: store.saveUserImportPreview,
     getUserImportJobRows: store.getUserImportJobRows,
-    saveUserImportDecisions: store.saveUserImportDecisions
+    saveUserImportDecisions: store.saveUserImportDecisions,
+    loadImportJob: store.loadImportJob,
+    currentUserVersion: store.currentUserVersion,
+    getConfig: store.getConfig,
+    listUsers: store.listUsers,
+    identityByExternalId: store.identityByExternalId,
+    applyUserImport: store.applyUserImport,
+    userImportReport: store.userImportReport
   } as unknown as AppRepository)
 }));
 
@@ -120,6 +134,62 @@ beforeEach(() => {
     summary: { total: 1, selectable: 1, blocked: 0 }
   });
   store.saveUserImportDecisions.mockResolvedValue(undefined);
+  store.loadImportJob.mockResolvedValue({
+    jobId: "import-job-1",
+    previewVersion: "preview-1",
+    sourceName: "users.xlsx",
+    sourceHash: "a".repeat(64),
+    rows: [
+      {
+        id: "row-1",
+        rowNumber: 1,
+        raw: { 濮撳悕: "寮犱笁" },
+        value: {
+          name: "寮犱笁",
+          phone: "13800138000",
+          groupId: "builder",
+          groupLocked: false,
+          enabled: true
+        },
+        conflicts: [],
+        allowedActions: ["add"],
+        category: "add",
+        selectable: true,
+        decision: {
+          action: "add",
+          confirmWechatRebind: false,
+          confirmWecomRebind: false
+        }
+      }
+    ],
+    summary: { total: 1, selectable: 1, blocked: 0 }
+  });
+  store.currentUserVersion.mockResolvedValue("same");
+  store.getConfig.mockResolvedValue({
+    userGroups: [{
+      id: "builder",
+      name: "Builder",
+      description: "",
+      canClaim: true,
+      canProcess: false,
+      canAccept: false,
+      canAdmin: false,
+      enabled: true
+    }]
+  });
+  store.listUsers.mockResolvedValue({ users: [], total: 0 });
+  store.identityByExternalId.mockResolvedValue(undefined);
+  store.applyUserImport.mockResolvedValue({ committed: 1 });
+  store.userImportReport.mockResolvedValue([
+    {
+      rowNumber: 1,
+      name: "寮犱笁",
+      phone: "13800138000",
+      action: "add",
+      status: "success",
+      message: "导入成功"
+    }
+  ]);
 });
 
 describe("admin user import routes", () => {
@@ -219,5 +289,75 @@ describe("admin user import routes", () => {
       expect(response.status).toBe(400);
     }
     expect(store.saveUserImportDecisions).not.toHaveBeenCalled();
+  });
+
+  it("loads import job details from the job route", async () => {
+    const route = await import("@/app/api/admin/user-imports/[jobId]/route");
+    const params = Promise.resolve({ jobId: "import-job-1" });
+
+    const response = await route.GET(request(
+      "https://board.example/api/admin/user-imports/import-job-1",
+      "GET"
+    ), { params });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      jobId: "import-job-1",
+      rows: [expect.objectContaining({ id: "row-1" })]
+    });
+    expect(store.getUserImportJobRows).toHaveBeenCalledWith(
+      "import-job-1",
+      actor()
+    );
+  });
+
+  it("commits selected import rows through the commit route", async () => {
+    const route = await import("@/app/api/admin/user-imports/[jobId]/commit/route");
+    const params = Promise.resolve({ jobId: "import-job-1" });
+
+    const response = await route.POST(request(
+      "https://board.example/api/admin/user-imports/import-job-1/commit",
+      "POST"
+    ), { params });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      committed: 1
+    });
+    expect(store.applyUserImport).toHaveBeenCalledWith(
+      expect.objectContaining({
+        rows: [expect.objectContaining({
+          decision: {
+            action: "add",
+            confirmWechatRebind: false,
+            confirmWecomRebind: false
+          }
+        })]
+      }),
+      actor()
+    );
+  });
+
+  it("returns an xlsx import report download", async () => {
+    const route = await import("@/app/api/admin/user-imports/[jobId]/report/route");
+    const params = Promise.resolve({ jobId: "import-job-1" });
+
+    const response = await route.GET(request(
+      "https://board.example/api/admin/user-imports/import-job-1/report",
+      "GET"
+    ), { params });
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("Content-Type")).toBe(
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    );
+    expect(response.headers.get("Content-Disposition")).toBe(
+      'attachment; filename="user-import-import-job-1.xlsx"'
+    );
+    expect((await response.arrayBuffer()).byteLength).toBeGreaterThan(100);
+    expect(store.userImportReport).toHaveBeenCalledWith(
+      "import-job-1",
+      actor()
+    );
   });
 });

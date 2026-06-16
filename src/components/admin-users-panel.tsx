@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import type { PermissionCode, UserListItem } from "@/lib/domain/access-control";
 import type { ChatIdentity, MessageChannel, UserGroup } from "@/lib/domain/types";
+import { AdminUserImport } from "./admin-user-import";
 
 type UserPayload = {
   users?: UserListItem[];
@@ -467,6 +468,11 @@ export function AdminUsersPanel({
           新增用户
         </button>
       </div>
+
+      <AdminUserImport onCommitted={async () => {
+        await loadUsers();
+        onRefresh?.();
+      }} />
 
       <form
         className="admin-users-filters"

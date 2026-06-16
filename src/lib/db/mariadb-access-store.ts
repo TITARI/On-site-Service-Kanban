@@ -19,9 +19,12 @@ import {
 import type { ChatIdentity, ChatIdentityRebindExpectation, MessageChannel, PersonRole, UserGroup } from "../domain/types";
 import type {
   PersistedUserImportPreview,
+  UserImportCommitInput,
+  UserImportCommitResult,
   UserImportDecisionPatch,
   UserImportPreview,
-  UserImportPreviewRow
+  UserImportPreviewRow,
+  UserImportReportRow
 } from "../domain/user-import";
 import {
   assertValidUserImportDecision,
@@ -2508,4 +2511,104 @@ export async function saveUserImportDecisions(
     "UPDATE import_jobs SET updated_at = ? WHERE id = ?",
     [now, jobId]
   );
+}
+
+export async function applyUserImport(
+  connection: DatabaseConnection,
+  input: UserImportCommitInput,
+  actor: AuthenticatedActor
+): Promise<UserImportCommitResult> {
+  const now = new Date();
+  let committed = 0;
+  for (const row of input.rows) {
+    if (!row.value || !row.decision || row.decision.action === "skip") {
+      continue;
+    }
+    const existing = (await listUsers(connection, {
+      search: row.value.phone,
+      page: 1,
+      pageSize: 10
+    })).users.find((user) => user.phone === row.value?.phone);
+    const mutation = {
+      name: row.value.name,
+      phone: row.value.phone,
+      groupId: row.value.groupId,
+      groupLocked: row.value.groupLocked,
+      enabled: row.value.enabled
+    };
+    const user = existing
+      ? await updateUser(connection, existing.personId, mutation, actor)
+      : await createUser(connection, mutation, actor);
+    if (row.value.wechatExternalUserId) {
+      await bindChatIdentity(connection, {
+        userId: user.personId,
+        platform: "wechat",
+        externalUserId: row.value.wechatExternalUserId,
+        displayName: row.value.name,
+        confirmedRebind: row.decision.confirmWechatRebind
+      }, actor);
+    }
+    if (row.value.wecomExternalUserId) {
+      await bindChatIdentity(connection, {
+        userId: user.personId,
+        platform: "wecom",
+        externalUserId: row.value.wecomExternalUserId,
+        displayName: row.value.name,
+        confirmedRebind: row.decision.confirmWecomRebind
+      }, actor);
+    }
+    await execute(
+      connection,
+      `UPDATE import_job_rows
+       SET status = ?, result_action = ?, decision_json = ?, updated_at = ?
+       WHERE id = ? AND job_id = ?`,
+      ["success", row.decision.action, json(row.decision), now, row.id, input.jobId]
+    );
+    committed += 1;
+  }
+  await execute(
+    connection,
+    `UPDATE import_jobs
+     SET status = ?, success_rows = ?, failed_rows = ?, completed_at = ?, updated_at = ?
+     WHERE id = ?`,
+    ["completed", committed, 0, now, now, input.jobId]
+  );
+  await writeAudit(
+    connection,
+    "user_import.commit",
+    "import_job",
+    input.jobId,
+    { committed, sourceName: input.sourceName },
+    actor,
+    now
+  );
+  return { committed };
+}
+
+export async function userImportReport(
+  connection: DatabaseConnection,
+  jobId: string,
+  actor: AuthenticatedActor
+): Promise<UserImportReportRow[]> {
+  const preview = await getUserImportJobRows(connection, jobId, actor);
+  return preview.rows.map((row) => ({
+    rowNumber: row.rowNumber,
+    name: row.value?.name ?? Object.values(row.raw)[0] ?? "",
+    phone: row.value?.phone ?? "",
+    action: row.decision?.action ?? (row.selectable ? "" : "blocked"),
+    status: row.decision?.action === "skip"
+      ? "skipped"
+      : row.decision
+        ? "success"
+        : row.selectable
+          ? "pending"
+          : "failed",
+    message: row.decision?.action === "skip"
+      ? "skipped"
+      : row.decision
+        ? "imported"
+        : row.conflicts.length
+          ? row.conflicts.join(", ")
+          : "pending"
+  }));
 }

@@ -28,6 +28,7 @@ export type UserImportJobState = Omit<PersistedUserImportPreview, "rows"> & {
   rows: UserImportPreviewRow[];
   createdAt: string;
   updatedAt: string;
+  completedAt?: string;
 };
 
 export type AppState = {
