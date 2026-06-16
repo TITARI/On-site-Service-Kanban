@@ -2495,6 +2495,59 @@ textarea {
   font-size: 12.5px;
 }
 
+.booth-data-table {
+  display: grid;
+  max-height: 430px;
+  overflow: auto;
+  border: 1px solid rgba(31, 106, 77, 0.1);
+  border-radius: 16px;
+  background: #fff;
+}
+
+.booth-data-row {
+  display: grid;
+  grid-template-columns:
+    minmax(82px, 0.72fr)
+    minmax(190px, 1.7fr)
+    minmax(96px, 0.9fr)
+    minmax(60px, 0.5fr)
+    minmax(86px, 0.75fr)
+    minmax(72px, 0.62fr)
+    minmax(150px, 1.24fr);
+  gap: 10px;
+  align-items: center;
+  min-height: 40px;
+  border-bottom: 1px solid rgba(31, 106, 77, 0.08);
+  padding: 9px 12px;
+  color: #4f5b54;
+  font-size: 12.5px;
+}
+
+.booth-data-row:last-child {
+  border-bottom: 0;
+}
+
+.booth-data-row > * {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.booth-data-row strong {
+  color: var(--green-deep);
+  font-size: 13px;
+}
+
+.booth-data-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  min-height: 36px;
+  background: rgba(247, 250, 245, 0.96);
+  color: rgba(79, 91, 84, 0.78);
+  font-size: 11px;
+  font-weight: 900;
+}
+
 .admin-linkage-card {
   display: grid;
 }
@@ -3805,9 +3858,14 @@ textarea {
 
   .admin-table-row,
   .admin-log-row,
+  .booth-data-row,
   .keyword-rule-row {
     grid-template-columns: 1fr;
     gap: 5px;
+  }
+
+  .booth-data-head {
+    display: none;
   }
 }
 

@@ -945,6 +945,34 @@ describe("AdminConfigCenter user groups", () => {
     await waitFor(() => expect(onRefresh).toHaveBeenCalled());
   });
 
+  it("renders imported booth records as a visible exhibition data table", () => {
+    render(
+      <AdminConfigCenter
+        config={config}
+        view="exhibition-data"
+        booths={[{
+          boothNumber: "1ET06",
+          companyName: "汕头市昌隆机械科技有限公司",
+          companyShortName: "昌隆机械",
+          location: "一楼 1E",
+          area: "36",
+          boothType: "普通绿搭",
+          salesOwner: "孙晓晓",
+          builder: "李铁：13607664172"
+        }]}
+        onRefresh={vi.fn()}
+      />
+    );
+
+    const table = screen.getByRole("table", { name: "展位数据明细" });
+    ["展位", "展商", "位置", "面积", "类型", "销售", "搭建商"].forEach((header) => {
+      expect(within(table).getByRole("columnheader", { name: header })).not.toBeNull();
+    });
+    ["1ET06", "汕头市昌隆机械科技有限公司", "一楼 1E", "36", "普通绿搭", "孙晓晓", "李铁：13607664172"].forEach((value) => {
+      expect(within(table).getByText(value)).not.toBeNull();
+    });
+  });
+
   it("imports titled logistics workbook sheets instead of only the first sheet", async () => {
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({ ok: true }), { status: 200 }));
     const onRefresh = vi.fn();

@@ -227,6 +227,11 @@ function shortDateTime(value: string) {
   return `${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")} ${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
 }
 
+function displayText(value?: string) {
+  const text = value?.trim();
+  return text || "—";
+}
+
 function isOpenTicket(ticket: TicketSummary) {
   return ticket.status !== "已关闭";
 }
@@ -1669,8 +1674,32 @@ export function AdminConfigCenter({
         <h3>展览数据</h3>
         <div className="admin-data-placeholder">
           <strong>当前展位数据 {booths.length} 条</strong>
-          <p>上传展位主数据表格，系统会解析展位、公司和负责人等字段并导入后台。</p>
+          <p>上传展位主数据表格，系统仅保留展位、展商、位置、面积、类型、销售、搭建商。</p>
         </div>
+        {booths.length > 0 && (
+          <div className="booth-data-table" role="table" aria-label="展位数据明细">
+            <div className="booth-data-row booth-data-head" role="row">
+              <span role="columnheader">展位</span>
+              <span role="columnheader">展商</span>
+              <span role="columnheader">位置</span>
+              <span role="columnheader">面积</span>
+              <span role="columnheader">类型</span>
+              <span role="columnheader">销售</span>
+              <span role="columnheader">搭建商</span>
+            </div>
+            {booths.map((booth) => (
+              <div className="booth-data-row" role="row" key={`${booth.boothNumber}-${booth.companyName}`}>
+                <strong role="cell">{booth.boothNumber}</strong>
+                <span role="cell">{booth.companyName}</span>
+                <span role="cell">{displayText(booth.location)}</span>
+                <span role="cell">{displayText(booth.area)}</span>
+                <span role="cell">{displayText(booth.boothType)}</span>
+                <span role="cell">{displayText(booth.salesOwner)}</span>
+                <span role="cell">{displayText(booth.builder)}</span>
+              </div>
+            ))}
+          </div>
+        )}
         <label className="file-import">
           <span>导入展位数据文件</span>
           <input

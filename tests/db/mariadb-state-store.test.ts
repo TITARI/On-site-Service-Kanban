@@ -44,7 +44,12 @@ function fakeConnection(): DatabaseConnection {
         company_name: "Test Company",
         company_short_name: "Test",
         sales_owner: "Owner",
-        builder: "Builder"
+        builder: "Builder",
+        raw_payload: JSON.stringify({
+          location: "一楼 1E",
+          area: "36",
+          boothType: "普通绿搭"
+        })
       }]];
       if (sql.includes("FROM inbound_messages")) return [[{
         id: "message-1",
@@ -290,7 +295,12 @@ describe("MariaDbStateStore", () => {
   it("loads admin bootstrap records from MariaDB tables", async () => {
     const data = await new MariaDbStateStore().adminBootstrap(fakeConnection());
 
-    expect(data.booths).toEqual([expect.objectContaining({ boothNumber: "A01" })]);
+    expect(data.booths).toEqual([expect.objectContaining({
+      boothNumber: "A01",
+      location: "一楼 1E",
+      area: "36",
+      boothType: "普通绿搭"
+    })]);
     expect(data.messageRecords).toEqual([expect.objectContaining({ id: "message-1" })]);
     expect(data.people).toEqual([expect.objectContaining({ id: "person-1", groupName: "搭建组" })]);
     expect(data.people[0]).toEqual(expect.objectContaining({
@@ -301,6 +311,57 @@ describe("MariaDbStateStore", () => {
     expect(data.conversations).toEqual([expect.objectContaining({ id: "conv-1", linkedPersonIds: ["person-1"] })]);
     expect(data.pendingWorkOrderSessions).toEqual([expect.objectContaining({ id: "pending-1", missingFields: ["phone"] })]);
     expect(data.outboundMessages).toEqual([expect.objectContaining({ id: "outbound-1", status: "pending" })]);
+  });
+
+  it("persists booth location, area, and type in MariaDB raw payload", async () => {
+    const { calls, connection } = recordingConnection();
+
+    await new MariaDbStateStore().writeState(writableState({
+      booths: [{
+        boothNumber: "1ET06",
+        companyName: "汕头市昌隆机械科技有限公司",
+        companyShortName: "昌隆机械",
+        location: "一楼 1E",
+        area: "36",
+        boothType: "普通绿搭",
+        salesOwner: "孙晓晓",
+        builder: "李铁：13607664172"
+      }]
+    }), connection);
+
+    const boothInsert = calls.find((call) => call.sql.includes("INSERT INTO exhibition_booths"));
+    expect(boothInsert?.params[9]).toBe(JSON.stringify({
+      location: "一楼 1E",
+      area: "36",
+      boothType: "普通绿搭"
+    }));
+  });
+
+  it("upserts imported booth raw payload fields without replacing other admin data", async () => {
+    const { calls, connection } = recordingConnection();
+    databaseMocks.setConnection(connection);
+
+    await new MariaDbStateStore().importBooths([{
+      boothNumber: "1ET06",
+      companyName: "汕头市昌隆机械科技有限公司",
+      companyShortName: "昌隆机械",
+      location: "一楼 1E",
+      area: "36",
+      boothType: "普通绿搭",
+      salesOwner: "孙晓晓",
+      builder: "李铁：13607664172"
+    }]);
+
+    const boothInsert = calls.find((call) =>
+      call.sql.includes("INSERT INTO exhibition_booths") &&
+      call.sql.includes("ON DUPLICATE KEY UPDATE")
+    );
+    expect(boothInsert?.params[9]).toBe(JSON.stringify({
+      location: "一楼 1E",
+      area: "36",
+      boothType: "普通绿搭"
+    }));
+    expect(normalizedSql(boothInsert?.sql ?? "")).toContain("raw_payload = VALUES(raw_payload)");
   });
 
   it("persists people group ids, group snapshots, and group locks", async () => {

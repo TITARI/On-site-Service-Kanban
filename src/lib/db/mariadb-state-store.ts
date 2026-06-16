@@ -117,6 +117,24 @@ function json(value: unknown) {
   return JSON.stringify(value ?? null);
 }
 
+function cleanText(value: unknown) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function optionalText(value: unknown) {
+  const text = cleanText(value);
+  return text || undefined;
+}
+
+function boothRawPayload(booth: BoothRecord) {
+  const payload = {
+    location: cleanText(booth.location),
+    area: cleanText(booth.area),
+    boothType: cleanText(booth.boothType)
+  };
+  return Object.values(payload).some(Boolean) ? JSON.stringify(payload) : null;
+}
+
 function bool(value: unknown) {
   return value === true || value === 1 || value === "1";
 }
@@ -183,15 +201,21 @@ async function latestConfig(connection: DatabaseConnection): Promise<AppConfig> 
 async function readBooths(connection: DatabaseConnection): Promise<BoothRecord[]> {
   const boothRows = await rows<Row>(
     connection,
-    "SELECT booth_number, company_name, company_short_name, sales_owner, builder FROM exhibition_booths WHERE enabled = true ORDER BY booth_number"
+    "SELECT booth_number, company_name, company_short_name, sales_owner, builder, raw_payload FROM exhibition_booths WHERE enabled = true ORDER BY booth_number"
   );
-  return boothRows.map((row) => ({
-    boothNumber: String(row.booth_number),
-    companyName: String(row.company_name),
-    companyShortName: String(row.company_short_name ?? row.company_name),
-    salesOwner: String(row.sales_owner ?? ""),
-    builder: String(row.builder ?? "")
-  }));
+  return boothRows.map((row) => {
+    const rawPayload = parseJsonValue<Partial<BoothRecord>>(row.raw_payload, {});
+    return {
+      boothNumber: String(row.booth_number),
+      companyName: String(row.company_name),
+      companyShortName: String(row.company_short_name ?? row.company_name),
+      location: optionalText(rawPayload.location),
+      area: optionalText(rawPayload.area),
+      boothType: optionalText(rawPayload.boothType),
+      salesOwner: String(row.sales_owner ?? ""),
+      builder: String(row.builder ?? "")
+    };
+  });
 }
 
 async function readPeople(connection: DatabaseConnection): Promise<Person[]> {
@@ -952,7 +976,7 @@ async function writeBooths(connection: DatabaseConnection, booths: BoothRecord[]
         booth.builder,
         null,
         null,
-        null,
+        boothRawPayload(booth),
         true,
         now,
         now
@@ -1874,6 +1898,7 @@ async function upsertBoothRecords(connection: DatabaseConnection, booths: BoothR
         company_short_name = VALUES(company_short_name),
         sales_owner = VALUES(sales_owner),
         builder = VALUES(builder),
+        raw_payload = VALUES(raw_payload),
         enabled = true,
         updated_at = VALUES(updated_at)`,
       [
@@ -1886,7 +1911,7 @@ async function upsertBoothRecords(connection: DatabaseConnection, booths: BoothR
         booth.builder,
         null,
         null,
-        null,
+        boothRawPayload(booth),
         true,
         now,
         now

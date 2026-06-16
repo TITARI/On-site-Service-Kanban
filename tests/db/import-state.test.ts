@@ -122,4 +122,43 @@ describe("db import stable ids", () => {
       call.params.includes("admin.access")
     )).toBe(false);
   });
+
+  it("imports booth location, area, and type into raw payload", async () => {
+    const { importState } = await import("../../scripts/db-import-state.mjs");
+    const calls: Array<{ sql: string; params: unknown[] }> = [];
+    const connection = {
+      execute: async (sql: string, params: unknown[] = []) => {
+        calls.push({ sql, params });
+        return [{ affectedRows: 1 }];
+      }
+    };
+
+    await importState(connection, {
+      booths: [{
+        boothNumber: "1ET06",
+        companyName: "汕头市昌隆机械科技有限公司",
+        companyShortName: "昌隆机械",
+        location: "一楼 1E",
+        area: "36",
+        boothType: "普通绿搭",
+        salesOwner: "孙晓晓",
+        builder: "李铁：13607664172"
+      }],
+      tickets: [],
+      messageRecords: [],
+      people: [],
+      chatIdentities: [],
+      conversations: [],
+      pendingWorkOrderSessions: [],
+      outboundMessages: [],
+      config: {}
+    }, "legacy-state.json");
+
+    const boothInsert = calls.find((call) => call.sql.includes("INSERT INTO exhibition_booths"));
+    expect(boothInsert?.params[9]).toBe(JSON.stringify({
+      location: "一楼 1E",
+      area: "36",
+      boothType: "普通绿搭"
+    }));
+  });
 });

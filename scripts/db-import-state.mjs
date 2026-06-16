@@ -11,6 +11,19 @@ function json(value) {
   return JSON.stringify(value ?? null);
 }
 
+function cleanText(value) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function boothRawPayload(booth) {
+  const payload = {
+    location: cleanText(booth.location),
+    area: cleanText(booth.area),
+    boothType: cleanText(booth.boothType)
+  };
+  return Object.values(payload).some(Boolean) ? JSON.stringify(payload) : null;
+}
+
 function dateOrNow(value, fallback = new Date()) {
   if (!value) return fallback;
   const date = new Date(value);
@@ -361,7 +374,7 @@ export async function importState(connection, state, sourceName) {
         booth.builder,
         null,
         null,
-        null,
+        boothRawPayload(booth),
         true,
         now,
         now
