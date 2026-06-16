@@ -155,6 +155,28 @@ describe("admin chat identity routes", () => {
     expect(store.bindChatIdentity).not.toHaveBeenCalled();
   });
 
+  it("maps repository binding drift to a retryable conflict response", async () => {
+    store.bindChatIdentity.mockRejectedValue(
+      new Error("Chat identity binding changed; retry confirmation")
+    );
+    const route = await import("@/app/api/admin/users/[userId]/chat-identities/[platform]/route");
+
+    const response = await route.PUT(request(
+      "https://board.example/api/admin/users/person-1/chat-identities/wechat",
+      "PUT",
+      { externalUserId: "wxid-1", displayName: "Alice WeChat" }
+    ), {
+      params: Promise.resolve({ userId: "person-1", platform: "wechat" })
+    });
+    const payload = await response.json();
+
+    expect(response.status).toBe(409);
+    expect(payload).toMatchObject({
+      code: "IDENTITY_REBIND_STALE",
+      message: "Chat identity binding changed; retry confirmation"
+    });
+  });
+
   it("unbinds a platform identity for a user", async () => {
     const route = await import("@/app/api/admin/users/[userId]/chat-identities/[platform]/route");
 

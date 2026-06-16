@@ -41,6 +41,15 @@ function chatIdentityErrorResponse(error: unknown) {
       message: error.message
     }, { status: 404 });
   }
+  if (
+    error instanceof Error &&
+    /chat identity binding changed.*retry confirmation/i.test(error.message)
+  ) {
+    return NextResponse.json({
+      code: "IDENTITY_REBIND_STALE",
+      message: error.message
+    }, { status: 409 });
+  }
   if (error instanceof ChatIdentityValidationError) {
     return badRequest(error.message);
   }
