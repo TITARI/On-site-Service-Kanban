@@ -120,20 +120,19 @@ function parseToken(token: string, secret: string): RebindClaim {
   return claim;
 }
 
-function assertClaimMatches(
-  claim: RebindClaim,
-  expected: Omit<RebindClaim, "expiresAt">
-) {
-  if (
-    claim.platform !== expected.platform ||
-    claim.identityId !== expected.identityId ||
-    claim.fromPersonId !== expected.fromPersonId ||
-    claim.toPersonId !== expected.toPersonId
-  ) {
-    throw new ChatIdentityValidationError(
-      "Confirmation token does not match this rebind request"
-    );
-  }
+function expectedRebindFromClaim(claim: RebindClaim): ChatIdentityRebindExpectation {
+  return {
+    platform: claim.platform,
+    identityId: claim.identityId,
+    fromPersonId: claim.fromPersonId,
+    toPersonId: claim.toPersonId
+  };
+}
+
+function staleConfirmationError() {
+  return new ChatIdentityValidationError(
+    "Confirmation token no longer matches the current identity binding; retry confirmation"
+  );
 }
 
 function parseBindInput(input: unknown): ChatIdentityBindInput {
@@ -182,33 +181,42 @@ export function createChatIdentityAdminService(
       );
       let confirmedRebind = false;
       let expectedRebind: ChatIdentityRebindExpectation | undefined;
-      if (rebindsOccupiedIdentity) {
+      if (parsed.confirmationToken) {
+        const claim = parseToken(parsed.confirmationToken, secretFromEnv(env));
+        expectedRebind = expectedRebindFromClaim(claim);
+        if (
+          claim.platform !== parsed.platform ||
+          claim.toPersonId !== user.personId ||
+          !identity ||
+          identity.isTemporary ||
+          identity.id !== claim.identityId ||
+          identity.platform !== claim.platform ||
+          identity.externalUserId !== parsed.externalUserId ||
+          identity.personId !== claim.fromPersonId
+        ) {
+          throw staleConfirmationError();
+        }
+        confirmedRebind = true;
+      } else if (rebindsOccupiedIdentity) {
         expectedRebind = {
           platform: parsed.platform,
           identityId: identity?.id ?? "",
           fromPersonId: ownerPersonId as string,
           toPersonId: user.personId
         };
-        const secret = secretFromEnv(env);
-        if (!parsed.confirmationToken) {
-          const owner = await repository.getUser(ownerPersonId as string);
-          throw new ChatIdentityConflictError(
-            "Identity already belongs to another user",
-            signClaim({
-              ...expectedRebind,
-              expiresAt: new Date(Date.now() + CONFIRMATION_TTL_MS).toISOString()
-            }, secret),
-            {
-              personId: ownerPersonId as string,
-              name: owner?.name
-            }
-          );
-        }
-        assertClaimMatches(
-          parseToken(parsed.confirmationToken, secret),
-          expectedRebind
+        const conflictSecret = secretFromEnv(env);
+        const owner = await repository.getUser(ownerPersonId as string);
+        throw new ChatIdentityConflictError(
+          "Identity already belongs to another user",
+          signClaim({
+            ...expectedRebind,
+            expiresAt: new Date(Date.now() + CONFIRMATION_TTL_MS).toISOString()
+          }, conflictSecret),
+          {
+            personId: ownerPersonId as string,
+            name: owner?.name
+          }
         );
-        confirmedRebind = true;
       }
 
       return await repository.bindChatIdentity({

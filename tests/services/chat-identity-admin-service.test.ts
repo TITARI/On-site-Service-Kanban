@@ -255,6 +255,32 @@ describe("chat identity admin service", () => {
     expect(repo.bindChatIdentity).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ["unbound", undefined],
+    ["already owned by the target user", "person-1"]
+  ])("rejects stale confirmation tokens when the identity is %s", async (_label, nextOwner) => {
+    const repo = repository({
+      identityByExternalId: vi.fn().mockResolvedValue(
+        identity({ personId: "person-other" })
+      )
+    });
+    const token = await conflictToken(repo);
+    vi.mocked(repo.identityByExternalId).mockResolvedValue(
+      identity({ personId: nextOwner })
+    );
+    const service = createChatIdentityAdminService(repo, {
+      env: {
+        AUTH_CONFIRMATION_SECRET: "test-secret"
+      } as NodeJS.ProcessEnv
+    });
+
+    await expect(service.bindIdentity({
+      ...confirmedBindingInput(),
+      confirmationToken: token
+    }, adminActor())).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    expect(repo.bindChatIdentity).not.toHaveBeenCalled();
+  });
+
   it("rejects temporary identities", async () => {
     const repo = repository({
       identityByExternalId: vi.fn().mockResolvedValue(
