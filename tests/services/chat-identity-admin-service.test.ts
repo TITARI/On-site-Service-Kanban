@@ -1,7 +1,10 @@
+import { createHmac } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import type { AuthenticatedActor } from "@/lib/domain/access-control";
+import type { AppState } from "@/lib/domain/app-state";
 import type { ChatIdentity } from "@/lib/domain/types";
 import type { AppRepository } from "@/lib/repositories/app-repository";
+import { bindChatIdentityInState } from "@/lib/services/access-state-service";
 import {
   ChatIdentityConflictError,
   createChatIdentityAdminService
@@ -66,6 +69,33 @@ function confirmedBindingInput() {
   };
 }
 
+async function conflictToken(repo: AppRepository, secret = "test-secret") {
+  const service = createChatIdentityAdminService(repo, {
+    env: {
+      AUTH_CONFIRMATION_SECRET: secret
+    } as NodeJS.ProcessEnv
+  });
+  const attempt = service.bindIdentity(
+    { userId: "person-1", platform: "wechat", externalUserId: "wxid-1" },
+    adminActor()
+  );
+  await expect(attempt).rejects.toBeInstanceOf(ChatIdentityConflictError);
+  return await attempt.catch((error: ChatIdentityConflictError) => (
+    error.confirmationToken
+  ));
+}
+
+function claimFromToken(token: string) {
+  const [payload] = token.split(".");
+  return JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as Record<string, unknown>;
+}
+
+function signedToken(claim: Record<string, unknown>, secret = "test-secret") {
+  const payload = Buffer.from(JSON.stringify(claim), "utf8").toString("base64url");
+  const signature = createHmac("sha256", secret).update(payload).digest("base64url");
+  return `${payload}.${signature}`;
+}
+
 describe("chat identity admin service", () => {
   it("requires explicit confirmation before reassigning an occupied identity", async () => {
     const repo = repository({
@@ -127,6 +157,98 @@ describe("chat identity admin service", () => {
     );
   });
 
+  it("rejects confirmation tokens with invalid expiry values", async () => {
+    const repo = repository({
+      identityByExternalId: vi.fn().mockResolvedValue(
+        identity({ personId: "person-other" })
+      )
+    });
+    const token = await conflictToken(repo);
+    const service = createChatIdentityAdminService(repo, {
+      env: {
+        AUTH_CONFIRMATION_SECRET: "test-secret"
+      } as NodeJS.ProcessEnv
+    });
+
+    await expect(service.bindIdentity({
+      ...confirmedBindingInput(),
+      confirmationToken: signedToken({
+        ...claimFromToken(token),
+        expiresAt: "not-a-date"
+      })
+    }, adminActor())).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    expect(repo.bindChatIdentity).not.toHaveBeenCalled();
+  });
+
+  it("rejects expired confirmation tokens", async () => {
+    const repo = repository({
+      identityByExternalId: vi.fn().mockResolvedValue(
+        identity({ personId: "person-other" })
+      )
+    });
+    const token = await conflictToken(repo);
+    const service = createChatIdentityAdminService(repo, {
+      env: {
+        AUTH_CONFIRMATION_SECRET: "test-secret"
+      } as NodeJS.ProcessEnv
+    });
+
+    await expect(service.bindIdentity({
+      ...confirmedBindingInput(),
+      confirmationToken: signedToken({
+        ...claimFromToken(token),
+        expiresAt: new Date(Date.now() - 1000).toISOString()
+      })
+    }, adminActor())).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    expect(repo.bindChatIdentity).not.toHaveBeenCalled();
+  });
+
+  it("rejects confirmation tokens with over-long future expiry", async () => {
+    const repo = repository({
+      identityByExternalId: vi.fn().mockResolvedValue(
+        identity({ personId: "person-other" })
+      )
+    });
+    const token = await conflictToken(repo);
+    const service = createChatIdentityAdminService(repo, {
+      env: {
+        AUTH_CONFIRMATION_SECRET: "test-secret"
+      } as NodeJS.ProcessEnv
+    });
+
+    await expect(service.bindIdentity({
+      ...confirmedBindingInput(),
+      confirmationToken: signedToken({
+        ...claimFromToken(token),
+        expiresAt: new Date(Date.now() + 6 * 60 * 1000).toISOString()
+      })
+    }, adminActor())).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    expect(repo.bindChatIdentity).not.toHaveBeenCalled();
+  });
+
+  it("rejects mismatched signed confirmation claims", async () => {
+    const repo = repository({
+      identityByExternalId: vi.fn().mockResolvedValue(
+        identity({ personId: "person-other" })
+      )
+    });
+    const token = await conflictToken(repo);
+    const service = createChatIdentityAdminService(repo, {
+      env: {
+        AUTH_CONFIRMATION_SECRET: "test-secret"
+      } as NodeJS.ProcessEnv
+    });
+
+    await expect(service.bindIdentity({
+      ...confirmedBindingInput(),
+      confirmationToken: signedToken({
+        ...claimFromToken(token),
+        toPersonId: "person-else"
+      })
+    }, adminActor())).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    expect(repo.bindChatIdentity).not.toHaveBeenCalled();
+  });
+
   it("rejects temporary identities", async () => {
     const repo = repository({
       identityByExternalId: vi.fn().mockResolvedValue(
@@ -174,5 +296,103 @@ describe("chat identity admin service", () => {
       }),
       adminActor()
     );
+  });
+});
+
+describe("chat identity access-state mutations", () => {
+  it("preserves the target user's existing platform binding when unconfirmed rebind is rejected", () => {
+    const state: AppState = {
+      booths: [],
+      tickets: [],
+      messageRecords: [],
+      people: [
+        {
+          id: "person-1",
+          name: "Alice",
+          phone: "13800138000",
+          role: "handler",
+          groupId: "builder",
+          groupName: "Builder",
+          enabled: true,
+          createdAt: "2026-06-15T00:00:00.000Z",
+          updatedAt: "2026-06-15T00:00:00.000Z"
+        },
+        {
+          id: "person-other",
+          name: "Bob",
+          phone: "13900139000",
+          role: "handler",
+          groupId: "builder",
+          groupName: "Builder",
+          enabled: true,
+          createdAt: "2026-06-15T00:00:00.000Z",
+          updatedAt: "2026-06-15T00:00:00.000Z"
+        }
+      ],
+      chatIdentities: [
+        identity({
+          id: "identity-current",
+          externalUserId: "wxid-current",
+          displayName: "Alice Current",
+          personId: "person-1",
+          verifiedBy: "admin",
+          verifiedAt: "2026-06-15T00:00:00.000Z"
+        }),
+        identity({
+          id: "identity-occupied",
+          externalUserId: "wxid-occupied",
+          displayName: "Bob WeChat",
+          personId: "person-other",
+          verifiedBy: "admin",
+          verifiedAt: "2026-06-15T00:00:00.000Z"
+        })
+      ],
+      accounts: [
+        {
+          id: "account-person-1",
+          personId: "person-1",
+          loginName: "13800138000",
+          enabled: true,
+          authVersion: 1,
+          createdAt: "2026-06-15T00:00:00.000Z",
+          updatedAt: "2026-06-15T00:00:00.000Z"
+        },
+        {
+          id: "account-person-other",
+          personId: "person-other",
+          loginName: "13900139000",
+          enabled: true,
+          authVersion: 1,
+          createdAt: "2026-06-15T00:00:00.000Z",
+          updatedAt: "2026-06-15T00:00:00.000Z"
+        }
+      ],
+      accountCredentials: [],
+      roles: [],
+      accountRoles: [],
+      rolePermissions: [],
+      accountSessions: [],
+      auditLogs: [],
+      config: {
+        userGroups: []
+      } as AppState["config"]
+    };
+
+    expect(() => bindChatIdentityInState(state, {
+      userId: "person-1",
+      platform: "wechat",
+      externalUserId: "wxid-occupied",
+      confirmedRebind: false
+    }, adminActor())).toThrow(/assigned to another user/i);
+
+    expect(state.chatIdentities?.find((item) => item.id === "identity-current")).toMatchObject({
+      personId: "person-1",
+      verifiedBy: "admin",
+      verifiedAt: "2026-06-15T00:00:00.000Z"
+    });
+    expect(state.chatIdentities?.find((item) => item.id === "identity-occupied")).toMatchObject({
+      personId: "person-other"
+    });
+    expect(state.auditLogs).toEqual([]);
   });
 });

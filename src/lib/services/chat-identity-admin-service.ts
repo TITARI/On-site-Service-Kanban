@@ -110,8 +110,16 @@ function parseToken(token: string, secret: string): RebindClaim {
   } catch {
     throw new ChatIdentityValidationError("Confirmation token is invalid");
   }
-  if (Date.parse(claim.expiresAt) <= Date.now()) {
+  const expiresAtMs = Date.parse(claim.expiresAt);
+  const now = Date.now();
+  if (!Number.isFinite(expiresAtMs)) {
+    throw new ChatIdentityValidationError("Confirmation token expiry is invalid");
+  }
+  if (expiresAtMs <= now) {
     throw new ChatIdentityValidationError("Confirmation token has expired");
+  }
+  if (expiresAtMs > now + CONFIRMATION_TTL_MS) {
+    throw new ChatIdentityValidationError("Confirmation token expiry is too long");
   }
   return claim;
 }

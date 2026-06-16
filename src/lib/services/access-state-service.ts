@@ -1389,6 +1389,14 @@ export function bindChatIdentityInState(
     throw new Error("Temporary identities cannot be bound by administrators");
   }
 
+  const previousPersonId = identity.personId;
+  if (
+    previousPersonId &&
+    previousPersonId !== user.personId &&
+    !input.confirmedRebind
+  ) {
+    throw new Error("Chat identity is assigned to another user");
+  }
   for (const current of state.chatIdentities) {
     if (
       current.platform === input.platform &&
@@ -1402,11 +1410,13 @@ export function bindChatIdentityInState(
     }
   }
   if (
-    identity.personId &&
-    identity.personId !== user.personId &&
-    !input.confirmedRebind
+    previousPersonId &&
+    previousPersonId !== user.personId &&
+    input.confirmedRebind
   ) {
-    throw new Error("Chat identity is assigned to another user");
+    identity.personId = undefined;
+    identity.verifiedBy = undefined;
+    identity.verifiedAt = undefined;
   }
   identity.personId = user.personId;
   identity.displayName = input.displayName?.trim() || identity.displayName;
