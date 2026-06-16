@@ -49,6 +49,7 @@ export type UserImportConflictCode =
   | "wecom-occupied";
 
 export type UserImportAction = "add" | "overwrite" | "skip";
+export type UserImportCategory = "add" | "overwrite" | "blocked";
 
 export type UserImportDecision =
   | {
@@ -80,6 +81,7 @@ export type UserImportPreviewRow = {
   value?: NormalizedUserImportRow;
   conflicts: UserImportConflictCode[];
   allowedActions: UserImportAction[];
+  category: UserImportCategory;
   selectable: boolean;
   decision?: UserImportDecision;
 };
@@ -174,6 +176,11 @@ export function normalizeUserImportRow(
   groups: UserGroup[]
 ): {
   raw: Partial<Record<UserImportTemplateColumn, string>>;
+  candidates: {
+    phone?: string;
+    wechatExternalUserId?: string;
+    wecomExternalUserId?: string;
+  };
   value?: NormalizedUserImportRow;
   conflicts: UserImportConflictCode[];
 } {
@@ -207,6 +214,11 @@ export function normalizeUserImportRow(
 
   return {
     raw: supportedUserImportRaw(raw),
+    candidates: {
+      ...(phone ? { phone } : {}),
+      ...(wechatExternalUserId ? { wechatExternalUserId } : {}),
+      ...(wecomExternalUserId ? { wecomExternalUserId } : {})
+    },
     value: valid
       ? {
           name,
@@ -296,6 +308,12 @@ function allowedActions(
   return existingUser ? ["overwrite", "skip"] : ["add", "skip"];
 }
 
+function categoryFor(actions: UserImportAction[]): UserImportCategory {
+  if (actions.includes("overwrite")) return "overwrite";
+  if (actions.includes("add")) return "add";
+  return "blocked";
+}
+
 export async function previewUserImport(
   repository: UserImportPreviewRepository,
   input: UserImportPreviewInput,
@@ -311,19 +329,21 @@ export async function previewUserImport(
     ...normalizeUserImportRow(row, groups)
   }));
   const phoneCounts = countBy(
-    normalized.flatMap((row) => row.value?.phone ? [row.value.phone] : [])
+    normalized.flatMap((row) =>
+      row.candidates.phone ? [row.candidates.phone] : []
+    )
   );
   const wechatCounts = countBy(
     normalized.flatMap((row) =>
-      row.value?.wechatExternalUserId
-        ? [row.value.wechatExternalUserId]
+      row.candidates.wechatExternalUserId
+        ? [row.candidates.wechatExternalUserId]
         : []
     )
   );
   const wecomCounts = countBy(
     normalized.flatMap((row) =>
-      row.value?.wecomExternalUserId
-        ? [row.value.wecomExternalUserId]
+      row.candidates.wecomExternalUserId
+        ? [row.candidates.wecomExternalUserId]
         : []
     )
   );
@@ -332,23 +352,25 @@ export async function previewUserImport(
   for (const row of normalized) {
     const conflicts = [...row.conflicts];
     let existingUser: UserListItem | undefined;
+    if (
+      row.candidates.phone &&
+      (phoneCounts.get(row.candidates.phone) ?? 0) > 1
+    ) {
+      conflicts.push("file-phone-duplicate");
+    }
+    if (
+      row.candidates.wechatExternalUserId &&
+      (wechatCounts.get(row.candidates.wechatExternalUserId) ?? 0) > 1
+    ) {
+      conflicts.push("wechat-file-duplicate");
+    }
+    if (
+      row.candidates.wecomExternalUserId &&
+      (wecomCounts.get(row.candidates.wecomExternalUserId) ?? 0) > 1
+    ) {
+      conflicts.push("wecom-file-duplicate");
+    }
     if (row.value) {
-      if ((phoneCounts.get(row.value.phone) ?? 0) > 1) {
-        conflicts.push("file-phone-duplicate");
-      }
-      if (
-        row.value.wechatExternalUserId &&
-        (wechatCounts.get(row.value.wechatExternalUserId) ?? 0) > 1
-      ) {
-        conflicts.push("wechat-file-duplicate");
-      }
-      if (
-        row.value.wecomExternalUserId &&
-        (wecomCounts.get(row.value.wecomExternalUserId) ?? 0) > 1
-      ) {
-        conflicts.push("wecom-file-duplicate");
-      }
-
       existingUser = await exactUserByPhone(repository, row.value.phone);
       if (existingUser) conflicts.push("phone-occupied");
       if (await identityConflict(
@@ -371,6 +393,7 @@ export async function previewUserImport(
 
     const unique = uniqueConflicts(conflicts);
     const actions = allowedActions(unique, existingUser);
+    const category = categoryFor(actions);
     rows.push({
       id: previewId("import-row"),
       rowNumber: row.rowNumber,
@@ -378,6 +401,7 @@ export async function previewUserImport(
       value: row.value,
       conflicts: unique,
       allowedActions: actions,
+      category,
       selectable: actions.some((action) => action !== "skip")
     });
   }

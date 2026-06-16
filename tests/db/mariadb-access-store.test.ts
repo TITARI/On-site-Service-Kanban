@@ -2086,6 +2086,7 @@ describe("MariaDB access store", () => {
           },
           conflicts: [],
           allowedActions: ["add"],
+          category: "add",
           selectable: true
         }
       ]
@@ -2112,6 +2113,10 @@ describe("MariaDB access store", () => {
       1,
       "preview"
     ]));
+    expect(JSON.parse(calls[1].params[4] as string)).toEqual({
+      allowedActions: ["add"],
+      category: "add"
+    });
     expect(JSON.parse(calls[1].params[6] as string)).toEqual({
       name: "张三",
       phone: "13800138000",

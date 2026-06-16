@@ -2356,9 +2356,22 @@ function importRowFromDatabase(row: Row): UserImportPreviewRow {
     row.decision_json,
     undefined
   );
-  const allowedActions = parseJsonValue<UserImportPreviewRow["allowedActions"]>(
+  const metadata = parseJsonValue<{
+    allowedActions?: UserImportPreviewRow["allowedActions"];
+    category?: UserImportPreviewRow["category"];
+  }>(
     row.message,
+    {}
+  );
+  const allowedActions = metadata.allowedActions ?? (
     conflicts.length ? ["skip"] : ["add", "skip"]
+  );
+  const category = metadata.category ?? (
+    allowedActions.includes("overwrite")
+      ? "overwrite"
+      : allowedActions.includes("add")
+        ? "add"
+        : "blocked"
   );
   return {
     id: String(row.id),
@@ -2367,6 +2380,7 @@ function importRowFromDatabase(row: Row): UserImportPreviewRow {
     ...(value ? { value } : {}),
     conflicts,
     allowedActions,
+    category,
     selectable: allowedActions.some((action) => action !== "skip"),
     ...(decision ? { decision } : {})
   };
@@ -2413,7 +2427,10 @@ export async function saveUserImportPreview(
         preview.jobId,
         row.rowNumber,
         "preview",
-        json(row.allowedActions),
+        json({
+          allowedActions: row.allowedActions,
+          category: row.category
+        }),
         json(row.raw),
         row.value ? json(row.value) : null,
         json(row.conflicts),

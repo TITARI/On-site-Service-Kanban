@@ -4,7 +4,8 @@ import type { AuthenticatedActor } from "@/lib/domain/access-control";
 import type { UserGroup } from "@/lib/domain/types";
 import {
   normalizeUserImportRow,
-  previewUserImport
+  previewUserImport,
+  USER_IMPORT_TEMPLATE_COLUMNS
 } from "@/lib/domain/user-import";
 import { createFileAppRepository } from "@/lib/repositories/app-repository";
 import { defaultConfig } from "@/lib/seed";
@@ -121,6 +122,45 @@ function importInputWithDuplicates() {
   };
 }
 
+const [
+  NAME_COLUMN,
+  PHONE_COLUMN,
+  GROUP_COLUMN,
+  GROUP_LOCKED_COLUMN,
+  ENABLED_COLUMN,
+  WECHAT_COLUMN
+] = USER_IMPORT_TEMPLATE_COLUMNS;
+
+function row(values: Record<string, unknown>) {
+  return values;
+}
+
+function previewRepository(existingPhone?: string) {
+  return {
+    getConfig: async () => ({ userGroups: groups }),
+    listUsers: async (query: { search?: string }) => ({
+      users: query.search === existingPhone
+        ? [{
+            personId: "person-existing",
+            accountId: "account-existing",
+            name: "Existing",
+            phone: existingPhone,
+            groupId: "builder",
+            groupName: "Builder",
+            groupLocked: false,
+            enabled: true,
+            permissions: ["ticket.process" as const],
+            hasPassword: false,
+            identities: {},
+            updatedAt: "2026-06-15T00:00:00.000Z"
+          }]
+        : [],
+      total: query.search === existingPhone ? 1 : 0
+    }),
+    identityByExternalId: async () => undefined
+  };
+}
+
 describe("user import parsing and preview", () => {
   it("normalizes the seven supported template columns", () => {
     const normalized = normalizeUserImportRow({
@@ -158,5 +198,83 @@ describe("user import parsing and preview", () => {
       expect.arrayContaining(["file-phone-duplicate"])
     ]);
     expect(preview.rows.every((row) => !row.selectable)).toBe(true);
+  });
+
+  it("marks duplicate file phones and platform ids even when a row has another validation conflict", async () => {
+    const preview = await previewUserImport(
+      previewRepository(),
+      {
+        sourceName: "users.xlsx",
+        sourceHash: "b".repeat(64),
+        rows: [
+          row({
+            [PHONE_COLUMN]: "13800138001",
+            [GROUP_COLUMN]: "builder",
+            [GROUP_LOCKED_COLUMN]: "false",
+            [ENABLED_COLUMN]: "true",
+            [WECHAT_COLUMN]: "wxid-duplicate"
+          }),
+          row({
+            [NAME_COLUMN]: "Valid User",
+            [PHONE_COLUMN]: "138 0013 8001",
+            [GROUP_COLUMN]: "builder",
+            [GROUP_LOCKED_COLUMN]: "false",
+            [ENABLED_COLUMN]: "true",
+            [WECHAT_COLUMN]: "wxid-duplicate"
+          })
+        ]
+      },
+      adminActor()
+    );
+
+    expect(preview.rows[0].conflicts).toEqual(expect.arrayContaining([
+      "missing-name",
+      "file-phone-duplicate",
+      "wechat-file-duplicate"
+    ]));
+    expect(preview.rows[1].conflicts).toEqual(expect.arrayContaining([
+      "file-phone-duplicate",
+      "wechat-file-duplicate"
+    ]));
+    expect(preview.rows.map((item) => item.category)).toEqual([
+      "blocked",
+      "blocked"
+    ]);
+  });
+
+  it("categorizes add and overwrite preview rows", async () => {
+    const preview = await previewUserImport(
+      previewRepository("13800138003"),
+      {
+        sourceName: "users.xlsx",
+        sourceHash: "c".repeat(64),
+        rows: [
+          row({
+            [NAME_COLUMN]: "New User",
+            [PHONE_COLUMN]: "13800138002",
+            [GROUP_COLUMN]: "builder",
+            [GROUP_LOCKED_COLUMN]: "false",
+            [ENABLED_COLUMN]: "true"
+          }),
+          row({
+            [NAME_COLUMN]: "Existing User",
+            [PHONE_COLUMN]: "13800138003",
+            [GROUP_COLUMN]: "builder",
+            [GROUP_LOCKED_COLUMN]: "false",
+            [ENABLED_COLUMN]: "true"
+          })
+        ]
+      },
+      adminActor()
+    );
+
+    expect(preview.rows.map((item) => item.category)).toEqual([
+      "add",
+      "overwrite"
+    ]);
+    expect(preview.rows.map((item) => item.allowedActions)).toEqual([
+      ["add", "skip"],
+      ["overwrite", "skip"]
+    ]);
   });
 });

@@ -1556,6 +1556,7 @@ describe("file access repository", () => {
       adminActor()
     );
     expect(saved.rows[0]).toMatchObject({
+      category: "add",
       value: {
         name: "张三",
         phone: "13800138000",

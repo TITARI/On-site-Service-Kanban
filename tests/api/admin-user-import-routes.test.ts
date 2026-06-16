@@ -90,6 +90,7 @@ beforeEach(() => {
         },
         conflicts: [],
         allowedActions: ["add"],
+        category: "add",
         selectable: true
       }
     ],
@@ -112,6 +113,7 @@ beforeEach(() => {
         },
         conflicts: [],
         allowedActions: ["add"],
+        category: "add",
         selectable: true
       }
     ],
@@ -145,7 +147,7 @@ describe("admin user import routes", () => {
     );
     expect(payload).toMatchObject({
       jobId: "import-job-1",
-      rows: [expect.objectContaining({ rowNumber: 1 })]
+      rows: [expect.objectContaining({ rowNumber: 1, category: "add" })]
     });
   });
 
@@ -172,7 +174,7 @@ describe("admin user import routes", () => {
 
     expect(listed.status).toBe(200);
     await expect(listed.json()).resolves.toMatchObject({
-      rows: [expect.objectContaining({ id: "row-1" })]
+      rows: [expect.objectContaining({ id: "row-1", category: "add" })]
     });
     expect(patched.status).toBe(204);
     expect(store.saveUserImportDecisions).toHaveBeenCalledWith(
