@@ -435,8 +435,7 @@ export function createFileAppRepository(store: StateFileRepository = {
       for (const patch of decisions) {
         const row = rowById.get(patch.rowId);
         if (!row) throw new Error("User import row was not found");
-        assertValidUserImportDecision(row, patch.decision);
-        row.decision = patch.decision;
+        row.decision = assertValidUserImportDecision(row, patch.decision);
       }
       job.updatedAt = new Date().toISOString();
     })

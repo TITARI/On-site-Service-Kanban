@@ -3,6 +3,7 @@ import type { AppState } from "@/lib/domain/app-state";
 import type { AuthenticatedActor } from "@/lib/domain/access-control";
 import type { UserGroup } from "@/lib/domain/types";
 import {
+  assertValidUserImportDecision,
   normalizeUserImportRow,
   previewUserImport,
   USER_IMPORT_TEMPLATE_COLUMNS
@@ -276,5 +277,46 @@ describe("user import parsing and preview", () => {
       ["add", "skip"],
       ["overwrite", "skip"]
     ]);
+  });
+
+  it("rejects malformed decision patches and requires boolean true for occupied rebind confirmation", () => {
+    const occupiedRow = {
+      id: "row-occupied",
+      rowNumber: 1,
+      raw: {},
+      value: {
+        name: "Existing User",
+        phone: "13800138003",
+        groupId: "builder",
+        groupLocked: false,
+        enabled: true,
+        wechatExternalUserId: "wxid-occupied"
+      },
+      conflicts: ["phone-occupied" as const, "wechat-occupied" as const],
+      allowedActions: ["overwrite" as const, "skip" as const],
+      category: "overwrite" as const,
+      selectable: true
+    };
+
+    expect(() => assertValidUserImportDecision(
+      occupiedRow,
+      { action: "overwrite", confirmWechatRebind: "false", confirmWecomRebind: false } as never
+    )).toThrow(/boolean|confirmation/i);
+    expect(() => assertValidUserImportDecision(
+      occupiedRow,
+      { action: "add" } as never
+    )).toThrow(/boolean|decision/i);
+    expect(() => assertValidUserImportDecision(
+      occupiedRow,
+      { action: "skip" } as never
+    )).toThrow(/boolean|decision/i);
+    expect(() => assertValidUserImportDecision(
+      occupiedRow,
+      {
+        action: "overwrite",
+        confirmWechatRebind: true,
+        confirmWecomRebind: false
+      }
+    )).not.toThrow();
   });
 });

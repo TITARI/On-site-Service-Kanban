@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { badRequest, errorMessage, parseJson } from "@/lib/api/errors";
+import { parseUserImportDecisionPatches } from "@/lib/domain/user-import";
 import { getAppRepository } from "@/lib/repositories/app-repository";
 import { createUserImportService } from "@/lib/services/user-import-service";
 import { adminActorOrResponse } from "../../../users/route-utils";
@@ -18,7 +19,7 @@ function routeError(error: unknown) {
   }
   if (
     error instanceof Error &&
-    /decision|blocked|confirmation|not allowed/i.test(error.message)
+    /blocked|confirmation.*required|action is not allowed/i.test(error.message)
   ) {
     return NextResponse.json({ message: error.message }, { status: 409 });
   }
@@ -48,9 +49,10 @@ export async function PATCH(request: Request, context: RouteContext) {
     if (!body || !Array.isArray(body.decisions)) {
       return badRequest("decisions must be an array");
     }
+    const decisions = parseUserImportDecisionPatches(body.decisions);
     await createUserImportService(
       getAppRepository()
-    ).saveDecisions(await jobIdFrom(context), body.decisions, auth.actor);
+    ).saveDecisions(await jobIdFrom(context), decisions, auth.actor);
     return new NextResponse(null, { status: 204 });
   } catch (error) {
     return routeError(error);

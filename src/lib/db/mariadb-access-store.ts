@@ -2488,15 +2488,15 @@ export async function saveUserImportDecisions(
   for (const patch of decisions) {
     const row = rowById.get(patch.rowId);
     if (!row) throw new Error("User import row was not found");
-    assertValidUserImportDecision(row, patch.decision);
+    const decision = assertValidUserImportDecision(row, patch.decision);
     await execute(
       connection,
       `UPDATE import_job_rows
        SET decision_json = ?, result_action = ?, updated_at = ?
        WHERE id = ? AND job_id = ?`,
       [
-        json(patch.decision),
-        patch.decision.action,
+        json(decision),
+        decision.action,
         now,
         patch.rowId,
         jobId

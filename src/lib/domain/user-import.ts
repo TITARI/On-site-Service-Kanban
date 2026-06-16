@@ -434,8 +434,9 @@ export function summarizeUserImportRows(rows: UserImportPreviewRow[]) {
 
 export function assertValidUserImportDecision(
   row: UserImportPreviewRow,
-  decision: UserImportDecision
+  decisionInput: unknown
 ) {
+  const decision = parseUserImportDecision(decisionInput);
   if (!row.selectable) {
     throw new Error("Cannot save a decision for a blocked import row");
   }
@@ -451,15 +452,74 @@ export function assertValidUserImportDecision(
   if (
     row.conflicts.includes("wechat-occupied") &&
     decision.action !== "skip" &&
-    !decision.confirmWechatRebind
+    decision.confirmWechatRebind !== true
   ) {
     throw new Error("WeChat rebind confirmation is required");
   }
   if (
     row.conflicts.includes("wecom-occupied") &&
     decision.action !== "skip" &&
-    !decision.confirmWecomRebind
+    decision.confirmWecomRebind !== true
   ) {
     throw new Error("WeCom rebind confirmation is required");
   }
+  return decision;
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+export function parseUserImportDecision(input: unknown): UserImportDecision {
+  if (!isObject(input)) {
+    throw new Error("Import row decision must be an object");
+  }
+  const {
+    action,
+    confirmWechatRebind,
+    confirmWecomRebind
+  } = input;
+  if (
+    action !== "add" &&
+    action !== "overwrite" &&
+    action !== "skip"
+  ) {
+    throw new Error("Import row decision action is not allowed");
+  }
+  if (
+    typeof confirmWechatRebind !== "boolean" ||
+    typeof confirmWecomRebind !== "boolean"
+  ) {
+    throw new Error("Import row decision confirmations must be boolean");
+  }
+  if (
+    action === "skip" &&
+    (confirmWechatRebind !== false || confirmWecomRebind !== false)
+  ) {
+    throw new Error("Skip decisions must set confirmations to false");
+  }
+  return {
+    action,
+    confirmWechatRebind,
+    confirmWecomRebind
+  } as UserImportDecision;
+}
+
+export function parseUserImportDecisionPatches(
+  input: unknown
+): UserImportDecisionPatch[] {
+  if (!Array.isArray(input)) {
+    throw new Error("decisions must be an array");
+  }
+  return input.map((item): UserImportDecisionPatch => {
+    if (!isObject(item)) {
+      throw new Error("Import row decision patch must be an object");
+    }
+    const rowId = typeof item.rowId === "string" ? item.rowId.trim() : "";
+    if (!rowId) throw new Error("Import row decision rowId is required");
+    return {
+      rowId,
+      decision: parseUserImportDecision(item.decision)
+    };
+  });
 }

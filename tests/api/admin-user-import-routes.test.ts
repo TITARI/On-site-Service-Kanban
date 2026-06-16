@@ -183,4 +183,36 @@ describe("admin user import routes", () => {
       actor()
     );
   });
+
+  it("rejects malformed decision payloads before repository persistence", async () => {
+    const route = await import("@/app/api/admin/user-imports/[jobId]/rows/route");
+    const params = Promise.resolve({ jobId: "import-job-1" });
+
+    for (const body of [
+      { decisions: [{ rowId: "row-1", decision: { action: "add" } }] },
+      { decisions: [{ rowId: "row-1", decision: {
+        action: "skip",
+        confirmWechatRebind: false
+      } }] },
+      { decisions: [{ rowId: "row-1", decision: {
+        action: "overwrite",
+        confirmWechatRebind: "false",
+        confirmWecomRebind: false
+      } }] },
+      { decisions: [{ rowId: " ", decision: {
+        action: "add",
+        confirmWechatRebind: false,
+        confirmWecomRebind: false
+      } }] }
+    ]) {
+      const response = await route.PATCH(request(
+        "https://board.example/api/admin/user-imports/import-job-1/rows",
+        "PATCH",
+        body
+      ), { params });
+
+      expect(response.status).toBe(400);
+    }
+    expect(store.saveUserImportDecisions).not.toHaveBeenCalled();
+  });
 });
