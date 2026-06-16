@@ -3,6 +3,7 @@ import { requireAdminAccess } from "@/lib/api/admin-guard";
 import { createFileAppRepository, getAppRepository, type AppRepository } from "@/lib/repositories/app-repository";
 import { stripConfigSecrets } from "@/lib/services/config-service";
 import type { StorageMode } from "@/lib/db/storage-mode";
+import { authErrorResponse, resolveRequestActor } from "@/lib/services/auth-service";
 
 export const dynamic = "force-dynamic";
 
@@ -101,6 +102,13 @@ export async function GET(request: Request) {
   }
 
   if (scope === "mobile") {
+    try {
+      await resolveRequestActor(getAppRepository(), request, "mobile");
+    } catch (error) {
+      const response = authErrorResponse(error);
+      return NextResponse.json({ message: response.message }, { status: response.status });
+    }
+
     const result = await loadWithJsonFallback(
       async (repository) => {
         await repository.runAutoAcceptance();

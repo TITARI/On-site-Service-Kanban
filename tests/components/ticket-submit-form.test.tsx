@@ -34,7 +34,7 @@ describe("TicketSubmitForm", () => {
     expect((await screen.findByRole("alert")).textContent).toBe("提交失败，请检查展位号和问题描述后重试");
   });
 
-  it("submits selected images and current user contact with the ticket payload", async () => {
+  it("submits selected images without client submitter identity fields", async () => {
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({ kind: "created" }), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
     const onSubmitted = vi.fn();
@@ -51,9 +51,14 @@ describe("TicketSubmitForm", () => {
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
     const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
-    expect(body.submitterId).toBe("member-13800138000");
-    expect(body.submitterName).toBe("张三");
-    expect(body.submitterPhone).toBe("13800138000");
+    expect(body).not.toHaveProperty("submitterId");
+    expect(body).not.toHaveProperty("submitterName");
+    expect(body).not.toHaveProperty("submitterPhone");
+    expect(body).toMatchObject({
+      boothNumber: "A01",
+      description: "网络断开，现场无法扫码",
+      issueType: "自动"
+    });
     expect(body.imageUrls).toHaveLength(1);
     expect(body.imageUrls[0]).toMatch(/^data:image\/jpeg;base64,/);
     expect(onSubmitted).toHaveBeenCalled();

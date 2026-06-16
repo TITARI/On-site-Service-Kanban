@@ -39,10 +39,7 @@ export function TicketSubmitForm({ config, currentUser, onSubmitted }: Props) {
       boothNumber: String(formData.get("boothNumber") ?? ""),
       description: String(formData.get("description") ?? ""),
       issueType: String(formData.get("issueType") ?? "自动"),
-      imageUrls,
-      submitterId: currentUser.id,
-      submitterName: currentUser.name,
-      submitterPhone: currentUser.phone
+      imageUrls
     };
 
     try {

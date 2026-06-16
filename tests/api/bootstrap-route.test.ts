@@ -6,6 +6,7 @@ import type { AppState } from "@/lib/domain/app-state";
 import { SESSION_COOKIE_NAMES } from "@/lib/services/session-service";
 
 const ADMIN_TOKEN = Buffer.alloc(32, 1).toString("base64url");
+const MOBILE_TOKEN = Buffer.alloc(32, 2).toString("base64url");
 
 const store = vi.hoisted(() => ({
   state: undefined as AppState | undefined,
@@ -99,6 +100,12 @@ function adminRequest(url = "http://localhost/api/bootstrap") {
   });
 }
 
+function mobileRequest(url = "http://localhost/api/bootstrap?scope=mobile") {
+  return new Request(url, {
+    headers: { Cookie: `${SESSION_COOKIE_NAMES.mobile}=${MOBILE_TOKEN}` }
+  });
+}
+
 function adminSession() {
   return {
     actor: {
@@ -116,6 +123,31 @@ function adminSession() {
       accountId: "account-admin",
       sessionType: "admin",
       tokenHash: "hash",
+      authVersion: 1,
+      expiresAt: new Date(Date.now() + 86_400_000).toISOString(),
+      lastSeenAt: new Date().toISOString(),
+      createdAt: new Date().toISOString()
+    }
+  };
+}
+
+function mobileSession() {
+  return {
+    actor: {
+      accountId: "account-mobile",
+      personId: "person-mobile",
+      name: "Mobile User",
+      phone: "13900139000",
+      groupId: "group-mobile",
+      groupName: "Mobile Group",
+      permissions: ["ticket.claim", "ticket.process", "ticket.accept"],
+      sessionType: "mobile"
+    },
+    session: {
+      id: "session-mobile",
+      accountId: "account-mobile",
+      sessionType: "mobile",
+      tokenHash: "hash-mobile",
       authVersion: 1,
       expiresAt: new Date(Date.now() + 86_400_000).toISOString(),
       lastSeenAt: new Date().toISOString(),
@@ -144,7 +176,9 @@ describe("bootstrap route", () => {
       config: defaultConfig()
     });
     store.getConfig.mockResolvedValue(defaultConfig());
-    store.resolveAccountSession.mockResolvedValue(adminSession());
+    store.resolveAccountSession.mockImplementation(async (_tokenHash, type) => (
+      type === "admin" ? adminSession() : mobileSession()
+    ));
     fallbackStore.runAutoAcceptance.mockResolvedValue(undefined);
     fallbackStore.adminBootstrap.mockResolvedValue(fallbackStore.state);
     fallbackStore.mobileBootstrap.mockResolvedValue({
@@ -166,7 +200,7 @@ describe("bootstrap route", () => {
   it("returns only tickets and config for mobile bootstrap requests", async () => {
     const route = await import("@/app/api/bootstrap/route");
 
-    const response = await route.GET(new Request("http://localhost/api/bootstrap?scope=mobile"));
+    const response = await route.GET(mobileRequest());
     const payload = await response.json();
 
     expect(Object.keys(payload).sort()).toEqual(["config", "tickets"]);
@@ -196,7 +230,7 @@ describe("bootstrap route", () => {
     const route = await import("@/app/api/bootstrap/route");
     store.adminBootstrap.mockRejectedValue(new Error("admin bootstrap should not be loaded for mobile"));
 
-    const response = await route.GET(new Request("http://localhost/api/bootstrap?scope=mobile"));
+    const response = await route.GET(mobileRequest());
 
     expect(response.status).toBe(200);
     expect(store.runAutoAcceptance).toHaveBeenCalledOnce();
@@ -208,13 +242,25 @@ describe("bootstrap route", () => {
     const route = await import("@/app/api/bootstrap/route");
     store.mobileBootstrap.mockRejectedValue(Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:3306"), { code: "ECONNREFUSED" }));
 
-    const response = await route.GET(new Request("http://localhost/api/bootstrap?scope=mobile"));
+    const response = await route.GET(mobileRequest());
     const payload = await response.json();
 
     expect(response.status).toBe(200);
     expect(payload.tickets).toEqual([expect.objectContaining({ id: "fallback-ticket" })]);
     expect(payload.storage).toEqual(expect.objectContaining({ mode: "file", fallback: true }));
     expect(fallbackStore.mobileBootstrap).toHaveBeenCalled();
+  });
+
+  it("returns 401 for mobile bootstrap when the mobile session is missing or revoked", async () => {
+    const route = await import("@/app/api/bootstrap/route");
+
+    const missingResponse = await route.GET(new Request("http://localhost/api/bootstrap?scope=mobile"));
+    expect(missingResponse.status).toBe(401);
+
+    store.resolveAccountSession.mockResolvedValueOnce(undefined);
+    const revokedResponse = await route.GET(mobileRequest());
+    expect(revokedResponse.status).toBe(401);
+    expect(store.mobileBootstrap).not.toHaveBeenCalled();
   });
 
   it("falls back to JSON config when MariaDB is not ready for login bootstrap", async () => {

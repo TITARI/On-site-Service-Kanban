@@ -2,6 +2,7 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { TicketDetail } from "@/components/ticket-detail";
+import HomePage from "@/app/page";
 import type { CurrentUser } from "@/lib/client/auth";
 import type { Ticket } from "@/lib/domain/types";
 
@@ -323,8 +324,13 @@ describe("TicketDetail", () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
     const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
     expect(body.action).toBe("claim");
-    expect(body.handlerId).toBe("member-13700137000");
-    expect(body.handlerName).toBe("搭建王工");
+    expect(body).not.toHaveProperty("actorId");
+    expect(body).not.toHaveProperty("actorName");
+    expect(body).not.toHaveProperty("actorPhone");
+    expect(body).not.toHaveProperty("actorGroupName");
+    expect(body).not.toHaveProperty("handlerId");
+    expect(body).not.toHaveProperty("handlerName");
+    expect(body).not.toHaveProperty("handlerPhone");
     expect(onRefresh).toHaveBeenCalled();
   });
 
@@ -346,6 +352,10 @@ describe("TicketDetail", () => {
     expect(body.status).toBe("已解决");
     expect(body.processBody).toBe("已加固门头并复核稳定性");
     expect(body.imageUrls[0]).toMatch(/^data:image\/jpeg;base64,/);
+    expect(body).not.toHaveProperty("actorId");
+    expect(body).not.toHaveProperty("actorName");
+    expect(body).not.toHaveProperty("actorPhone");
+    expect(body).not.toHaveProperty("actorGroupName");
   });
 
   it("allows business or organizer group users to accept resolved tickets", async () => {
@@ -360,7 +370,8 @@ describe("TicketDetail", () => {
     const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
     expect(body.action).toBe("accept");
     expect(body.status).toBe("已关闭");
-    expect(body.actorGroupName).toBe("业务组");
+    expect(body).not.toHaveProperty("actorGroupName");
+    expect(body).not.toHaveProperty("actorName");
   });
 
   it("allows business or organizer group users to reject resolved tickets for rework", async () => {
@@ -378,6 +389,8 @@ describe("TicketDetail", () => {
     expect(body.action).toBe("reject");
     expect(body.status).toBe("待再次处理");
     expect(body.reason).toBe("门头边角仍有松动，需要重新加固");
+    expect(body).not.toHaveProperty("actorGroupName");
+    expect(body).not.toHaveProperty("actorName");
   });
 
   it("submits reply images with the reply payload", async () => {
@@ -397,7 +410,7 @@ describe("TicketDetail", () => {
     expect(body.imageUrls[0]).toMatch(/^data:image\/jpeg;base64,/);
   });
 
-  it("binds reply author to the current user without an editable author field", async () => {
+  it("sends replies without client author or role identity fields", async () => {
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({ ticket }), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
     const user = userEvent.setup();
@@ -411,8 +424,49 @@ describe("TicketDetail", () => {
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
     const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
-    expect(body.authorId).toBe(builderUser.id);
-    expect(body.authorName).toBe(builderUser.name);
-    expect(body.authorPhone).toBe(builderUser.phone);
+    expect(body).not.toHaveProperty("authorId");
+    expect(body).not.toHaveProperty("authorName");
+    expect(body).not.toHaveProperty("authorPhone");
+    expect(body).not.toHaveProperty("role");
+    expect(body.body).toBe("现场已补充照片");
+  });
+
+  it("returns to login when a mobile fetch returns 401", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/auth/session?type=mobile") {
+        return new Response(JSON.stringify({ user: builderUser }), { status: 200 });
+      }
+      if (url === "/api/bootstrap?scope=mobile") {
+        return new Response(JSON.stringify({ message: "Unauthenticated" }), { status: 401 });
+      }
+      if (url === "/api/bootstrap?scope=login") {
+        return new Response(JSON.stringify({
+          config: {
+            issueTypes: [],
+            aiModels: [],
+            userGroups: [{
+              id: "builder",
+              name: "搭建组",
+              description: "",
+              canClaim: true,
+              canProcess: true,
+              canAccept: false,
+              canAdmin: false,
+              enabled: true
+            }],
+            assignmentRules: []
+          }
+        }), { status: 200 });
+      }
+      return new Response(null, { status: 404 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<HomePage />);
+
+    expect(await screen.findByRole("button", { name: /进入|杩涘叆/ })).not.toBeNull();
+    expect(screen.queryByText("搭建王工")).toBeNull();
+    expect(fetchMock).toHaveBeenCalledWith("/api/bootstrap?scope=login", { cache: "no-store" });
   });
 });
