@@ -35,7 +35,7 @@ type AccessState = AppState & {
 
 const ISO_DATE_PATTERN =
   /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?(Z|[+-]\d{2}:\d{2})$/;
-const SECRET_KEY_PATTERN = /password|token|secret/i;
+const SECRET_KEY_PATTERN = /password|token|secret|^session$/i;
 const SAFE_AUDIT_KEY_PATTERN = /^tokenCount$/i;
 const SESSION_TOKEN_HASH_PATTERN = /^[a-f0-9]{64}$/;
 
@@ -477,6 +477,44 @@ export function syncAccessRolesWithoutAuditInState(
   userGroups: UserGroup[]
 ) {
   synchronizeAccessRoles(state, userGroups, undefined, false);
+}
+
+export function synchronizePersonAccess(
+  stateInput: AppState,
+  personId: string
+) {
+  const state = normalizeAccessState(stateInput);
+  synchronizeAccessRoles(state, groupsOf(state), undefined, false);
+  const person = state.people.find((item) => item.id === personId);
+  if (!person) throw new Error("Person was not found");
+  if (!person.groupId) throw new Error("Person has no user group");
+  const group = enabledGroup(state, person.groupId);
+  const at = nowIso();
+  const accountId = `account-${person.id}`;
+  let account = state.accounts.find((item) => item.personId === person.id);
+  if (!account) {
+    account = {
+      id: accountId,
+      personId: person.id,
+      loginName: person.phone,
+      enabled: person.enabled,
+      authVersion: 1,
+      createdAt: person.createdAt || at,
+      updatedAt: person.updatedAt || at
+    };
+    state.accounts.push(account);
+  } else {
+    account.loginName = person.phone;
+    account.enabled = person.enabled;
+    account.updatedAt = person.updatedAt || at;
+  }
+  if (account.id !== accountId) {
+    throw new Error("Person is linked to a non-deterministic account");
+  }
+  person.groupName = group.name;
+  person.role = roleForGroup(group);
+  ensureSingleAccountRole(state, account, group.id, at);
+  return account;
 }
 
 function createPersonAndAccount(

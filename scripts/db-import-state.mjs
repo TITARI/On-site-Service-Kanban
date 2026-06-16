@@ -73,6 +73,29 @@ function keywordRuleSetsOf(group) {
   }));
 }
 
+function roleIdForGroup(groupId) {
+  return `role-${groupId}`;
+}
+
+function permissionCodesForGroup(group) {
+  return [
+    group.canClaim ? "ticket.claim" : undefined,
+    group.canProcess ? "ticket.process" : undefined,
+    group.canAccept ? "ticket.accept" : undefined,
+    group.canAdmin ? "admin.access" : undefined
+  ].filter(Boolean);
+}
+
+function groupIdForPerson(person, groups) {
+  if (person.groupId && groups.some((group) => group.id === person.groupId)) {
+    return person.groupId;
+  }
+  if (person.groupName) {
+    return groups.find((group) => group.enabled && group.name === person.groupName)?.id ?? null;
+  }
+  return null;
+}
+
 function normalizeKeywordGroups(keywordGroups = []) {
   return keywordGroups.map((group) => ({
     id: group.id,
@@ -89,6 +112,13 @@ async function execute(connection, sql, params = []) {
 
 async function clearTables(connection) {
   for (const table of [
+    "account_sessions",
+    "account_credentials",
+    "account_roles",
+    "role_permissions",
+    "auth_bootstrap_state",
+    "accounts",
+    "roles",
     "ticket_feedback_users",
     "ticket_replies",
     "ticket_timeline",
@@ -127,9 +157,32 @@ async function importConfig(connection, config, now) {
       `INSERT INTO user_groups (
         id, name, description, can_claim, can_process, can_accept, can_admin, enabled, created_at, updated_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [group.id, group.name, group.description, group.canClaim, group.canProcess, group.canAccept, false, group.enabled, now, now]
+      [group.id, group.name, group.description, group.canClaim, group.canProcess, group.canAccept, group.canAdmin, group.enabled, now, now]
     );
   }
+
+  for (const group of config.userGroups ?? []) {
+    await execute(
+      connection,
+      `INSERT INTO roles (
+        id, name, source_group_id, enabled, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?)`,
+      [roleIdForGroup(group.id), group.name, group.id, group.enabled, now, now]
+    );
+    for (const permissionCode of permissionCodesForGroup(group)) {
+      await execute(
+        connection,
+        "INSERT INTO role_permissions (role_id, permission_code, created_at) VALUES (?, ?, ?)",
+        [roleIdForGroup(group.id), permissionCode, now]
+      );
+    }
+  }
+
+  await execute(
+    connection,
+    "INSERT INTO auth_bootstrap_state (id, completed_at, completed_by_account_id) VALUES (?, ?, ?)",
+    ["admin", null, null]
+  );
 
   for (const issue of config.issueTypes ?? []) {
     await execute(
@@ -275,10 +328,11 @@ async function importConfig(connection, config, now) {
   );
 }
 
-async function importState(connection, state, sourceName) {
+export async function importState(connection, state, sourceName) {
   const now = new Date();
   await clearTables(connection);
   await importConfig(connection, state.config ?? {}, now);
+  const userGroups = state.config?.userGroups ?? [];
 
   await execute(
     connection,
@@ -312,6 +366,10 @@ async function importState(connection, state, sourceName) {
   }
 
   for (const person of state.people ?? []) {
+    const groupId = groupIdForPerson(person, userGroups);
+    const groupName = groupId
+      ? userGroups.find((group) => group.id === groupId)?.name ?? person.groupName
+      : person.groupName;
     await execute(
       connection,
       `INSERT INTO people (
@@ -322,14 +380,41 @@ async function importState(connection, state, sourceName) {
         person.name,
         person.phone,
         person.role,
-        null,
-        person.groupName,
+        groupId,
+        groupName,
         person.nameConflict ? json(person.nameConflict) : null,
         person.boothScope ? json(person.boothScope) : null,
         person.enabled,
         dateOrNow(person.createdAt, now),
         dateOrNow(person.updatedAt, now)
       ]
+    );
+  }
+
+  for (const person of state.people ?? []) {
+    const groupId = groupIdForPerson(person, userGroups);
+    const accountId = `account-${person.id}`;
+    await execute(
+      connection,
+      `INSERT INTO accounts (
+        id, person_id, login_name, enabled, auth_version, last_login_at, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        accountId,
+        person.id,
+        person.phone,
+        person.enabled,
+        1,
+        null,
+        dateOrNow(person.createdAt, now),
+        dateOrNow(person.updatedAt, now)
+      ]
+    );
+    if (!groupId) continue;
+    await execute(
+      connection,
+      "INSERT INTO account_roles (account_id, role_id, created_at) VALUES (?, ?, ?)",
+      [accountId, roleIdForGroup(groupId), now]
     );
   }
 

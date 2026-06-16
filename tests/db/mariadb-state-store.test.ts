@@ -949,6 +949,24 @@ describe("MariaDbStateStore", () => {
     expect(connection.execute).not.toHaveBeenCalled();
   });
 
+  it("rejects disabled users during MariaDB session resolution", async () => {
+    const connection = {
+      execute: vi.fn(async (sql: string) => {
+        if (sql.includes("FROM account_sessions s")) return [[]];
+        return [[]];
+      })
+    } as unknown as DatabaseConnection;
+    databaseMocks.setConnection(connection);
+
+    await expect(
+      new MariaDbStateStore().resolveAccountSession("a".repeat(64), "mobile")
+    ).resolves.toBeUndefined();
+
+    const query = vi.mocked(connection.execute).mock.calls[0]?.[0] as string;
+    expect(query).toContain("a.enabled = true");
+    expect(query).toContain("p.enabled = true");
+  });
+
   it("persists auto acceptance and queues business and processing notifications", async () => {
     const calls: Array<{ sql: string; params: unknown[] }> = [];
     const connection = {

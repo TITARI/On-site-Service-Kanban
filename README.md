@@ -73,6 +73,19 @@ data/app-state.json
 
 这是为了先快速跑通现场流程。后续接微信/企业微信、多端并发和正式生产时，建议替换为数据库或云端 KV/文档存储。
 
+## RBAC rollout notes
+
+- Run database migrations before deploying the user-management upgrade:
+
+```bash
+npm run db:migrate
+```
+
+- Set `ADMIN_BOOTSTRAP_PASSWORD` on the server before first admin initialization. The first visit to `/admin` uses this one-time legacy password to create the initial administrator account.
+- After bootstrap completes, administrators sign in with their admin phone number and password at `/admin`. The bootstrap flow cannot be reopened after completion.
+- Existing browser-local sessions from older releases expire after this upgrade. Users must sign in again so the server can issue RBAC-backed HttpOnly session cookies.
+- User import supports these columns: name, phone, group, group locked, enabled status, WeChat account identifier, and WeCom account identifier. Preview detects duplicate phones, unknown or disabled groups, occupied chat identities, and stale rows. Operators must choose add, overwrite, or skip, and explicitly confirm identity rebind conflicts before commit.
+
 ## 后续集成方向
 
 - 接入微信或企业微信 MCP：把消息接收、图片、催单和处理反馈统一进入工单流。

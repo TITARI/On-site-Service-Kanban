@@ -2,6 +2,7 @@
 import { userGroupsOf } from "../seed";
 import type { AppState } from "../domain/app-state";
 import { createHash } from "node:crypto";
+import { synchronizePersonAccess } from "./access-state-service";
 
 export type IdentitySource = {
   channel: MessageChannel;
@@ -158,6 +159,7 @@ export function bindWechatIdentityFromRegistration(state: AppState, chatIdentity
       name,
       phone,
       role,
+      groupId: group.id,
       groupName,
       enabled: true,
       createdAt: timestamp,
@@ -170,6 +172,7 @@ export function bindWechatIdentityFromRegistration(state: AppState, chatIdentity
     } else {
       delete person.nameConflict;
     }
+    person.groupId = group.id;
     person.groupName = groupName;
     person.role = role;
     person.enabled = true;
@@ -180,6 +183,7 @@ export function bindWechatIdentityFromRegistration(state: AppState, chatIdentity
   identity.verifiedBy = "phone";
   identity.verifiedAt = timestamp;
   identity.lastSeenAt = timestamp;
+  synchronizePersonAccess(state, person.id);
 
   return person;
 }

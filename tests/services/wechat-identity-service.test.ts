@@ -149,6 +149,57 @@ describe("wechat identity service", () => {
     expect(appState.chatIdentities?.[0].personId).toBe(person.id);
   });
 
+  it("registers a WeChat person into the RBAC account and role model", () => {
+    const appState = state();
+    const builderGroup = appState.config.userGroups?.find(
+      (group) => group.id === "builder"
+    );
+    expect(builderGroup).toBeDefined();
+    const { identity } = ensureConversationAndIdentity(appState, {
+      channel: "wechat",
+      senderId: "wxid-zhangsan",
+      senderName: "Alice WeChat",
+      senderGroup: "Builder Chat",
+      sourceConversationId: "conv-builder"
+    });
+
+    const person = bindWechatIdentityFromRegistration(appState, identity.id, {
+      identityGroup: builderGroup?.name ?? "",
+      name: "Alice",
+      phone: "13800138000"
+    });
+
+    expect(person).toMatchObject({
+      id: expect.any(String),
+      groupId: "builder",
+      groupName: builderGroup?.name
+    });
+    expect(appState.accounts).toContainEqual(expect.objectContaining({
+      id: `account-${person.id}`,
+      personId: person.id,
+      loginName: "13800138000",
+      enabled: true
+    }));
+    expect(appState.roles).toContainEqual(expect.objectContaining({
+      id: "role-builder",
+      sourceGroupId: "builder"
+    }));
+    expect(appState.rolePermissions).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        roleId: "role-builder",
+        permissionCode: "ticket.claim"
+      }),
+      expect.objectContaining({
+        roleId: "role-builder",
+        permissionCode: "ticket.process"
+      })
+    ]));
+    expect(appState.accountRoles).toContainEqual(expect.objectContaining({
+      accountId: `account-${person.id}`,
+      roleId: "role-builder"
+    }));
+  });
+
   it("does not link the registered person to unrelated conversations", () => {
     const appState = state();
     appState.conversations = [{

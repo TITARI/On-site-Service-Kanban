@@ -8,6 +8,7 @@ import type { Ticket, UserGroup } from "@/lib/domain/types";
 import { USER_IMPORT_TEMPLATE_COLUMNS } from "@/lib/domain/user-import";
 import { createFileAppRepository } from "@/lib/repositories/app-repository";
 import { verifyPassword } from "@/lib/services/password-service";
+import { sanitizeAuditValue } from "@/lib/services/access-state-service";
 import {
   createSessionToken,
   sessionTokenHash
@@ -409,6 +410,60 @@ describe("file access repository", () => {
       repository.resolveAccountSession(tokenHash, "mobile")
     ).resolves.toMatchObject({
       actor: { permissions: [] }
+    });
+  });
+
+  it("rejects disabled users during JSON session resolution", async () => {
+    const store = memoryStore();
+    const repository = createFileAppRepository(store);
+    const { actor } = await createMobile(repository);
+    const tokenHash = testSessionHash("disabled session resolution");
+    await repository.createAccountSession(
+      actor.accountId,
+      "mobile",
+      tokenHash,
+      "2099-01-01T00:00:00.000Z"
+    );
+
+    store.mutate((state) => {
+      const account = state.accounts?.find((item) => item.id === actor.accountId);
+      const person = state.people?.find((item) => item.id === actor.personId);
+      if (account) account.enabled = false;
+      if (person) person.enabled = false;
+    });
+
+    await expect(
+      repository.resolveAccountSession(tokenHash, "mobile")
+    ).resolves.toBeUndefined();
+  });
+
+  it("strips nested secrets from JSON audit details", () => {
+    const sanitized = sanitizeAuditValue({
+      event: "sensitive",
+      password: "clear-password",
+      nested: {
+        passwordHash: "hash-value",
+        session: {
+          value: "clear-session-token"
+        },
+        confirmationSecret: "clear-confirmation-secret"
+      },
+      tokenCount: 2
+    });
+
+    const auditText = JSON.stringify(sanitized);
+    expect(auditText).not.toContain("clear-password");
+    expect(auditText).not.toContain("hash-value");
+    expect(auditText).not.toContain("clear-session-token");
+    expect(auditText).not.toContain("clear-confirmation-secret");
+    expect(auditText).not.toContain("password");
+    expect(auditText).not.toContain("passwordHash");
+    expect(auditText).not.toContain("session");
+    expect(auditText).not.toContain("confirmationSecret");
+    expect(sanitized).toEqual({
+      event: "sensitive",
+      nested: {},
+      tokenCount: 2
     });
   });
 
