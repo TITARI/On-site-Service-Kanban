@@ -20,6 +20,7 @@ import * as XLSX from "xlsx";
 import { AdminUsersPanel } from "@/components/admin-users-panel";
 import { AI_PROVIDER_PRESETS, aiPromptDefaultsOf, aiPromptTemplatesOf, copyAiPromptTemplate, providerPresetFor } from "@/lib/domain/ai-config";
 import { keywordRuleSetsOf, normalizeKeywordGroups } from "@/lib/domain/keyword-config";
+import { extractMasterDataRowsFromWorkbookSheets } from "@/lib/domain/master-data";
 import type { AiPromptDefaults, AiPromptScenario, AiPromptTemplate, AiProviderPresetId, BoothRecord, ChatIdentity, Conversation, InboundMessageRecord, KeywordGroup, KeywordRuleSet, KeywordTerm, OutboundMessage, PendingWorkOrderSession, Person, WxautoMcpConfig } from "@/lib/domain/types";
 import type { TicketSummary } from "@/lib/domain/ticket-summary";
 import { messageIntegrationsOf, userGroupsOf, type AppConfig } from "@/lib/seed";
@@ -691,10 +692,18 @@ export function AdminConfigCenter({
     try {
       const buffer = await file.arrayBuffer();
       const workbook = XLSX.read(buffer);
-      const firstSheetName = workbook.SheetNames[0];
-      if (!firstSheetName) throw new Error("表格为空");
-      const firstSheet = workbook.Sheets[firstSheetName];
-      const rows = XLSX.utils.sheet_to_json(firstSheet);
+      const sheetRows = workbook.SheetNames.map((sheetName) => ({
+        sheetName,
+        rows: XLSX.utils.sheet_to_json<unknown[]>(
+          workbook.Sheets[sheetName],
+          { header: 1, defval: "", blankrows: false }
+        )
+      }));
+      if (sheetRows.length === 0) throw new Error("表格为空");
+      const extractedRows = extractMasterDataRowsFromWorkbookSheets(sheetRows);
+      const rows = extractedRows.length > 0
+        ? extractedRows
+        : XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]]);
       const response = await fetch("/api/admin/master-data", {
         method: "POST",
         headers: { "Content-Type": "application/json" },

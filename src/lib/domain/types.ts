@@ -19,6 +19,9 @@ export type BoothRecord = {
   companyShortName: string;
   salesOwner: string;
   builder: string;
+  location?: string;
+  area?: string;
+  boothType?: string;
 };
 
 export type IssueType = {

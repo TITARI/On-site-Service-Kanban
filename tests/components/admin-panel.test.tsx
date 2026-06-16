@@ -945,6 +945,68 @@ describe("AdminConfigCenter user groups", () => {
     await waitFor(() => expect(onRefresh).toHaveBeenCalled());
   });
 
+  it("imports titled logistics workbook sheets instead of only the first sheet", async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ ok: true }), { status: 200 }));
+    const onRefresh = vi.fn();
+    const user = userEvent.setup();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(
+      workbook,
+      XLSX.utils.aoa_to_sheet([
+        ["普通绿色搭建汇总"],
+        ["企业名称", "楼层", "展馆", "展位号", "面积", "方案类型", "销售人员", "搭建商"],
+        ["汕头市昌隆机械科技有限公司", "一楼", "1E", "1ET06", "36", "普通绿搭", "孙晓晓", "李铁：13607664172"]
+      ]),
+      "普通绿色搭建汇总"
+    );
+    XLSX.utils.book_append_sheet(
+      workbook,
+      XLSX.utils.aoa_to_sheet([
+        ["标展楣牌下单情况"],
+        ["公司名称", "所属展馆", "展位号", "展位类别（普标）", "面积", "销售人员"],
+        ["安徽省安邦矿物股份有限公司", "1E", "1E01", "精标", "6", "孙晓晓"]
+      ]),
+      "标展楣牌"
+    );
+    const buffer = XLSX.write(workbook, { type: "array", bookType: "xlsx" });
+    const file = new File([buffer], "logistics.xlsx", { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+
+    render(
+      <AdminConfigCenter
+        config={config}
+        view="exhibition-data"
+        booths={[]}
+        onRefresh={onRefresh}
+      />
+    );
+
+    await user.upload(screen.getByLabelText("导入展位数据文件"), file);
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/admin/master-data", expect.objectContaining({ method: "POST" })));
+    const body = JSON.parse(String(fetchMock.mock.calls.at(-1)?.[1]?.body));
+    expect(body.rows).toContainEqual(expect.objectContaining({
+      展位号: "1ET06",
+      公司名称: "汕头市昌隆机械科技有限公司",
+      业务员: "孙晓晓",
+      搭建商: "李铁：13607664172",
+      位置: "一楼 1E",
+      面积: "36",
+      类型: "普通绿搭"
+    }));
+    expect(body.rows).toContainEqual(expect.objectContaining({
+      展位号: "1E01",
+      公司名称: "安徽省安邦矿物股份有限公司",
+      业务员: "孙晓晓",
+      搭建商: "",
+      位置: "1E",
+      面积: "6",
+      类型: "精标"
+    }));
+    await waitFor(() => expect(onRefresh).toHaveBeenCalled());
+  });
+
   it("does not render record management modules in the PC config center", () => {
     render(<AdminConfigCenter config={config} onRefresh={vi.fn()} />);
 
