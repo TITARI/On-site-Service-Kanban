@@ -11,7 +11,6 @@ import {
   MessageCircle,
   Pencil,
   Plus,
-  RefreshCw,
   Search,
   SearchX,
   ShieldCheck,
@@ -525,7 +524,7 @@ export function AdminUsersPanel({
         className="admin-users-commandbar"
         onSubmit={(event) => {
           event.preventDefault();
-          setAppliedFilters(filters);
+          setAppliedFilters({ ...filters });
         }}
       >
         <div className="admin-users-search-group">
@@ -544,9 +543,6 @@ export function AdminUsersPanel({
           </span>
         </div>
         <div className="admin-user-toolbar-actions">
-          <button className="admin-icon-button" type="button" onClick={() => void loadUsers()} disabled={loading} aria-label="刷新用户" title="刷新用户">
-            <RefreshCw size={18} aria-hidden="true" />
-          </button>
           <button className="primary-button" type="submit" disabled={loading}>
             <Search size={17} aria-hidden="true" />
             筛选用户

@@ -235,6 +235,7 @@ describe("AdminUsersPanel", () => {
     render(<AdminUsersPanel groups={groups} />);
 
     expect(await screen.findByText("张三")).not.toBeNull();
+    expect(screen.queryByRole("button", { name: "刷新用户" })).toBeNull();
     await userDriver.type(screen.getByLabelText("搜索姓名或手机号"), "13800138000");
     fireEvent.submit(screen.getByLabelText("搜索姓名或手机号").closest("form") as HTMLFormElement);
 
@@ -247,6 +248,15 @@ describe("AdminUsersPanel", () => {
       .filter((url) => url.startsWith("/api/admin/users?"))
       .at(-1);
     expect(listCall).toContain("search=13800138000");
+    const listCallsBeforeRefilter = fetchMock.mock.calls
+      .filter((call) => String(call[0]).startsWith("/api/admin/users?"))
+      .length;
+
+    await userDriver.click(screen.getByRole("button", { name: "筛选用户" }));
+
+    await waitFor(() => expect(fetchMock.mock.calls
+      .filter((call) => String(call[0]).startsWith("/api/admin/users?"))
+    ).toHaveLength(listCallsBeforeRefilter + 1));
 
     await userDriver.click(screen.getByRole("button", { name: "编辑张三" }));
     const editor = await screen.findByRole("complementary", { name: "编辑用户张三" });
