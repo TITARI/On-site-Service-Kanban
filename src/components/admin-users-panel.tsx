@@ -542,6 +542,45 @@ export function AdminUsersPanel({
             {loading ? "正在更新" : `${total} 位用户`}
           </span>
         </div>
+        <div className="admin-users-filterbar" aria-label="筛选用户">
+          <label className="admin-user-filter">
+            <span>分组</span>
+            <select aria-label="筛选用户分组" value={filters.groupId} onChange={(event) => setFilters((current) => ({ ...current, groupId: event.target.value }))}>
+              <option value="">全部</option>
+              {groups.map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}
+            </select>
+          </label>
+          <label className="admin-user-filter">
+            <span>状态</span>
+            <select aria-label="筛选用户状态" value={filters.enabled} onChange={(event) => setFilters((current) => ({ ...current, enabled: event.target.value }))}>
+              <option value="">全部</option>
+              <option value="true">已启用</option>
+              <option value="false">已停用</option>
+            </select>
+          </label>
+          <label className="admin-user-filter">
+            <span>后台</span>
+            <select aria-label="筛选后台权限" value={filters.admin} onChange={(event) => setFilters((current) => ({ ...current, admin: event.target.value }))}>
+              <option value="">全部</option>
+              <option value="true">可登录</option>
+              <option value="false">不可登录</option>
+            </select>
+          </label>
+          <label className="admin-user-filter">
+            <span>绑定</span>
+            <select aria-label="筛选绑定状态" value={filters.binding} onChange={(event) => setFilters((current) => ({ ...current, binding: event.target.value }))}>
+              <option value="">全部</option>
+              <option value="bound">已绑定</option>
+              <option value="unbound">未绑定</option>
+            </select>
+          </label>
+          {hasActiveFilters && (
+            <button className="admin-user-clear-filters" type="button" onClick={clearFilters}>
+              <FilterX size={16} aria-hidden="true" />
+              清除筛选
+            </button>
+          )}
+        </div>
         <div className="admin-user-toolbar-actions">
           <button className="primary-button" type="submit" disabled={loading}>
             <Search size={17} aria-hidden="true" />
@@ -557,46 +596,6 @@ export function AdminUsersPanel({
           </button>
         </div>
       </form>
-
-      <div className="admin-users-filterbar" aria-label="筛选用户">
-        <label className="admin-user-filter">
-          <span>分组</span>
-          <select aria-label="筛选用户分组" value={filters.groupId} onChange={(event) => setFilters((current) => ({ ...current, groupId: event.target.value }))}>
-            <option value="">全部</option>
-            {groups.map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}
-          </select>
-        </label>
-        <label className="admin-user-filter">
-          <span>状态</span>
-          <select aria-label="筛选用户状态" value={filters.enabled} onChange={(event) => setFilters((current) => ({ ...current, enabled: event.target.value }))}>
-            <option value="">全部</option>
-            <option value="true">已启用</option>
-            <option value="false">已停用</option>
-          </select>
-        </label>
-        <label className="admin-user-filter">
-          <span>后台</span>
-          <select aria-label="筛选后台权限" value={filters.admin} onChange={(event) => setFilters((current) => ({ ...current, admin: event.target.value }))}>
-            <option value="">全部</option>
-            <option value="true">可登录</option>
-            <option value="false">不可登录</option>
-          </select>
-        </label>
-        <label className="admin-user-filter">
-          <span>绑定</span>
-          <select aria-label="筛选绑定状态" value={filters.binding} onChange={(event) => setFilters((current) => ({ ...current, binding: event.target.value }))}>
-            <option value="">全部</option>
-            <option value="bound">已绑定</option>
-            <option value="unbound">未绑定</option>
-          </select>
-        </label>
-        {hasActiveFilters && (
-          <button className="admin-user-clear-filters" type="button" onClick={clearFilters}>
-            <FilterX size={16} aria-hidden="true" />
-            清除筛选
-          </button>
-        )}
-      </div>
 
       {listError && <p className="admin-user-list-message error" role="alert">{listError}</p>}
 

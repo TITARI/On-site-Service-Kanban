@@ -5636,16 +5636,16 @@ textarea {
 
 .admin-users-commandbar {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 14px;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 10px;
   padding: 14px;
 }
 
 .admin-users-search-group {
   display: flex;
   min-width: 0;
-  flex: 1 1 420px;
+  flex: 0 1 330px;
   align-items: center;
   gap: 10px;
 }
@@ -5653,7 +5653,7 @@ textarea {
 .admin-user-search {
   position: relative;
   display: flex;
-  width: min(420px, 100%);
+  width: min(260px, 100%);
   align-items: center;
 }
 
@@ -5696,8 +5696,10 @@ textarea {
 
 .admin-user-toolbar-actions {
   display: flex;
+  flex: 0 0 auto;
   align-items: center;
   gap: 8px;
+  margin-left: auto;
 }
 
 .admin-user-toolbar-actions button,
@@ -5710,20 +5712,22 @@ textarea {
 .admin-users-filterbar {
   display: flex;
   min-width: 0;
+  flex: 1 1 460px;
   align-items: end;
   gap: 8px;
-  border-top: 1px solid rgba(31, 106, 77, 0.1);
-  padding: 10px 14px 12px;
+  padding: 0;
 }
 
 .admin-user-filter {
   display: grid;
-  min-width: 112px;
+  min-width: 92px;
+  flex: 1 1 92px;
   gap: 4px;
 }
 
 .admin-user-filter:first-child {
-  min-width: 160px;
+  min-width: 126px;
+  flex-basis: 126px;
 }
 
 .admin-user-filter > span {
@@ -6079,11 +6083,17 @@ textarea {
 
   .admin-users-search-group {
     flex-basis: auto;
+    width: 100%;
+  }
+
+  .admin-user-search {
+    width: 100%;
   }
 
   .admin-user-toolbar-actions {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
+    margin-left: 0;
   }
 
   .admin-user-toolbar-actions button {
@@ -6094,6 +6104,8 @@ textarea {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     align-items: end;
+    width: 100%;
+    flex: none;
   }
 
   .admin-user-filter,
