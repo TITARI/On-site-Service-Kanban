@@ -6230,7 +6230,11 @@ textarea {
   justify-content: center;
   gap: 7px;
   min-height: 46px;
+  border: 0;
   border-bottom: 2px solid transparent;
+  border-radius: 0;
+  padding: 0;
+  background: transparent;
   color: var(--muted);
   font-size: 12px;
   font-weight: 900;
@@ -6248,6 +6252,7 @@ textarea {
 }
 
 .admin-import-steps li.active {
+  background: transparent;
   border-bottom-color: var(--green);
   color: var(--green-deep);
 }
