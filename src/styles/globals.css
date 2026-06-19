@@ -5635,25 +5635,33 @@ textarea {
 }
 
 .admin-users-commandbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 12px;
+  padding: 14px;
+}
+
+.admin-users-control-strip {
   display: flex;
   flex-wrap: wrap;
+  min-width: 0;
   align-items: end;
-  gap: 10px;
-  padding: 14px;
+  gap: 8px;
 }
 
 .admin-users-search-group {
   display: flex;
   min-width: 0;
-  flex: 0 1 330px;
-  align-items: center;
-  gap: 10px;
+  flex: 1.25 1 260px;
+  align-items: end;
+  gap: 8px;
 }
 
 .admin-user-search {
   position: relative;
   display: flex;
-  width: min(260px, 100%);
+  width: 100%;
   align-items: center;
 }
 
@@ -5688,9 +5696,16 @@ textarea {
 
 .admin-user-result-count {
   flex: 0 0 auto;
+  display: inline-flex;
+  min-height: 44px;
+  align-items: center;
+  border: 1px solid rgba(31, 106, 77, 0.1);
+  border-radius: 6px;
+  padding: 0 9px;
+  background: #f7faf6;
   color: var(--muted);
   font-size: 12px;
-  font-weight: 800;
+  font-weight: 900;
   white-space: nowrap;
 }
 
@@ -5699,7 +5714,7 @@ textarea {
   flex: 0 0 auto;
   align-items: center;
   gap: 8px;
-  margin-left: auto;
+  justify-content: flex-end;
 }
 
 .admin-user-toolbar-actions button,
@@ -5710,9 +5725,10 @@ textarea {
 }
 
 .admin-users-filterbar {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(126px, 1.15fr) repeat(3, minmax(86px, 0.75fr)) auto;
   min-width: 0;
-  flex: 1 1 460px;
+  flex: 2.2 1 430px;
   align-items: end;
   gap: 8px;
   padding: 0;
@@ -5720,14 +5736,12 @@ textarea {
 
 .admin-user-filter {
   display: grid;
-  min-width: 92px;
-  flex: 1 1 92px;
+  min-width: 0;
   gap: 4px;
 }
 
 .admin-user-filter:first-child {
-  min-width: 126px;
-  flex-basis: 126px;
+  min-width: 0;
 }
 
 .admin-user-filter > span {
@@ -5746,12 +5760,14 @@ textarea {
   min-height: 44px;
   align-items: center;
   gap: 6px;
-  border: 0;
-  padding: 0 8px;
-  background: transparent;
+  border: 1px solid rgba(31, 106, 77, 0.08);
+  border-radius: 6px;
+  padding: 0 10px;
+  background: #fff;
   color: var(--muted);
   font-size: 12px;
-  font-weight: 800;
+  font-weight: 900;
+  white-space: nowrap;
 }
 
 .admin-user-clear-filters:hover {
@@ -6075,8 +6091,23 @@ textarea {
   }
 }
 
+@media (max-width: 1180px) {
+  .admin-users-commandbar {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-user-toolbar-actions {
+    justify-content: flex-end;
+  }
+}
+
 @media (max-width: 620px) {
   .admin-users-commandbar {
+    align-items: stretch;
+    grid-template-columns: 1fr;
+  }
+
+  .admin-users-control-strip {
     align-items: stretch;
     flex-direction: column;
   }
