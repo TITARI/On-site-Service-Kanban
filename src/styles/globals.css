@@ -6193,7 +6193,7 @@ textarea {
   grid-template-rows: auto auto minmax(0, 1fr);
   max-width: 1180px;
   margin: 0 auto;
-  border-radius: 8px;
+  border-radius: 0;
   background: #fffdf8;
   box-shadow: 0 28px 70px rgba(23, 35, 29, 0.26);
   overflow: hidden;
