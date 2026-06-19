@@ -121,27 +121,30 @@ describe("AdminUserImport", () => {
 
     render(<AdminUsersPanel groups={groups} onRefresh={onRefresh} />);
 
-    const importRegion = await screen.findByRole("region", { name: "用户导入" });
-    expect(within(importRegion).getByText("1. 选择文件")).not.toBeNull();
-    expect(within(importRegion).getByText("2. 处理冲突")).not.toBeNull();
-    expect(within(importRegion).getByText("3. 提交并下载报告")).not.toBeNull();
+    await userDriver.click(await screen.findByRole("button", { name: "批量导入" }));
+    const importDialog = await screen.findByRole("dialog", { name: "批量导入用户" });
+    expect(within(importDialog).getByText("选择文件")).not.toBeNull();
+    expect(within(importDialog).getByText("处理冲突")).not.toBeNull();
+    expect(within(importDialog).getByText("导入结果")).not.toBeNull();
 
     const file = new File(["name,phone\nzhang,13800138000"], "users.csv", {
       type: "text/csv"
     });
     await userDriver.upload(
-      within(importRegion).getByLabelText("导入文件"),
+      within(importDialog).getByLabelText("选择用户导入文件"),
       file
     );
-    await userDriver.click(within(importRegion).getByRole("button", { name: "解析并预览" }));
+    await userDriver.click(within(importDialog).getByRole("button", { name: "生成预览" }));
 
-    expect(await within(importRegion).findByText("寮犱笁")).not.toBeNull();
-    expect(within(importRegion).getByText("需处理 1 行，可导入 1 行，阻塞 0 行")).not.toBeNull();
-    await userDriver.click(within(importRegion).getByLabelText("确认换绑微信身份"));
-    await userDriver.click(within(importRegion).getByRole("button", { name: "提交导入" }));
+    expect(await within(importDialog).findByText("寮犱笁")).not.toBeNull();
+    expect(within(importDialog).getByText("共 1 行")).not.toBeNull();
+    expect(within(importDialog).getByText("0 行不可导入")).not.toBeNull();
+    await userDriver.click(within(importDialog).getByLabelText("确认微信换绑"));
+    await userDriver.click(within(importDialog).getByRole("button", { name: "提交导入" }));
 
     await waitFor(() => expect(onRefresh).toHaveBeenCalledTimes(1));
-    await userDriver.click(within(importRegion).getByRole("button", { name: "下载导入报告" }));
+    expect(await within(importDialog).findByText("用户导入完成")).not.toBeNull();
+    await userDriver.click(within(importDialog).getByRole("button", { name: "下载导入报告" }));
 
     expect(clickMock).toHaveBeenCalled();
     expect(createdUrls).toEqual(["blob:report-1"]);
@@ -211,32 +214,30 @@ describe("AdminUserImport", () => {
 
     render(<AdminUsersPanel groups={groups} />);
 
-    const importRegion = await screen.findByRole("region", { name: /导入|瀵煎叆/ });
+    await userDriver.click(await screen.findByRole("button", { name: "批量导入" }));
+    const importDialog = await screen.findByRole("dialog", { name: "批量导入用户" });
     await userDriver.upload(
-      within(importRegion).getByLabelText(/导入文件|瀵煎叆/),
+      within(importDialog).getByLabelText("选择用户导入文件"),
       new File(["name,phone"], "users.csv", { type: "text/csv" })
     );
-    await userDriver.click(within(importRegion).getByRole("button", { name: /预览|瑙ｆ瀽/ }));
+    await userDriver.click(within(importDialog).getByRole("button", { name: "生成预览" }));
 
-    await within(importRegion).findByText("Add User");
-    const rowOneDecision = within(importRegion).getByLabelText(/1.*处理方式|1.*澶勭悊/);
-    const rowTwoDecision = within(importRegion).getByLabelText(/2.*处理方式|2.*澶勭悊/);
-    await userDriver.selectOptions(within(importRegion).getByLabelText("批量处理方式"), "skip");
-    await userDriver.click(within(importRegion).getByRole("button", { name: "应用批量处理" }));
+    await within(importDialog).findByText("Add User");
+    const rowOneDecision = within(importDialog).getByLabelText("第 1 行操作");
+    const rowTwoDecision = within(importDialog).getByLabelText("第 2 行操作");
+    await userDriver.click(within(importDialog).getByRole("button", { name: "全部跳过" }));
 
     expect(rowOneDecision).toHaveProperty("value", "skip");
     expect(rowTwoDecision).toHaveProperty("value", "skip");
 
-    await userDriver.selectOptions(within(importRegion).getByLabelText("批量处理方式"), "add");
-    await userDriver.click(within(importRegion).getByRole("button", { name: "应用批量处理" }));
+    await userDriver.click(within(importDialog).getByRole("button", { name: "可新增项设为新增" }));
 
     expect(rowOneDecision).toHaveProperty("value", "add");
     expect(rowTwoDecision).toHaveProperty("value", "skip");
 
-    await userDriver.selectOptions(within(importRegion).getByLabelText("批量处理方式"), "overwrite");
-    await userDriver.click(within(importRegion).getByRole("button", { name: "应用批量处理" }));
+    await userDriver.click(within(importDialog).getByRole("button", { name: "可覆盖项设为覆盖" }));
 
-    expect(rowOneDecision).toHaveProperty("value", "add");
+    expect(rowOneDecision).toHaveProperty("value", "skip");
     expect(rowTwoDecision).toHaveProperty("value", "overwrite");
   });
 });

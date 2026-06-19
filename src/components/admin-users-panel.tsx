@@ -2,17 +2,22 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  Ban,
+  Building2,
+  CheckCircle2,
+  FilterX,
   Link,
   KeyRound,
+  MessageCircle,
   Pencil,
   Plus,
   RefreshCw,
   Search,
+  SearchX,
   ShieldCheck,
   Trash2,
   Unlink,
-  UserCheck,
-  UserX,
+  Upload,
   X
 } from "lucide-react";
 import type { PermissionCode, UserListItem } from "@/lib/domain/access-control";
@@ -136,6 +141,43 @@ async function responseMessage(response: Response, fallback: string) {
   }
 }
 
+function formatDateTime(value?: string) {
+  if (!value) return "从未登录";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false
+  }).format(date);
+}
+
+function BindingSummary({
+  user,
+  platform
+}: {
+  user: UserListItem;
+  platform: MessageChannel;
+}) {
+  const identity = user.identities[platform];
+  const label = PLATFORM_LABELS[platform];
+  const PlatformIcon = platform === "wechat" ? MessageCircle : Building2;
+
+  return (
+    <span className={`admin-user-binding ${identity ? "" : "empty"}`}>
+      <PlatformIcon size={15} aria-hidden="true" />
+      <span>
+        <strong>{label}</strong>
+        <small title={identity?.externalUserId}>
+          {identity ? identity.displayName || identity.externalUserId : "未绑定"}
+        </small>
+      </span>
+    </span>
+  );
+}
+
 export function AdminUsersPanel({
   groups,
   onRefresh
@@ -162,6 +204,7 @@ export function AdminUsersPanel({
   const [identityErrors, setIdentityErrors] = useState<Partial<Record<MessageChannel, string>>>({});
   const [identityConflict, setIdentityConflict] = useState<ConflictState | null>(null);
   const [actionErrors, setActionErrors] = useState<Record<string, string>>({});
+  const [importOpen, setImportOpen] = useState(false);
   const [password, setPassword] = useState("");
   const latestListRequestId = useRef(0);
 
@@ -456,6 +499,19 @@ export function AdminUsersPanel({
     }
   }
 
+  const hasActiveFilters = Boolean(
+    filters.search.trim()
+    || filters.groupId
+    || filters.enabled
+    || filters.admin
+    || filters.binding
+  );
+
+  function clearFilters() {
+    setFilters(DEFAULT_FILTERS);
+    setAppliedFilters(DEFAULT_FILTERS);
+  }
+
   return (
     <section className="admin-card admin-users-panel" aria-label="用户与权限管理">
       <div className="admin-card-head admin-users-head">
@@ -463,118 +519,149 @@ export function AdminUsersPanel({
           <h3>用户与权限</h3>
           <p>按人员、分组、后台权限和微信绑定状态筛选，维护账号启停和继承权限。</p>
         </div>
-        <button className="secondary-button" type="button" onClick={() => openEditor("create")}>
-          <Plus size={16} aria-hidden="true" />
-          新增用户
-        </button>
       </div>
 
-      <AdminUserImport onCommitted={async () => {
-        await loadUsers();
-        onRefresh?.();
-      }} />
-
       <form
-        className="admin-users-filters"
+        className="admin-users-commandbar"
         onSubmit={(event) => {
           event.preventDefault();
           setAppliedFilters(filters);
         }}
       >
-        <label>
-          <span>搜索姓名或手机号</span>
-          <input aria-label="搜索姓名或手机号" value={filters.search} onChange={(event) => setFilters((current) => ({ ...current, search: event.target.value }))} placeholder="姓名 / 手机号" />
-        </label>
-        <label>
-          <span>用户分组</span>
-          <select aria-label="筛选用户分组" value={filters.groupId} onChange={(event) => setFilters((current) => ({ ...current, groupId: event.target.value }))}>
-            <option value="">全部分组</option>
-            {groups.map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}
-          </select>
-        </label>
-        <label>
-          <span>状态</span>
-          <select aria-label="筛选用户状态" value={filters.enabled} onChange={(event) => setFilters((current) => ({ ...current, enabled: event.target.value }))}>
-            <option value="">全部状态</option>
-            <option value="true">启用</option>
-            <option value="false">停用</option>
-          </select>
-        </label>
-        <label>
-          <span>后台权限</span>
-          <select aria-label="筛选后台权限" value={filters.admin} onChange={(event) => setFilters((current) => ({ ...current, admin: event.target.value }))}>
-            <option value="">全部权限</option>
-            <option value="true">可进后台</option>
-            <option value="false">无后台权限</option>
-          </select>
-        </label>
-        <label>
-          <span>微信绑定</span>
-          <select aria-label="筛选绑定状态" value={filters.binding} onChange={(event) => setFilters((current) => ({ ...current, binding: event.target.value }))}>
-            <option value="">全部绑定</option>
-            <option value="bound">已绑定</option>
-            <option value="unbound">未绑定</option>
-          </select>
-        </label>
-        <div className="admin-users-filter-actions">
+        <div className="admin-users-search-group">
+          <label className="admin-user-search">
+            <span className="sr-only">搜索姓名或手机号</span>
+            <Search size={17} aria-hidden="true" />
+            <input
+              aria-label="搜索姓名或手机号"
+              value={filters.search}
+              onChange={(event) => setFilters((current) => ({ ...current, search: event.target.value }))}
+              placeholder="搜索姓名或手机号"
+            />
+          </label>
+          <span className="admin-user-result-count" aria-live="polite">
+            {loading ? "正在更新" : `${total} 位用户`}
+          </span>
+        </div>
+        <div className="admin-user-toolbar-actions">
+          <button className="admin-icon-button" type="button" onClick={() => void loadUsers()} disabled={loading} aria-label="刷新用户" title="刷新用户">
+            <RefreshCw size={18} aria-hidden="true" />
+          </button>
           <button className="primary-button" type="submit" disabled={loading}>
-            <Search size={16} aria-hidden="true" />
+            <Search size={17} aria-hidden="true" />
             筛选用户
           </button>
-          <button className="secondary-button" type="button" onClick={() => void loadUsers()} disabled={loading}>
-            <RefreshCw size={16} aria-hidden="true" />
-            刷新
+          <button className="secondary-button" type="button" onClick={() => setImportOpen(true)}>
+            <Upload size={17} aria-hidden="true" />
+            批量导入
+          </button>
+          <button className="primary-button admin-user-create" type="button" onClick={() => openEditor("create")}>
+            <Plus size={17} aria-hidden="true" />
+            新增用户
           </button>
         </div>
       </form>
 
-      {listError && <p className="form-message" role="alert">{listError}</p>}
-      <div className="admin-users-summary" aria-live="polite">{loading ? "加载用户中..." : `共 ${total} 位用户`}</div>
+      <div className="admin-users-filterbar" aria-label="筛选用户">
+        <label className="admin-user-filter">
+          <span>分组</span>
+          <select aria-label="筛选用户分组" value={filters.groupId} onChange={(event) => setFilters((current) => ({ ...current, groupId: event.target.value }))}>
+            <option value="">全部</option>
+            {groups.map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}
+          </select>
+        </label>
+        <label className="admin-user-filter">
+          <span>状态</span>
+          <select aria-label="筛选用户状态" value={filters.enabled} onChange={(event) => setFilters((current) => ({ ...current, enabled: event.target.value }))}>
+            <option value="">全部</option>
+            <option value="true">已启用</option>
+            <option value="false">已停用</option>
+          </select>
+        </label>
+        <label className="admin-user-filter">
+          <span>后台</span>
+          <select aria-label="筛选后台权限" value={filters.admin} onChange={(event) => setFilters((current) => ({ ...current, admin: event.target.value }))}>
+            <option value="">全部</option>
+            <option value="true">可登录</option>
+            <option value="false">不可登录</option>
+          </select>
+        </label>
+        <label className="admin-user-filter">
+          <span>绑定</span>
+          <select aria-label="筛选绑定状态" value={filters.binding} onChange={(event) => setFilters((current) => ({ ...current, binding: event.target.value }))}>
+            <option value="">全部</option>
+            <option value="bound">已绑定</option>
+            <option value="unbound">未绑定</option>
+          </select>
+        </label>
+        {hasActiveFilters && (
+          <button className="admin-user-clear-filters" type="button" onClick={clearFilters}>
+            <FilterX size={16} aria-hidden="true" />
+            清除筛选
+          </button>
+        )}
+      </div>
 
-      <div className="admin-users-table" role="table" aria-label="后台用户列表">
+      {listError && <p className="admin-user-list-message error" role="alert">{listError}</p>}
+
+      <div className="admin-user-table" role="table" aria-label="后台用户列表" aria-busy={loading}>
         <div className="admin-user-row admin-user-head" role="row">
           <span role="columnheader">用户</span>
-          <span role="columnheader">手机号</span>
-          <span role="columnheader">状态</span>
-          <span role="columnheader">分组</span>
-          <span role="columnheader">分组锁定</span>
-          <span role="columnheader">后台</span>
-          <span role="columnheader">密码</span>
-          <span role="columnheader">微信绑定</span>
+          <span role="columnheader">分组与继承权限</span>
+          <span role="columnheader">消息账号</span>
+          <span role="columnheader">账号状态</span>
           <span role="columnheader">操作</span>
         </div>
         {users.map((item) => {
-          const boundNames = Object.values(item.identities).map((identity) => identity?.displayName).filter(Boolean).join("、");
           const isAdmin = item.permissions.includes("admin.access");
           return (
             <article className="admin-user-row" role="row" key={item.personId}>
-              <strong role="cell" data-label="用户">{item.name}</strong>
-              <span role="cell" data-label="手机号">{item.phone}</span>
-              <span role="cell" data-label="状态"><em className={item.enabled ? "success" : "danger"}>{item.enabled ? "启用" : "停用"}</em></span>
-              <span role="cell" data-label="分组">{item.groupName}</span>
-              <span role="cell" data-label="分组锁定">{item.groupLocked ? "已锁定" : "跟随规则"}</span>
-              <span role="cell" data-label="后台">{isAdmin ? "可进后台" : "无后台权限"}</span>
-              <span role="cell" data-label="密码">{item.hasPassword ? "已设置" : "未设置"}</span>
-              <span role="cell" data-label="微信绑定">{boundNames || "未绑定"}</span>
+              <div className="admin-user-cell admin-user-name" role="cell" data-label="用户">
+                <span className="admin-user-name-line">
+                  <strong>{item.name}</strong>
+                  {item.groupLocked && <span className="admin-user-lock-label">分组锁定</span>}
+                </span>
+                <small>{item.phone}</small>
+              </div>
+              <div className="admin-user-cell admin-user-access" role="cell" data-label="分组与继承权限">
+                <strong>{item.groupName}</strong>
+                <div className="admin-user-permissions">
+                  {item.permissions.map((permission) => (
+                    <span key={permission}>{PERMISSION_LABELS[permission]}</span>
+                  ))}
+                  {item.permissions.length === 0 && <small>无业务权限</small>}
+                </div>
+              </div>
+              <div className="admin-user-cell admin-user-bindings" role="cell" data-label="消息账号">
+                <BindingSummary user={item} platform="wechat" />
+                <BindingSummary user={item} platform="wecom" />
+              </div>
+              <div className="admin-user-cell admin-user-account-state" role="cell" data-label="账号状态">
+                <span className={`admin-user-status ${item.enabled ? "enabled" : "disabled"}`}>
+                  <i aria-hidden="true" />
+                  {item.enabled ? "已启用" : "已停用"}
+                </span>
+                <small>
+                  {isAdmin ? (item.hasPassword ? "后台密码已设置" : "后台密码未设置") : "无后台登录"}
+                  {" · "}
+                  {formatDateTime(item.lastLoginAt)}
+                </small>
+              </div>
               <div className="admin-user-actions" role="cell" data-label="操作">
-                <button className="secondary-button" type="button" aria-label={`编辑${item.name}`} onClick={() => openEditor("edit", item)}>
-                  <Pencil size={15} aria-hidden="true" />
-                  编辑
+                <button className="secondary-button" type="button" aria-label={`编辑${item.name}`} onClick={() => openEditor("edit", item)} title="编辑用户">
+                  <Pencil size={17} aria-hidden="true" />
                 </button>
                 {item.enabled ? (
-                  <button className="secondary-button" type="button" onClick={() => void runUserAction(item, "disable")} disabled={savingAction === `${item.personId}-disable`}>
-                    <UserX size={15} aria-hidden="true" />
-                    停用
+                  <button className="secondary-button" type="button" aria-label={`停用${item.name}`} title="停用用户" onClick={() => void runUserAction(item, "disable")} disabled={savingAction === `${item.personId}-disable`}>
+                    <Ban size={17} aria-hidden="true" />
                   </button>
                 ) : (
-                  <button className="secondary-button" type="button" onClick={() => void runUserAction(item, "enable")} disabled={savingAction === `${item.personId}-enable`}>
-                    <UserCheck size={15} aria-hidden="true" />
-                    启用
+                  <button className="secondary-button" type="button" aria-label={`启用${item.name}`} title="启用用户" onClick={() => void runUserAction(item, "enable")} disabled={savingAction === `${item.personId}-enable`}>
+                    <CheckCircle2 size={17} aria-hidden="true" />
                   </button>
                 )}
-                <button className="danger-button" type="button" onClick={() => void runUserAction(item, "delete")} disabled={savingAction === `${item.personId}-delete`}>
-                  <Trash2 size={15} aria-hidden="true" />
-                  删除
+                <button className="danger-button" type="button" aria-label={`删除${item.name}`} title="删除用户" onClick={() => void runUserAction(item, "delete")} disabled={savingAction === `${item.personId}-delete`}>
+                  <Trash2 size={17} aria-hidden="true" />
                 </button>
                 {["enable", "disable", "delete"].map((action) => {
                   const key = `${item.personId}-${action}`;
@@ -584,8 +671,29 @@ export function AdminUsersPanel({
             </article>
           );
         })}
-        {!loading && users.length === 0 && <p className="admin-empty-note">暂无匹配用户</p>}
+        {!loading && users.length === 0 && (
+          <div className="admin-user-empty">
+            <SearchX size={22} aria-hidden="true" />
+            <strong>没有符合条件的用户</strong>
+            {hasActiveFilters && <button type="button" onClick={clearFilters}>清除筛选</button>}
+          </div>
+        )}
+        {loading && users.length === 0 && (
+          <div className="admin-user-loading" aria-label="正在加载用户">
+            {[0, 1, 2].map((item) => <span key={item} />)}
+          </div>
+        )}
       </div>
+
+      {importOpen && (
+        <AdminUserImport
+          onClose={() => setImportOpen(false)}
+          onCompleted={async () => {
+            await loadUsers();
+            onRefresh?.();
+          }}
+        />
+      )}
 
       {editor && (
         <aside className="admin-user-drawer" role="complementary" aria-label={editor.mode === "edit" && editor.user ? `编辑用户${editor.user.name}` : "新增用户"}>
