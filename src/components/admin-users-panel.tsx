@@ -75,8 +75,8 @@ const PERMISSION_LABELS: Record<PermissionCode, string> = {
 };
 
 const PLATFORM_LABELS: Record<MessageChannel, string> = {
-  wechat: "WeChat",
-  wecom: "WeCom"
+  wechat: "微信",
+  wecom: "企业微信"
 };
 
 const EMPTY_IDENTITY_DRAFT: Record<MessageChannel, IdentityDraft> = {
@@ -224,7 +224,7 @@ export function AdminUsersPanel({
       const response = await fetch(`/api/admin/chat-identities?platform=${platform}`, {
         cache: "no-store"
       });
-      if (!response.ok) throw new Error(await responseMessage(response, `${PLATFORM_LABELS[platform]} identities failed to load`));
+      if (!response.ok) throw new Error(await responseMessage(response, `${PLATFORM_LABELS[platform]}身份加载失败`));
       const payload = await response.json() as { identities?: ChatIdentity[] };
       setAvailableIdentities((current) => ({
         ...current,
@@ -233,7 +233,7 @@ export function AdminUsersPanel({
     } catch (error) {
       setIdentityErrors((current) => ({
         ...current,
-        [platform]: error instanceof Error ? error.message : `${PLATFORM_LABELS[platform]} identities failed to load`
+        [platform]: error instanceof Error ? error.message : `${PLATFORM_LABELS[platform]}身份加载失败`
       }));
     }
   }
@@ -296,7 +296,7 @@ export function AdminUsersPanel({
     if (!externalUserId) {
       setIdentityErrors((current) => ({
         ...current,
-        [platform]: `Select or enter a ${PLATFORM_LABELS[platform]} external ID`
+        [platform]: `请选择或填写${PLATFORM_LABELS[platform]}外部标识`
       }));
       return;
     }
@@ -329,9 +329,9 @@ export function AdminUsersPanel({
           });
           return;
         }
-        throw new Error(payload.message ?? `${PLATFORM_LABELS[platform]} binding failed`);
+        throw new Error(payload.message ?? `${PLATFORM_LABELS[platform]}绑定失败`);
       }
-      if (!response.ok) throw new Error(await responseMessage(response, `${PLATFORM_LABELS[platform]} binding failed`));
+      if (!response.ok) throw new Error(await responseMessage(response, `${PLATFORM_LABELS[platform]}绑定失败`));
       const payload = await response.json() as { identity?: ChatIdentity };
       setIdentityConflict(null);
       if (payload.identity) {
@@ -343,7 +343,7 @@ export function AdminUsersPanel({
     } catch (error) {
       setIdentityErrors((current) => ({
         ...current,
-        [platform]: error instanceof Error ? error.message : `${PLATFORM_LABELS[platform]} binding failed`
+        [platform]: error instanceof Error ? error.message : `${PLATFORM_LABELS[platform]}绑定失败`
       }));
     } finally {
       setSavingAction(null);
@@ -358,14 +358,14 @@ export function AdminUsersPanel({
       const response = await fetch(`/api/admin/users/${editor.user.personId}/chat-identities/${platform}`, {
         method: "DELETE"
       });
-      if (!response.ok) throw new Error(await responseMessage(response, `${PLATFORM_LABELS[platform]} unbind failed`));
+      if (!response.ok) throw new Error(await responseMessage(response, `${PLATFORM_LABELS[platform]}解绑失败`));
       updateEditorIdentity(platform);
       await loadUsers();
       onRefresh?.();
     } catch (error) {
       setIdentityErrors((current) => ({
         ...current,
-        [platform]: error instanceof Error ? error.message : `${PLATFORM_LABELS[platform]} unbind failed`
+        [platform]: error instanceof Error ? error.message : `${PLATFORM_LABELS[platform]}解绑失败`
       }));
     } finally {
       setSavingAction(null);
@@ -636,28 +636,28 @@ export function AdminUsersPanel({
             </button>
           </form>
           {editor.mode === "edit" && editor.user && (
-            <div className="admin-user-identities" aria-label="Chat identity bindings">
+            <div className="admin-user-identities" aria-label="消息身份绑定">
               {(["wechat", "wecom"] as MessageChannel[]).map((platform) => {
                 const label = PLATFORM_LABELS[platform];
                 const current = editor.user?.identities[platform];
                 const draftIdentity = identityDrafts[platform];
                 const error = identityErrors[platform];
                 return (
-                  <section className="admin-user-identity-card" key={platform} aria-label={`${label} identity binding`}>
+                  <section className="admin-user-identity-card" key={platform} aria-label={`${label}身份绑定`}>
                     <div className="admin-user-identity-head">
                       <div>
                         <strong>{label}</strong>
                         <span>
                           {current
-                            ? `Bound to ${current.displayName} (${current.externalUserId})`
-                            : "No current binding"}
+                            ? `已绑定 ${current.displayName}（${current.externalUserId}）`
+                            : "当前未绑定"}
                         </span>
                       </div>
                       <button
                         className="secondary-button icon-button"
                         type="button"
-                        aria-label={`Unbind ${label} identity`}
-                        title={`Unbind ${label} identity`}
+                        aria-label={`解绑${label}身份`}
+                        title={`解绑${label}身份`}
                         onClick={() => void unbindIdentity(platform)}
                         disabled={!current || savingAction === `identity-${platform}-unbind`}
                       >
@@ -665,15 +665,15 @@ export function AdminUsersPanel({
                       </button>
                     </div>
                     <label>
-                      <span>{label} stable identity</span>
+                      <span>{label}稳定身份</span>
                       <select
-                        aria-label={`${label} stable identity`}
+                        aria-label={`${label}稳定身份`}
                         value={draftIdentity.selectedExternalUserId}
                         onChange={(event) => updateIdentityDraft(platform, {
                           selectedExternalUserId: event.target.value
                         })}
                       >
-                        <option value="">Select discovered identity</option>
+                        <option value="">选择已识别身份</option>
                         {availableIdentities[platform].map((identity) => (
                           <option key={identity.id} value={identity.externalUserId}>
                             {identity.displayName} ({identity.externalUserId})
@@ -682,25 +682,25 @@ export function AdminUsersPanel({
                       </select>
                     </label>
                     <label>
-                      <span>{label} external ID</span>
+                      <span>{label}外部标识</span>
                       <input
-                        aria-label={`${label} external ID`}
+                        aria-label={`${label}外部标识`}
                         value={draftIdentity.manualExternalUserId}
                         onChange={(event) => updateIdentityDraft(platform, {
                           manualExternalUserId: event.target.value
                         })}
-                        placeholder="Manual external user ID"
+                        placeholder="手动填写外部用户标识"
                       />
                     </label>
                     <label>
-                      <span>{label} display name</span>
+                      <span>{label}显示名称</span>
                       <input
-                        aria-label={`${label} display name`}
+                        aria-label={`${label}显示名称`}
                         value={draftIdentity.manualDisplayName}
                         onChange={(event) => updateIdentityDraft(platform, {
                           manualDisplayName: event.target.value
                         })}
-                        placeholder="Optional display name"
+                        placeholder="可选显示名称"
                       />
                     </label>
                     <button
@@ -710,7 +710,7 @@ export function AdminUsersPanel({
                       disabled={savingAction === `identity-${platform}`}
                     >
                       <Link size={15} aria-hidden="true" />
-                      {savingAction === `identity-${platform}` ? "Binding..." : `Bind ${label} identity`}
+                      {savingAction === `identity-${platform}` ? "绑定中..." : `绑定${label}身份`}
                     </button>
                     {error && <p className="admin-user-action-error" role="alert">{error}</p>}
                   </section>
@@ -739,13 +739,13 @@ export function AdminUsersPanel({
             className="admin-dialog"
             role="dialog"
             aria-modal="true"
-            aria-label="Confirm identity rebind"
+            aria-label="确认身份换绑"
           >
-            <h4>Confirm identity rebind</h4>
+            <h4>确认身份换绑</h4>
             <p>
-              This {PLATFORM_LABELS[identityConflict.platform]} identity is already bound
-              {identityConflict.ownerName ? ` to ${identityConflict.ownerName}` : " to another user"}.
-              Confirm to move it to the current user.
+              该{PLATFORM_LABELS[identityConflict.platform]}身份已经绑定
+              {identityConflict.ownerName ? `给 ${identityConflict.ownerName}` : "给其他用户"}。
+              确认后会转绑到当前用户。
             </p>
             <div className="admin-dialog-actions">
               <button
@@ -753,7 +753,7 @@ export function AdminUsersPanel({
                 type="button"
                 onClick={() => setIdentityConflict(null)}
               >
-                Cancel
+                取消
               </button>
               <button
                 className="danger-button"

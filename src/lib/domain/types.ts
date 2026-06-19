@@ -49,7 +49,18 @@ export type AiModelConfig = {
 
 export type AiProviderPresetId = "deepseek" | "openai" | "qwen" | "kimi" | "zhipu" | "custom";
 
-export type AiPromptScenario = "classify" | "dedupe" | "escalation" | "customer-service";
+export type ImportSystemField =
+  | "boothNumber"
+  | "companyName"
+  | "floor"
+  | "hall"
+  | "area"
+  | "areaSpecification"
+  | "exhibitorType"
+  | "salesOwner"
+  | "builder";
+
+export type AiPromptScenario = "classify" | "dedupe" | "escalation" | "customer-service" | "exhibitor-import";
 
 export type AiPromptTemplate = {
   id: string;

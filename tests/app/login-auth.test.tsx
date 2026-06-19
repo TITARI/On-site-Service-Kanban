@@ -18,8 +18,8 @@ const config: AppConfig = {
     }
   ],
   aiModels: [
-    { id: "fast", label: "Fast AI", provider: "mock", modelName: "fast-local", timeoutMs: 800, enabled: true },
-    { id: "smart", label: "Smart AI", provider: "mock", modelName: "smart-local", timeoutMs: 3000, enabled: true }
+    { id: "fast", label: "快速智能模型", provider: "mock", modelName: "fast-local", timeoutMs: 800, enabled: true },
+    { id: "smart", label: "高阶智能模型", provider: "mock", modelName: "smart-local", timeoutMs: 3000, enabled: true }
   ],
   userGroups: [
     {
@@ -145,7 +145,7 @@ describe("login and role access", () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url === "/api/auth/session?type=mobile") {
-        return new Response(JSON.stringify({ message: "Unauthenticated" }), { status: 401 });
+        return new Response(JSON.stringify({ message: "未登录" }), { status: 401 });
       }
       return new Response(JSON.stringify({ config: loginConfig }), { status: 200 });
     });
@@ -182,7 +182,7 @@ describe("login and role access", () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url === "/api/auth/session?type=mobile") {
-        return new Response(JSON.stringify({ message: "Unauthenticated" }), { status: 401 });
+        return new Response(JSON.stringify({ message: "未登录" }), { status: 401 });
       }
       if (url === "/api/bootstrap?scope=login") {
         return new Response(JSON.stringify({ config }), { status: 200 });
@@ -238,7 +238,7 @@ describe("login and role access", () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url === "/api/auth/session?type=mobile") {
-        return new Response(JSON.stringify({ message: "Unauthenticated" }), { status: 401 });
+        return new Response(JSON.stringify({ message: "未登录" }), { status: 401 });
       }
       if (url === "/api/bootstrap?scope=login") {
         return new Response(JSON.stringify({ config }), { status: 200 });
@@ -265,7 +265,7 @@ describe("login and role access", () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url === "/api/auth/session?type=mobile") {
-        return new Response(JSON.stringify({ message: "Unauthenticated" }), { status: 401 });
+        return new Response(JSON.stringify({ message: "未登录" }), { status: 401 });
       }
       if (url === "/api/bootstrap?scope=login") {
         return new Response(JSON.stringify({ config }), { status: 200 });

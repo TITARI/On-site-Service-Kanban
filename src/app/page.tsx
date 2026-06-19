@@ -288,7 +288,7 @@ export default function HomePage() {
         <section className="detail-route">
           <button className="back-button" type="button" onClick={() => setSelectedId(undefined)}>返回工单列表</button>
           {isDetailLoading && !activeDetailTicket ? (
-            <section className="empty-state">Loading...</section>
+            <section className="empty-state">加载中...</section>
           ) : detailError && !activeDetailTicket ? (
             <section className="empty-state">{detailError}</section>
           ) : (
@@ -302,7 +302,7 @@ export default function HomePage() {
         <section className="detail-route">
           <button className="back-button" type="button" onClick={() => setSelectedId(undefined)}>返回我的工单</button>
           {isDetailLoading && !activeDetailTicket ? (
-            <section className="empty-state">Loading...</section>
+            <section className="empty-state">加载中...</section>
           ) : detailError && !activeDetailTicket ? (
             <section className="empty-state">{detailError}</section>
           ) : (

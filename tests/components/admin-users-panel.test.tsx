@@ -111,21 +111,21 @@ describe("AdminUsersPanel chat identity controls", () => {
 
     await userDriver.click(await screen.findByRole("button", { name: "编辑张三" }));
     const editor = await screen.findByRole("complementary", { name: "编辑用户张三" });
-    const wechatSection = await within(editor).findByRole("region", { name: "WeChat identity binding" });
-    expect(within(wechatSection).getByText("No current binding")).not.toBeNull();
+    const wechatSection = await within(editor).findByRole("region", { name: "微信身份绑定" });
+    expect(within(wechatSection).getByText("当前未绑定")).not.toBeNull();
     expect(
-      (within(wechatSection).getByRole("button", { name: "Unbind WeChat identity" }) as HTMLButtonElement).disabled
+      (within(wechatSection).getByRole("button", { name: "解绑微信身份" }) as HTMLButtonElement).disabled
     ).toBe(true);
 
     await userDriver.selectOptions(
-      within(wechatSection).getByLabelText("WeChat stable identity"),
+      within(wechatSection).getByLabelText("微信稳定身份"),
       "wxid-new"
     );
-    await userDriver.click(within(wechatSection).getByRole("button", { name: "Bind WeChat identity" }));
+    await userDriver.click(within(wechatSection).getByRole("button", { name: "绑定微信身份" }));
 
-    expect(await within(wechatSection).findByText("Bound to New WeChat (wxid-new)")).not.toBeNull();
+    expect(await within(wechatSection).findByText("已绑定 New WeChat（wxid-new）")).not.toBeNull();
     expect(
-      (within(wechatSection).getByRole("button", { name: "Unbind WeChat identity" }) as HTMLButtonElement).disabled
+      (within(wechatSection).getByRole("button", { name: "解绑微信身份" }) as HTMLButtonElement).disabled
     ).toBe(false);
   });
 
@@ -191,12 +191,12 @@ describe("AdminUsersPanel chat identity controls", () => {
     await userDriver.click(await screen.findByRole("button", { name: "编辑张三" }));
     const editor = await screen.findByRole("complementary", { name: "编辑用户张三" });
     await userDriver.selectOptions(
-      await within(editor).findByLabelText("WeChat stable identity"),
+      await within(editor).findByLabelText("微信稳定身份"),
       "wxid-other"
     );
-    await userDriver.click(within(editor).getByRole("button", { name: "Bind WeChat identity" }));
+    await userDriver.click(within(editor).getByRole("button", { name: "绑定微信身份" }));
 
-    const dialog = await screen.findByRole("dialog", { name: "Confirm identity rebind" });
+    const dialog = await screen.findByRole("dialog", { name: "确认身份换绑" });
     expect(within(dialog).getByText(/李四/)).not.toBeNull();
     await userDriver.click(within(dialog).getByRole("button", { name: "确认换绑" }));
 

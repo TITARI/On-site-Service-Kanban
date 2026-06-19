@@ -12,10 +12,10 @@ const CHANNELS = ["wechat", "wecom"] as const;
 const CONFIRMATION_TTL_MS = 5 * 60 * 1000;
 
 const bindInputSchema = z.object({
-  userId: z.string().min(1),
+  userId: z.string().min(1, "缺少用户ID"),
   platform: z.enum(CHANNELS),
-  externalUserId: z.string().trim().min(1).max(160),
-  displayName: z.string().trim().max(160).optional(),
+  externalUserId: z.string().trim().min(1, "请填写外部用户标识").max(160, "外部用户标识不能超过160个字符"),
+  displayName: z.string().trim().max(160, "显示名称不能超过160个字符").optional(),
   confirmationToken: z.string().optional()
 });
 
@@ -33,7 +33,7 @@ export class ChatIdentityValidationError extends Error {
 export class ChatIdentityNotFoundError extends Error {
   code = "NOT_FOUND" as const;
 
-  constructor(message = "Chat identity or user was not found") {
+  constructor(message = "未找到消息身份或用户") {
     super(message);
     this.name = "ChatIdentityNotFoundError";
   }
@@ -42,7 +42,7 @@ export class ChatIdentityNotFoundError extends Error {
 export class ChatIdentityTemporaryError extends Error {
   code = "TEMPORARY_IDENTITY" as const;
 
-  constructor(message = "Temporary identities cannot be bound by administrators") {
+  constructor(message = "临时身份不能由管理员绑定") {
     super(message);
     this.name = "ChatIdentityTemporaryError";
   }
@@ -72,7 +72,7 @@ function secretFromEnv(env: NodeJS.ProcessEnv) {
     return env.ADMIN_BOOTSTRAP_PASSWORD.trim();
   }
   throw new ChatIdentityValidationError(
-    "AUTH_CONFIRMATION_SECRET is required for identity confirmation"
+    "请先配置 AUTH_CONFIRMATION_SECRET 后再确认身份换绑"
   );
 }
 
@@ -98,24 +98,24 @@ function verifySignature(payload: string, signature: string, secret: string) {
 function parseToken(token: string, secret: string): RebindClaim {
   const [payload, signature] = token.split(".");
   if (!payload || !signature || !verifySignature(payload, signature, secret)) {
-    throw new ChatIdentityValidationError("Confirmation token is invalid");
+    throw new ChatIdentityValidationError("确认令牌无效");
   }
   let claim: RebindClaim;
   try {
     claim = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
   } catch {
-    throw new ChatIdentityValidationError("Confirmation token is invalid");
+    throw new ChatIdentityValidationError("确认令牌无效");
   }
   const expiresAtMs = Date.parse(claim.expiresAt);
   const now = Date.now();
   if (!Number.isFinite(expiresAtMs)) {
-    throw new ChatIdentityValidationError("Confirmation token expiry is invalid");
+    throw new ChatIdentityValidationError("确认令牌过期时间无效");
   }
   if (expiresAtMs <= now) {
-    throw new ChatIdentityValidationError("Confirmation token has expired");
+    throw new ChatIdentityValidationError("确认令牌已过期");
   }
   if (expiresAtMs > now + CONFIRMATION_TTL_MS) {
-    throw new ChatIdentityValidationError("Confirmation token expiry is too long");
+    throw new ChatIdentityValidationError("确认令牌有效期过长");
   }
   return claim;
 }
@@ -131,7 +131,7 @@ function expectedRebindFromClaim(claim: RebindClaim): ChatIdentityRebindExpectat
 
 function staleConfirmationError() {
   return new ChatIdentityValidationError(
-    "Confirmation token no longer matches the current identity binding; retry confirmation"
+    "确认令牌已不匹配当前身份绑定，请重新确认"
   );
 }
 
@@ -165,7 +165,7 @@ export function createChatIdentityAdminService(
     async bindIdentity(input: unknown, actor: AuthenticatedActor) {
       const parsed = parseBindInput(input);
       const user = await repository.getUser(parsed.userId);
-      if (!user) throw new ChatIdentityNotFoundError("User was not found");
+      if (!user) throw new ChatIdentityNotFoundError("未找到用户");
 
       const identity = await repository.identityByExternalId(
         parsed.platform,
@@ -207,7 +207,7 @@ export function createChatIdentityAdminService(
         const conflictSecret = secretFromEnv(env);
         const owner = await repository.getUser(ownerPersonId as string);
         throw new ChatIdentityConflictError(
-          "Identity already belongs to another user",
+          "该身份已绑定给其他用户",
           signClaim({
             ...expectedRebind,
             expiresAt: new Date(Date.now() + CONFIRMATION_TTL_MS).toISOString()
@@ -234,7 +234,7 @@ export function createChatIdentityAdminService(
       actor: AuthenticatedActor
     ) {
       const user = await repository.getUser(input.userId);
-      if (!user) throw new ChatIdentityNotFoundError("User was not found");
+      if (!user) throw new ChatIdentityNotFoundError("未找到用户");
       await repository.unbindChatIdentity({
         userId: user.personId,
         platform: input.platform

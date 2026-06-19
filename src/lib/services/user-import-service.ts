@@ -213,7 +213,7 @@ export async function commitUserImport(
     : await repository.getUserImportJobRows(jobId, actor);
   const selected = await revalidateRows(repository, job, actor);
   if (!commitRepository.applyUserImport) {
-    throw new Error("User import commit is not supported by this repository");
+    throw new Error("当前存储不支持提交用户导入");
   }
   return await commitRepository.applyUserImport({
     ...job,
@@ -246,7 +246,7 @@ export function createUserImportService(repository: AppRepository) {
     ) => {
       const commitRepository = repository as CommitRepository;
       if (!commitRepository.userImportReport) {
-        throw new Error("User import report is not supported by this repository");
+        throw new Error("当前存储不支持导出用户导入报告");
       }
       return commitRepository.userImportReport(jobId, actor);
     }

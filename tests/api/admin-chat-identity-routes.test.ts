@@ -157,7 +157,7 @@ describe("admin chat identity routes", () => {
 
   it("maps repository binding drift to a retryable conflict response", async () => {
     store.bindChatIdentity.mockRejectedValue(
-      new Error("Chat identity binding changed; retry confirmation")
+      new Error("身份绑定已变化，请重新确认")
     );
     const route = await import("@/app/api/admin/users/[userId]/chat-identities/[platform]/route");
 
@@ -173,7 +173,7 @@ describe("admin chat identity routes", () => {
     expect(response.status).toBe(409);
     expect(payload).toMatchObject({
       code: "IDENTITY_REBIND_STALE",
-      message: "Chat identity binding changed; retry confirmation"
+      message: "身份绑定已变化，请重新确认"
     });
   });
 

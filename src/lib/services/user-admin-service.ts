@@ -7,15 +7,15 @@ import type { AppRepository } from "@/lib/repositories/app-repository";
 import { hashPassword } from "@/lib/services/password-service";
 
 export const userMutationSchema = z.object({
-  name: z.string().trim().min(1).max(120),
-  phone: z.string().regex(/^1[3-9]\d{9}$/),
-  groupId: z.string().min(1).max(64),
+  name: z.string().trim().min(1, "请填写姓名").max(120, "姓名不能超过120个字符"),
+  phone: z.string().regex(/^1[3-9]\d{9}$/, "手机号需为11位有效号码"),
+  groupId: z.string().min(1, "请选择用户分组").max(64, "用户分组标识不能超过64个字符"),
   groupLocked: z.boolean(),
   enabled: z.boolean()
 });
 
 export class UserAdminNotFoundError extends Error {
-  constructor(message = "User was not found") {
+  constructor(message = "未找到用户") {
     super(message);
     this.name = "UserAdminNotFoundError";
   }
@@ -37,21 +37,28 @@ export class UserAdminValidationError extends Error {
 
 function duplicatePhoneError(error: unknown) {
   return error instanceof Error &&
-    /phone.*already assigned|duplicate/i.test(error.message);
+    /duplicate|手机号.*占用|手机号.*重复/i.test(error.message);
 }
 
 function notFoundError(error: unknown) {
-  return error instanceof Error && /not found/i.test(error.message);
+  return error instanceof Error && /未找到|不存在/i.test(error.message);
 }
 
 function conflictError(error: unknown) {
   return error instanceof Error &&
-    /usable admin|business history|cannot be deleted|referenced/i.test(error.message);
+    /可用管理员|业务历史|不能删除|被引用/i.test(error.message);
+}
+
+function userAdminConflictMessage(error: Error) {
+  if (duplicatePhoneError(error)) return "手机号已被其他用户占用";
+  if (/可用管理员/i.test(error.message)) return "至少需要保留一个可用管理员账号";
+  if (/业务历史|不能删除/i.test(error.message)) return "用户已有业务历史，不能删除";
+  return error.message;
 }
 
 function mapRepositoryError(error: unknown): never {
   if (duplicatePhoneError(error) || conflictError(error)) {
-    throw new UserAdminConflictError((error as Error).message);
+    throw new UserAdminConflictError(userAdminConflictMessage(error as Error));
   }
   if (notFoundError(error)) {
     throw new UserAdminNotFoundError();
@@ -100,7 +107,7 @@ export function createUserAdminService(repository: AppRepository) {
       await repository.countUsableAdmins() <= 1
     ) {
       throw new UserAdminConflictError(
-        "At least one usable admin account is required"
+        "至少需要保留一个可用管理员账号"
       );
     }
   }
@@ -165,7 +172,7 @@ export function createUserAdminService(repository: AppRepository) {
         const history = await repository.userDeletionHistory?.(userId);
         if (history?.hasHistory) {
           throw new UserAdminConflictError(
-            "User has business history and cannot be deleted"
+            "用户已有业务历史，不能删除"
           );
         }
         await repository.deleteUser(userId, actor);
@@ -183,14 +190,14 @@ export function createUserAdminService(repository: AppRepository) {
         ? (input as { password?: unknown }).password
         : input;
       if (String(rawPassword ?? "") === "") {
-        throw new UserAdminValidationError("Password is required");
+        throw new UserAdminValidationError("请填写密码");
       }
       let password: string;
       try {
         password = parsePassword(input);
       } catch (error) {
         if (error instanceof z.ZodError) {
-          throw new UserAdminValidationError("Password is required");
+          throw new UserAdminValidationError("请填写密码");
         }
         throw error;
       }

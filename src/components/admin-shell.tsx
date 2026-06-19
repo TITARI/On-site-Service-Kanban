@@ -208,29 +208,29 @@ export function AdminBackendShell({ view }: { view: AdminView }) {
           <div className="auth-hero-mark">
             <ShieldCheck size={26} aria-hidden="true" />
           </div>
-          <p className="eyebrow">PC 后台</p>
+          <p className="eyebrow">电脑端后台</p>
           <h1>首个管理员初始化</h1>
           <p className="auth-copy">创建首个后台管理员后，系统会关闭旧口令初始化入口。</p>
           <form className="auth-form" onSubmit={bootstrap}>
             <label>
-              <span>Bootstrap legacy password</span>
+              <span>初始化旧口令</span>
               <input name="legacyPassword" type="password" autoComplete="current-password" required />
             </label>
             <label>
-              <span>Bootstrap admin name</span>
+              <span>管理员姓名</span>
               <input name="name" type="text" autoComplete="name" required />
             </label>
             <label>
-              <span>Bootstrap admin phone</span>
+              <span>管理员手机号</span>
               <input name="phone" type="tel" autoComplete="tel" required />
             </label>
             <label>
-              <span>Bootstrap admin password</span>
+              <span>管理员密码</span>
               <input name="password" type="password" autoComplete="new-password" required />
             </label>
             <label>
-              <span>Bootstrap admin group</span>
-              <input name="groupName" type="text" defaultValue="Administrators" required />
+              <span>管理员分组</span>
+              <input name="groupName" type="text" defaultValue="管理员" required />
             </label>
             {message && <StatusMessage tone="error">{message}</StatusMessage>}
             <button className="primary-button" type="submit" disabled={isLoading}>
@@ -250,16 +250,16 @@ export function AdminBackendShell({ view }: { view: AdminView }) {
           <div className="auth-hero-mark">
             <ShieldCheck size={26} aria-hidden="true" />
           </div>
-          <p className="eyebrow">PC 后台</p>
+          <p className="eyebrow">电脑端后台</p>
           <h1>后台配置登录</h1>
           <p className="auth-copy">登录后可进入工作台、查看微信下单日志、维护工单设置、集成配置和展览数据。</p>
           <form className="auth-form" onSubmit={login}>
             <label>
-              <span>Admin phone</span>
+              <span>管理员手机号</span>
               <input name="phone" type="tel" autoComplete="username" required />
             </label>
             <label>
-              <span>Admin password</span>
+              <span>管理员密码</span>
               <input name="password" type="password" autoComplete="current-password" required />
             </label>
             {message && <StatusMessage tone="error">{message}</StatusMessage>}
@@ -291,7 +291,7 @@ export function AdminBackendShell({ view }: { view: AdminView }) {
     <main className="admin-page-shell">
       <div className="admin-page-toolbar">
         <div>
-          <span>PC 后台{currentAdmin ? ` · ${currentAdmin.name}` : ""}</span>
+          <span>电脑端后台{currentAdmin ? ` · ${currentAdmin.name}` : ""}</span>
           <strong>{adminTitle(view)}</strong>
         </div>
         <button className="secondary-button" type="button" onClick={() => void logout()}><LogOut size={16} aria-hidden="true" />退出后台</button>

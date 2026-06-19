@@ -28,7 +28,7 @@ CREATE TABLE IF NOT EXISTS exhibition_booths (
   enabled boolean NOT NULL DEFAULT true,
   created_at datetime(3) NOT NULL,
   updated_at datetime(3) NOT NULL,
-  UNIQUE KEY uniq_booth_per_exhibition (exhibition_id, booth_number),
+  UNIQUE KEY uniq_booth_exhibitor_per_exhibition (exhibition_id, booth_number, company_name),
   KEY idx_booths_company (company_name),
   KEY idx_booths_builder (builder),
   KEY idx_booths_sales_owner (sales_owner)

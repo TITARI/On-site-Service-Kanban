@@ -290,7 +290,7 @@ describe("MariaDB access store", () => {
       "mobile",
       tokenHash,
       "2099-01-01T00:00:00.000Z"
-    )).rejects.toThrow(/not allowed|access chain/i);
+    )).rejects.toThrow(/无权|权限链/);
 
     const authorization = calls.find((call) =>
       call.sql.includes("FROM accounts a") &&
@@ -319,7 +319,7 @@ describe("MariaDB access store", () => {
       "admin",
       tokenHash,
       "2099-01-01T00:00:00.000Z"
-    )).rejects.toThrow(/not allowed|access chain/i);
+    )).rejects.toThrow(/无权|权限链/);
     expect(calls.some((call) =>
       call.sql.includes("INSERT INTO account_sessions")
     )).toBe(false);
@@ -521,7 +521,7 @@ describe("MariaDB access store", () => {
       name: "Alice",
       phone: "13800138000",
       groupId: "missing-or-disabled"
-    })).rejects.toThrow(/group.*disabled|missing/i);
+    })).rejects.toThrow(/用户分组.*(停用|不存在)/);
 
     expect(calls).not.toHaveLength(0);
     expect(calls[0].sql).toContain("WHERE p.phone = ?");
@@ -545,7 +545,7 @@ describe("MariaDB access store", () => {
       name: "New User",
       phone: "13900139000",
       groupId: "missing-or-disabled"
-    })).rejects.toThrow(/group.*disabled|missing/i);
+    })).rejects.toThrow(/用户分组.*(停用|不存在)/);
 
     expect(calls).not.toHaveLength(0);
     expect(calls[0].sql).toContain("WHERE p.phone = ?");
@@ -1059,7 +1059,7 @@ describe("MariaDB access store", () => {
       groupId: "builder",
       groupLocked: false,
       enabled: true
-    }, actor())).rejects.toThrow(/already assigned/i);
+    }, actor())).rejects.toThrow(/手机号.*占用/);
 
     const duplicateRead = calls.find((call) =>
       call.sql.includes("duplicate_phone_owners")
@@ -1258,7 +1258,7 @@ describe("MariaDB access store", () => {
 
     await expect(updateUser(connection, "person-1", {
       phone: "13900139000"
-    }, actor())).rejects.toThrow(/already assigned/i);
+    }, actor())).rejects.toThrow(/手机号.*占用/);
 
     const duplicateRead = calls.find((call) =>
       call.sql.includes("duplicate_phone_owners")
@@ -1307,7 +1307,7 @@ describe("MariaDB access store", () => {
       "person-1",
       { enabled: true },
       actor()
-    )).rejects.toThrow(/group.*disabled|missing/i);
+    )).rejects.toThrow(/用户分组.*(停用|不存在)/);
     expect(calls.some((call) =>
       call.sql.includes("FROM user_groups") &&
       call.sql.includes("enabled = true")
@@ -1456,7 +1456,7 @@ describe("MariaDB access store", () => {
         fromPersonId: "person-other",
         toPersonId: "person-1"
       }
-    }, actor())).rejects.toThrow(/changed.*retry|retry.*changed/i);
+    }, actor())).rejects.toThrow(/身份绑定已变化|重新确认/);
 
     expect(calls.some((call) =>
       call.sql.includes("UPDATE chat_identities")
@@ -1557,7 +1557,7 @@ describe("MariaDB access store", () => {
 
     await expect(
       deleteUser(connection, "person-1", actor())
-    ).rejects.toThrow(/history|referenced|delete/i);
+    ).rejects.toThrow(/业务历史|不能删除/);
 
     expect(calls.some((call) =>
       call.sql === "DELETE FROM people WHERE id = ?"
@@ -1596,7 +1596,7 @@ describe("MariaDB access store", () => {
 
     await expect(
       deleteUser(connection, "person-1", actor())
-    ).rejects.toThrow(/history|referenced|delete/i);
+    ).rejects.toThrow(/业务历史|不能删除/);
 
     const historyQuery = calls.find((call) =>
       call.sql.includes("deletion_history")
@@ -1651,10 +1651,10 @@ describe("MariaDB access store", () => {
 
     await expect(
       updateUser(connection, "person-1", { enabled: false }, actor())
-    ).rejects.toThrow("At least one usable admin account is required");
+    ).rejects.toThrow("至少需要保留一个可用管理员账号");
     await expect(
       deleteUser(connection, "person-1", actor())
-    ).rejects.toThrow("At least one usable admin account is required");
+    ).rejects.toThrow("至少需要保留一个可用管理员账号");
 
     expect(calls.some((call) =>
       call.sql.includes("UPDATE people")
@@ -1702,7 +1702,7 @@ describe("MariaDB access store", () => {
 
     await expect(
       deleteUser(connection, "person-1", actor())
-    ).rejects.toThrow("At least one usable admin account is required");
+    ).rejects.toThrow("至少需要保留一个可用管理员账号");
 
     expect(calls.some((call) =>
       call.sql.includes("usable_admin_lock") &&

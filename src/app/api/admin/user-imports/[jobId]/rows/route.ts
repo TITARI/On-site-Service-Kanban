@@ -20,12 +20,12 @@ function routeError(error: unknown) {
   if (error instanceof UserImportValidationError) {
     return badRequest(error.message);
   }
-  if (error instanceof Error && /not found/i.test(error.message)) {
+  if (error instanceof Error && /not found|未找到|不存在/i.test(error.message)) {
     return NextResponse.json({ message: error.message }, { status: 404 });
   }
   if (
     error instanceof Error &&
-    /blocked|confirmation.*required|action is not allowed/i.test(error.message)
+    /blocked|confirmation.*required|action is not allowed|阻塞|需要确认|不允许/i.test(error.message)
   ) {
     return NextResponse.json({ message: error.message }, { status: 409 });
   }
@@ -53,7 +53,7 @@ export async function PATCH(request: Request, context: RouteContext) {
   try {
     const body = await parseJson(request);
     if (!body || !Array.isArray(body.decisions)) {
-      return badRequest("decisions must be an array");
+      return badRequest("导入行处理方式必须是数组");
     }
     const decisions = parseUserImportDecisionPatches(body.decisions);
     await createUserImportService(

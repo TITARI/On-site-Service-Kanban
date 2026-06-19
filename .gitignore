@@ -12,6 +12,7 @@ logs/mariadb.pid
 logs/smoke-next.*
 npm-debug.log*
 /.superpowers/
+/.codegraph/
 .codex-*.log
 /release/
 *.zip

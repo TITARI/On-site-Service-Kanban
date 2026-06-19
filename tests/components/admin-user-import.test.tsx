@@ -137,7 +137,7 @@ describe("AdminUserImport", () => {
 
     expect(await within(importRegion).findByText("寮犱笁")).not.toBeNull();
     expect(within(importRegion).getByText("需处理 1 行，可导入 1 行，阻塞 0 行")).not.toBeNull();
-    await userDriver.click(within(importRegion).getByLabelText("确认换绑 WeChat 身份"));
+    await userDriver.click(within(importRegion).getByLabelText("确认换绑微信身份"));
     await userDriver.click(within(importRegion).getByRole("button", { name: "提交导入" }));
 
     await waitFor(() => expect(onRefresh).toHaveBeenCalledTimes(1));

@@ -21,6 +21,12 @@ const ACTION_LABELS: Record<UserImportAction, string> = {
   skip: "跳过"
 };
 
+const CATEGORY_LABELS: Record<UserImportPreviewRow["category"], string> = {
+  add: "新增",
+  overwrite: "覆盖",
+  blocked: "阻塞"
+};
+
 async function responseMessage(response: Response, fallback: string) {
   try {
     const payload = await response.json() as { message?: string };
@@ -179,7 +185,7 @@ export function AdminUserImport({ onCommitted }: Props) {
         row.conflicts.includes("wechat-occupied") &&
         !decision.confirmWechatRebind
       ) {
-        setDecisionError(`第 ${row.rowNumber} 行需要确认换绑 WeChat 身份`);
+        setDecisionError(`第 ${row.rowNumber} 行需要确认换绑微信身份`);
         return false;
       }
       if (
@@ -187,7 +193,7 @@ export function AdminUserImport({ onCommitted }: Props) {
         row.conflicts.includes("wecom-occupied") &&
         !decision.confirmWecomRebind
       ) {
-        setDecisionError(`第 ${row.rowNumber} 行需要确认换绑 WeCom 身份`);
+        setDecisionError(`第 ${row.rowNumber} 行需要确认换绑企业微信身份`);
         return false;
       }
     }
@@ -355,7 +361,7 @@ export function AdminUserImport({ onCommitted }: Props) {
                       <td>{row.rowNumber}</td>
                       <td>{row.value?.name ?? Object.values(row.raw)[0] ?? "-"}</td>
                       <td>{row.value?.phone ?? "-"}</td>
-                      <td>{row.category}</td>
+                      <td>{CATEGORY_LABELS[row.category]}</td>
                       <td>
                         <select
                           aria-label={`第 ${row.rowNumber} 行处理方式`}
@@ -376,28 +382,28 @@ export function AdminUserImport({ onCommitted }: Props) {
                             <label className="check-row">
                               <input
                                 type="checkbox"
-                                aria-label="确认换绑 WeChat 身份"
+                                aria-label="确认换绑微信身份"
                                 checked={decision.confirmWechatRebind}
                                 disabled={decision.action === "skip" || busy !== null}
                                 onChange={(event) => updateDecision(row.id, {
                                   confirmWechatRebind: event.target.checked
                                 })}
                               />
-                              确认换绑 WeChat 身份
+                              确认换绑微信身份
                             </label>
                           )}
                           {row.conflicts.includes("wecom-occupied") && (
                             <label className="check-row">
                               <input
                                 type="checkbox"
-                                aria-label="确认换绑 WeCom 身份"
+                                aria-label="确认换绑企业微信身份"
                                 checked={decision.confirmWecomRebind}
                                 disabled={decision.action === "skip" || busy !== null}
                                 onChange={(event) => updateDecision(row.id, {
                                   confirmWecomRebind: event.target.checked
                                 })}
                               />
-                              确认换绑 WeCom 身份
+                              确认换绑企业微信身份
                             </label>
                           )}
                           {!row.conflicts.some((conflict) => conflict.includes("occupied")) && <span>无需确认</span>}

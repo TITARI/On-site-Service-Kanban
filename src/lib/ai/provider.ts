@@ -41,6 +41,13 @@ export function createConfiguredAiProvider(): AiProvider {
         () => httpAiProvider.customerService(model, context, systemPrompt),
         () => mockAiProvider.customerService(model, context, systemPrompt)
       );
+    },
+    mapExhibitorFields(model, context, systemPrompt) {
+      return withFallback(
+        model,
+        () => httpAiProvider.mapExhibitorFields(model, context, systemPrompt),
+        () => mockAiProvider.mapExhibitorFields(model, context, systemPrompt)
+      );
     }
   };
 }

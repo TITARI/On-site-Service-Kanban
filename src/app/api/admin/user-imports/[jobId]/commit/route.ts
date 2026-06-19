@@ -13,10 +13,10 @@ async function jobIdFrom(context: RouteContext) {
 }
 
 function routeError(error: unknown) {
-  if (error instanceof Error && /not found/i.test(error.message)) {
+  if (error instanceof Error && /not found|未找到|不存在/i.test(error.message)) {
     return NextResponse.json({ message: error.message }, { status: 404 });
   }
-  if (error instanceof Error && /变化|conflict|changed|required/i.test(error.message)) {
+  if (error instanceof Error && /变化|conflict|changed|required|需要|不允许|阻塞/i.test(error.message)) {
     return NextResponse.json({ message: error.message }, { status: 409 });
   }
   return badRequest(errorMessage(error));

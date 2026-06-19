@@ -132,7 +132,7 @@ describe("admin database-backed routes", () => {
     const response = await route.GET(new Request("http://localhost/api/admin/config"));
 
     expect(response.status).toBe(401);
-    await expect(response.json()).resolves.toMatchObject({ message: "Unauthenticated" });
+    await expect(response.json()).resolves.toMatchObject({ message: "未登录" });
     expect(store.getConfig).not.toHaveBeenCalled();
   });
 

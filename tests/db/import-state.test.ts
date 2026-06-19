@@ -161,4 +161,99 @@ describe("db import stable ids", () => {
       boothType: "普通绿搭"
     }));
   });
+
+  it("imports persisted account credentials, sessions, and bootstrap status", async () => {
+    const { importState } = await import("../../scripts/db-import-state.mjs");
+    const calls: Array<{ sql: string; params: unknown[] }> = [];
+    const connection = {
+      execute: async (sql: string, params: unknown[] = []) => {
+        calls.push({ sql, params });
+        return [{ affectedRows: 1 }];
+      }
+    };
+
+    await importState(connection, {
+      booths: [],
+      tickets: [],
+      messageRecords: [],
+      people: [{
+        id: "person-admin",
+        name: "Admin",
+        phone: "13800138000",
+        role: "admin",
+        groupId: "admin",
+        groupName: "Administrators",
+        enabled: true,
+        createdAt: "2026-06-01T00:00:00.000Z",
+        updatedAt: "2026-06-02T00:00:00.000Z"
+      }],
+      accounts: [{
+        id: "account-admin",
+        personId: "person-admin",
+        loginName: "13800138000",
+        enabled: true,
+        authVersion: 3,
+        lastLoginAt: "2026-06-03T00:00:00.000Z",
+        createdAt: "2026-06-01T00:00:00.000Z",
+        updatedAt: "2026-06-03T00:00:00.000Z"
+      }],
+      accountCredentials: [{
+        accountId: "account-admin",
+        passwordHash: "scrypt$hash",
+        passwordChangedAt: "2026-06-01T00:00:00.000Z",
+        mustChangePassword: false,
+        failedAttempts: 2,
+        lockedUntil: "2026-06-04T00:00:00.000Z"
+      }],
+      accountSessions: [{
+        id: "session-admin",
+        accountId: "account-admin",
+        sessionType: "admin",
+        tokenHash: "a".repeat(64),
+        authVersion: 3,
+        expiresAt: "2026-06-05T00:00:00.000Z",
+        lastSeenAt: "2026-06-03T00:00:00.000Z",
+        createdAt: "2026-06-03T00:00:00.000Z"
+      }],
+      authBootstrap: {
+        completedAt: "2026-06-01T00:00:00.000Z",
+        completedByAccountId: "account-admin"
+      },
+      chatIdentities: [],
+      conversations: [],
+      pendingWorkOrderSessions: [],
+      outboundMessages: [],
+      config: {
+        userGroups: [{
+          id: "admin",
+          name: "Administrators",
+          description: "",
+          canClaim: false,
+          canProcess: false,
+          canAccept: false,
+          canAdmin: true,
+          enabled: true
+        }]
+      }
+    }, "state-with-auth.json");
+
+    expect(calls).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        sql: expect.stringContaining("INSERT INTO accounts"),
+        params: expect.arrayContaining(["account-admin", "person-admin", "13800138000", true, 3])
+      }),
+      expect.objectContaining({
+        sql: expect.stringContaining("INSERT INTO account_credentials"),
+        params: expect.arrayContaining(["account-admin", "scrypt$hash", false, 2])
+      }),
+      expect.objectContaining({
+        sql: expect.stringContaining("INSERT INTO account_sessions"),
+        params: expect.arrayContaining(["session-admin", "account-admin", "admin", "a".repeat(64), 3])
+      }),
+      expect.objectContaining({
+        sql: expect.stringContaining("UPDATE auth_bootstrap_state"),
+        params: expect.arrayContaining(["account-admin", "admin"])
+      })
+    ]));
+  });
 });

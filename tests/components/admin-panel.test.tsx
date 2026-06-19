@@ -1,5 +1,5 @@
 ﻿import { afterEach, describe, expect, it, vi } from "vitest";
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import * as XLSX from "xlsx";
 import { AdminConfigCenter } from "@/components/admin-panel";
@@ -12,8 +12,8 @@ const config: AppConfig = {
     { id: "network", name: "网络", urgencyMinutes: 20, priorityWeight: 25, assignmentGroup: "搭建组", enabled: true }
   ],
   aiModels: [
-    { id: "fast", label: "快速AI", provider: "mock", modelName: "fast-local", timeoutMs: 800, enabled: true },
-    { id: "smart", label: "高智商AI", provider: "mock", modelName: "smart-local", timeoutMs: 3000, enabled: true }
+    { id: "fast", label: "快速智能模型", provider: "mock", modelName: "fast-local", timeoutMs: 800, enabled: true },
+    { id: "smart", label: "高阶智能模型", provider: "mock", modelName: "smart-local", timeoutMs: 3000, enabled: true }
   ],
   messageIntegrations: [
     { id: "wechat", channel: "wechat", label: "微信 MCP", enabled: false, mcpServerName: "wechat-mcp", endpoint: "/api/integrations/wechat/messages", secretEnv: "WECHAT_MCP_SECRET", autoCreateTickets: false },
@@ -244,7 +244,9 @@ const processedWechatLog = {
 };
 
 afterEach(() => {
+  vi.clearAllTimers();
   vi.useRealTimers();
+  cleanup();
   vi.unstubAllGlobals();
 });
 
@@ -406,8 +408,7 @@ describe("AdminConfigCenter user groups", () => {
     expect(statusToast.textContent).toBe("请检查问题类型名称、催单时间和优先权重");
   });
 
-  it("queues feedback toasts and gives each message its own 1.5 second turn", () => {
-    vi.useFakeTimers();
+  it("queues feedback toasts", () => {
     render(<AdminConfigCenter config={config} view="work-order-settings" onRefresh={vi.fn()} />);
 
     fireEvent.change(screen.getByLabelText("网络名称"), { target: { value: "" } });
@@ -420,17 +421,25 @@ describe("AdminConfigCenter user groups", () => {
       "请检查问题类型名称、催单时间和优先权重",
       "请填写所有已配置分组的名称"
     ]);
+  });
 
-    act(() => vi.advanceTimersByTime(1500));
-    expect(screen.getAllByRole("status").map((toast) => toast.textContent)).toEqual([
-      "请填写所有已配置分组的名称"
-    ]);
+  it("removes queued feedback toasts in order", async () => {
+    render(<AdminConfigCenter config={config} view="work-order-settings" onRefresh={vi.fn()} />);
 
-    act(() => vi.advanceTimersByTime(1499));
-    expect(screen.getByRole("status").textContent).toBe("请填写所有已配置分组的名称");
+    fireEvent.change(screen.getByLabelText("网络名称"), { target: { value: "" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存问题类型配置" }));
+    fireEvent.change(screen.getByLabelText("业务组名称"), { target: { value: "" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存用户分组配置" }));
 
-    act(() => vi.advanceTimersByTime(1));
-    expect(screen.queryByRole("status")).toBeNull();
+    await waitFor(() => {
+      expect(screen.getAllByRole("status").map((toast) => toast.textContent)).toEqual([
+        "请填写所有已配置分组的名称"
+      ]);
+    }, { timeout: 1800 });
+
+    await waitFor(() => {
+      expect(screen.queryByRole("status")).toBeNull();
+    }, { timeout: 1800 });
   });
 
   it("syncs issue default group options with all actual user group edits before saving", async () => {
@@ -502,14 +511,14 @@ describe("AdminConfigCenter user groups", () => {
 
     render(<AdminConfigCenter config={config} onRefresh={vi.fn()} />);
 
-    await user.selectOptions(screen.getByLabelText("快速AI供应商"), "http");
-    await user.clear(screen.getByLabelText("快速AI接口地址"));
-    await user.type(screen.getByLabelText("快速AI接口地址"), "https://api.openai.example/v1/chat/completions");
-    await user.type(screen.getByLabelText("快速AIAPI密钥"), "sk-test-fast");
-    await user.click(screen.getByRole("button", { name: "获取快速AI模型列表" }));
+    await user.selectOptions(screen.getByLabelText("快速智能模型供应商"), "http");
+    await user.clear(screen.getByLabelText("快速智能模型接口地址"));
+    await user.type(screen.getByLabelText("快速智能模型接口地址"), "https://api.openai.example/v1/chat/completions");
+    await user.type(screen.getByLabelText("快速智能模型接口密钥"), "sk-test-fast");
+    await user.click(screen.getByRole("button", { name: "获取快速智能模型列表" }));
     await screen.findByRole("option", { name: "gpt-fast" });
-    await user.selectOptions(screen.getByLabelText("快速AI模型名称"), "gpt-fast");
-    await user.click(screen.getByRole("button", { name: "保存快速AI" }));
+    await user.selectOptions(screen.getByLabelText("快速智能模型名称"), "gpt-fast");
+    await user.click(screen.getByRole("button", { name: "保存快速智能模型" }));
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/admin/config", expect.objectContaining({ method: "PUT" })));
     expect(fetchMock).toHaveBeenCalledWith("/api/admin/ai-models", expect.objectContaining({
@@ -544,13 +553,13 @@ describe("AdminConfigCenter user groups", () => {
 
     render(<AdminConfigCenter config={configWithSavedAiKey} view="system" onRefresh={vi.fn()} />);
 
-    expect(screen.queryByText("已配置API密钥，留空保存不变。")).toBeNull();
-    expect(screen.queryByText("保存后API密钥不会在页面回显。")).toBeNull();
-    expect((screen.getByLabelText("快速AIAPI密钥") as HTMLInputElement).value).toBe(MASKED_API_KEY);
-    expect((screen.getByLabelText("快速AI模型名称") as HTMLSelectElement).value).toBe("gpt-fast");
-    await user.click(screen.getByRole("button", { name: "获取快速AI模型列表" }));
+    expect(screen.queryByText("已配置接口密钥，留空保存不变。")).toBeNull();
+    expect(screen.queryByText("保存后接口密钥不会在页面回显。")).toBeNull();
+    expect((screen.getByLabelText("快速智能模型接口密钥") as HTMLInputElement).value).toBe(MASKED_API_KEY);
+    expect((screen.getByLabelText("快速智能模型名称") as HTMLSelectElement).value).toBe("gpt-fast");
+    await user.click(screen.getByRole("button", { name: "获取快速智能模型列表" }));
     await screen.findByRole("option", { name: "gpt-smart" });
-    expect((screen.getByLabelText("快速AI模型名称") as HTMLSelectElement).value).toBe("gpt-fast");
+    expect((screen.getByLabelText("快速智能模型名称") as HTMLSelectElement).value).toBe("gpt-fast");
 
     expect(fetchMock).toHaveBeenCalledWith("/api/admin/ai-models", expect.objectContaining({
       method: "POST",
@@ -560,7 +569,7 @@ describe("AdminConfigCenter user groups", () => {
       })
     }));
 
-    await user.click(screen.getByRole("button", { name: "保存快速AI" }));
+    await user.click(screen.getByRole("button", { name: "保存快速智能模型" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/admin/config", expect.objectContaining({ method: "PUT" })));
     const body = JSON.parse(String(fetchMock.mock.calls.at(-1)?.[1]?.body));
     const fastAiModel = body.aiModels.find((model: { id: string }) => model.id === "fast");
@@ -575,18 +584,18 @@ describe("AdminConfigCenter user groups", () => {
 
     render(<AdminConfigCenter config={config} view="system" onRefresh={vi.fn()} />);
 
-    expect(screen.queryByRole("button", { name: "应用快速AI供应商推荐值" })).toBeNull();
-    await user.selectOptions(screen.getByLabelText("快速AI供应商预设"), "deepseek");
+    expect(screen.queryByRole("button", { name: "应用快速智能模型供应商推荐值" })).toBeNull();
+    await user.selectOptions(screen.getByLabelText("快速智能模型供应商预设"), "deepseek");
 
-    expect((screen.getByLabelText("快速AI供应商") as HTMLSelectElement).value).toBe("http");
-    expect((screen.getByLabelText("快速AI接口地址") as HTMLInputElement).value).toBe("https://api.deepseek.com/v1/chat/completions");
-    expect((screen.getByLabelText("快速AI模型名称") as HTMLSelectElement).value).toBe("deepseek-chat");
-    expect(screen.getByRole("button", { name: "获取快速AI模型列表" })).not.toBeNull();
-    expect((screen.getByLabelText("快速AIAPI密钥") as HTMLInputElement).value).toBe("");
-    expect((screen.getByLabelText("快速AIAPI密钥") as HTMLInputElement).type).toBe("password");
-    expect((screen.getByLabelText("快速AI超时毫秒") as HTMLInputElement).value).toBe("8000");
+    expect((screen.getByLabelText("快速智能模型供应商") as HTMLSelectElement).value).toBe("http");
+    expect((screen.getByLabelText("快速智能模型接口地址") as HTMLInputElement).value).toBe("https://api.deepseek.com/v1/chat/completions");
+    expect((screen.getByLabelText("快速智能模型名称") as HTMLSelectElement).value).toBe("deepseek-chat");
+    expect(screen.getByRole("button", { name: "获取快速智能模型列表" })).not.toBeNull();
+    expect((screen.getByLabelText("快速智能模型接口密钥") as HTMLInputElement).value).toBe("");
+    expect((screen.getByLabelText("快速智能模型接口密钥") as HTMLInputElement).type).toBe("password");
+    expect((screen.getByLabelText("快速智能模型超时毫秒") as HTMLInputElement).value).toBe("8000");
 
-    await user.click(screen.getByRole("button", { name: "保存快速AI" }));
+    await user.click(screen.getByRole("button", { name: "保存快速智能模型" }));
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
     const body = JSON.parse(String(fetchMock.mock.calls.at(-1)?.[1]?.body));
@@ -607,8 +616,8 @@ describe("AdminConfigCenter user groups", () => {
 
     render(<AdminConfigCenter config={config} view="system" onRefresh={vi.fn()} />);
 
-    expect(screen.getByRole("heading", { name: "AI调用预设" })).not.toBeNull();
-    expect(screen.getByText("识别顺序：自定义关键词优先判断是否处理和问题类型；未命中问题类型时才调用 AI 分类。创建工单时，AI 仍会参与相似工单判重。AI 提示词只影响实际调用 AI 的场景，不会覆盖已命中的关键词规则。")).not.toBeNull();
+    expect(screen.getByRole("heading", { name: "智能调用预设" })).not.toBeNull();
+    expect(screen.getByText("识别顺序：自定义关键词优先判断是否处理和问题类型；未命中问题类型时才调用智能分类。创建工单时，智能模型仍会参与相似工单判重。智能提示词只影响实际调用智能模型的场景，不会覆盖已命中的关键词规则。")).not.toBeNull();
     expect(screen.getByText("工单分类")).not.toBeNull();
     expect(screen.getByText("相似工单判重")).not.toBeNull();
     expect(screen.getByText("超时研判")).not.toBeNull();
@@ -933,16 +942,609 @@ describe("AdminConfigCenter user groups", () => {
       />
     );
 
-    expect(screen.getAllByRole("heading", { name: "展览数据" }).length).toBeGreaterThan(0);
-    expect(screen.getByText("当前展位数据 1 条")).not.toBeNull();
+    expect(screen.getByRole("heading", { name: "展商数据看板" })).not.toBeNull();
+    expect(screen.getByText("系统展商")).not.toBeNull();
+    expect(within(screen.getByRole("table", { name: "展商数据表格" })).getByText("上海星河科技有限公司")).not.toBeNull();
 
     await user.upload(screen.getByLabelText("导入展位数据文件"), file);
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/admin/master-data", expect.objectContaining({ method: "POST" })));
-    const body = JSON.parse(String(fetchMock.mock.calls.at(-1)?.[1]?.body));
-    expect(body.dryRun).toBe(false);
-    expect(body.rows).toContainEqual(expect.objectContaining({ boothNumber: "A09", companyName: "测试公司" }));
+    const requestInit = fetchMock.mock.calls.at(-1)?.[1] as RequestInit;
+    expect(requestInit.headers).toBeUndefined();
+    const body = requestInit.body as FormData;
+    expect(typeof body.get).toBe("function");
+    const uploadedFile = body.get("file") as File;
+    expect(uploadedFile.name).toBe("booths.xlsx");
+    expect(uploadedFile.size).toBeGreaterThan(0);
+    expect(body.get("dryRun")).toBe("false");
     await waitFor(() => expect(onRefresh).toHaveBeenCalled());
+  });
+
+  it("shows imported booth records from the import response before parent refresh completes", async () => {
+    const importedBooth = {
+      boothNumber: "A09",
+      companyName: "测试公司",
+      companyShortName: "测试公司",
+      salesOwner: "赵测试",
+      builder: "李铁：13607664172",
+      location: "1A",
+      area: "9",
+      boothType: "精标"
+    };
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ ok: true, booths: [importedBooth] }), { status: 200 }));
+    const user = userEvent.setup();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const worksheet = XLSX.utils.json_to_sheet([{ boothNumber: "A09", companyName: "测试公司" }]);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Sheet1");
+    const buffer = XLSX.write(workbook, { type: "array", bookType: "xlsx" });
+    const file = new File([buffer], "booths.xlsx", { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+
+    render(
+      <AdminConfigCenter
+        config={config}
+        view="exhibition-data"
+        booths={[{
+          boothNumber: "A01",
+          companyName: "上海星河科技有限公司",
+          companyShortName: "星河科技",
+          salesOwner: "王宁",
+          builder: "搭建组"
+        }]}
+        onRefresh={vi.fn()}
+      />
+    );
+
+    await user.upload(screen.getByLabelText("导入展位数据文件"), file);
+
+    const table = screen.getByRole("table", { name: "展商数据表格" });
+    await waitFor(() => expect(within(table).getByRole("button", { name: "查看测试公司" })).not.toBeNull());
+    expect(within(table).getByText("A09")).not.toBeNull();
+    expect(within(table).getByText("赵测试")).not.toBeNull();
+    expect(within(table).queryByText("上海星河科技有限公司")).toBeNull();
+  });
+
+  it("keeps imported booth records visible when parent refresh first returns stale booth props", async () => {
+    const importedBooth = {
+      boothNumber: "A09",
+      companyName: "测试公司",
+      companyShortName: "测试公司",
+      salesOwner: "赵测试",
+      builder: "李铁：13607664172",
+      location: "1A",
+      area: "9",
+      boothType: "精标"
+    };
+    const staleBooth = {
+      boothNumber: "A01",
+      companyName: "上海星河科技有限公司",
+      companyShortName: "星河科技",
+      salesOwner: "王宁",
+      builder: "搭建组"
+    };
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ ok: true, booths: [importedBooth] }), { status: 200 }));
+    const user = userEvent.setup();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const worksheet = XLSX.utils.json_to_sheet([{ boothNumber: "A09", companyName: "测试公司" }]);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Sheet1");
+    const buffer = XLSX.write(workbook, { type: "array", bookType: "xlsx" });
+    const file = new File([buffer], "booths.xlsx", { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+
+    const { rerender } = render(
+      <AdminConfigCenter
+        config={config}
+        view="exhibition-data"
+        booths={[staleBooth]}
+        onRefresh={vi.fn()}
+      />
+    );
+
+    await user.upload(screen.getByLabelText("导入展位数据文件"), file);
+
+    const tableBeforeRefresh = screen.getByRole("table", { name: "展商数据表格" });
+    await waitFor(() => expect(within(tableBeforeRefresh).getByRole("button", { name: "查看测试公司" })).not.toBeNull());
+    rerender(
+      <AdminConfigCenter
+        config={config}
+        view="exhibition-data"
+        booths={[{ ...staleBooth }]}
+        onRefresh={vi.fn()}
+      />
+    );
+
+    const table = screen.getByRole("table", { name: "展商数据表格" });
+    await waitFor(() => expect(within(table).getByRole("button", { name: "查看测试公司" })).not.toBeNull());
+    expect(within(table).getByText("A09")).not.toBeNull();
+    expect(within(table).queryByText("上海星河科技有限公司")).toBeNull();
+  });
+
+  it("accepts refreshed booth props once they match the import response", async () => {
+    const importedBooth = {
+      boothNumber: "A09",
+      companyName: "测试公司",
+      companyShortName: "测试公司",
+      salesOwner: "赵测试",
+      builder: "李铁：13607664172",
+      location: "1A",
+      area: "9",
+      boothType: "精标"
+    };
+    const refreshedBooth = { ...importedBooth, salesOwner: "刷新销售" };
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ ok: true, booths: [importedBooth] }), { status: 200 }));
+    const user = userEvent.setup();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const worksheet = XLSX.utils.json_to_sheet([{ boothNumber: "A09", companyName: "测试公司" }]);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Sheet1");
+    const buffer = XLSX.write(workbook, { type: "array", bookType: "xlsx" });
+    const file = new File([buffer], "booths.xlsx", { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+
+    const { rerender } = render(
+      <AdminConfigCenter
+        config={config}
+        view="exhibition-data"
+        booths={[]}
+        onRefresh={vi.fn()}
+      />
+    );
+
+    await user.upload(screen.getByLabelText("导入展位数据文件"), file);
+    const tableBeforeRefresh = screen.getByRole("table", { name: "展商数据表格" });
+    await waitFor(() => expect(within(tableBeforeRefresh).getByText("赵测试")).not.toBeNull());
+
+    rerender(
+      <AdminConfigCenter
+        config={config}
+        view="exhibition-data"
+        booths={[importedBooth]}
+        onRefresh={vi.fn()}
+      />
+    );
+    rerender(
+      <AdminConfigCenter
+        config={config}
+        view="exhibition-data"
+        booths={[refreshedBooth]}
+        onRefresh={vi.fn()}
+      />
+    );
+
+    const table = screen.getByRole("table", { name: "展商数据表格" });
+    await waitFor(() => expect(within(table).getByText("刷新销售")).not.toBeNull());
+    expect(within(table).queryByText("赵测试")).toBeNull();
+  });
+
+  it("renders the approved exhibitor dashboard shell for exhibition data", () => {
+    render(
+      <AdminConfigCenter
+        config={config}
+        view="exhibition-data"
+        booths={[
+          {
+            boothNumber: "1ET06",
+            companyName: "汕头市昌隆机械科技有限公司",
+            companyShortName: "昌隆机械",
+            location: "一楼 / 1E",
+            area: "36",
+            boothType: "普通绿搭",
+            salesOwner: "孙晓晓",
+            builder: "李铁：13607664172"
+          },
+          {
+            boothNumber: "1E05",
+            companyName: "山东省聊城经济开发区齐龙精细化工厂",
+            companyShortName: "齐龙精细化工厂",
+            location: "1E",
+            area: "9",
+            boothType: "精标",
+            salesOwner: "韩世军",
+            builder: ""
+          }
+        ]}
+        onRefresh={vi.fn()}
+      />
+    );
+
+    expect(screen.getByRole("heading", { name: "展商数据看板" })).not.toBeNull();
+    expect(screen.getByLabelText("当前展览项目")).not.toBeNull();
+    ["系统展商", "已分配搭建成员", "待分配成员", "待确认导入差异"].forEach((metric) => {
+      expect(screen.getByText(metric)).not.toBeNull();
+    });
+    expect(screen.getByPlaceholderText("搜索展位、展商、销售、搭建成员")).not.toBeNull();
+    expect(screen.getByLabelText("按位置筛选")).not.toBeNull();
+    expect(screen.getByLabelText("按类型筛选")).not.toBeNull();
+    expect(screen.getByLabelText("按成员分配状态筛选")).not.toBeNull();
+    expect(screen.getByRole("button", { name: "导入历史" })).not.toBeNull();
+    expect(screen.getByRole("button", { name: "处理导入差异" })).not.toBeNull();
+    expect(screen.getByRole("button", { name: "上传项目表格" })).not.toBeNull();
+    expect(screen.getByLabelText("导入展位数据文件")).not.toBeNull();
+
+    const table = screen.getByRole("table", { name: "展商数据表格" });
+    ["展位号", "展商", "位置", "面积", "类型", "销售", "现场搭建成员", "操作"].forEach((header) => {
+      expect(within(table).getByRole("columnheader", { name: header })).not.toBeNull();
+    });
+  });
+
+  it("searches and filters the exhibitor dashboard", async () => {
+    const user = userEvent.setup();
+    render(
+      <AdminConfigCenter
+        config={config}
+        view="exhibition-data"
+        booths={[
+          {
+            boothNumber: "1ET06",
+            companyName: "汕头市昌隆机械科技有限公司",
+            companyShortName: "昌隆机械",
+            location: "一楼 / 1E",
+            area: "36",
+            boothType: "普通绿搭",
+            salesOwner: "孙晓晓",
+            builder: "李铁：13607664172"
+          },
+          {
+            boothNumber: "2D02",
+            companyName: "山西惠农生物有机肥有限公司",
+            companyShortName: "惠农生物",
+            location: "2D",
+            area: "9",
+            boothType: "普标",
+            salesOwner: "潘金生",
+            builder: ""
+          }
+        ]}
+        onRefresh={vi.fn()}
+      />
+    );
+
+    await user.type(screen.getByPlaceholderText("搜索展位、展商、销售、搭建成员"), "孙晓晓");
+
+    const table = screen.getByRole("table", { name: "展商数据表格" });
+    expect(within(table).getByText("汕头市昌隆机械科技有限公司")).not.toBeNull();
+    expect(within(table).queryByText("山西惠农生物有机肥有限公司")).toBeNull();
+
+    await user.clear(screen.getByPlaceholderText("搜索展位、展商、销售、搭建成员"));
+    await user.selectOptions(screen.getByLabelText("按成员分配状态筛选"), "unassigned");
+
+    expect(within(table).queryByText("汕头市昌隆机械科技有限公司")).toBeNull();
+    expect(within(table).getByText("山西惠农生物有机肥有限公司")).not.toBeNull();
+  });
+
+  it("filters exhibitors by a specific onsite builder member", async () => {
+    const user = userEvent.setup();
+    render(
+      <AdminConfigCenter
+        config={config}
+        view="exhibition-data"
+        booths={[
+          {
+            boothNumber: "1ET06",
+            companyName: "汕头市昌隆机械科技有限公司",
+            companyShortName: "昌隆机械",
+            location: "一楼 / 1E",
+            area: "36",
+            boothType: "普通绿搭",
+            salesOwner: "孙晓晓",
+            builder: "李铁：13607664172"
+          },
+          {
+            boothNumber: "1AT27",
+            companyName: "郑州鼎来瑞农业科技有限公司",
+            companyShortName: "鼎来瑞农业",
+            location: "一楼 / 1A",
+            area: "18",
+            boothType: "普通绿搭",
+            salesOwner: "马永波",
+            builder: "崔晓安：13803812794"
+          }
+        ]}
+        onRefresh={vi.fn()}
+      />
+    );
+
+    await user.selectOptions(screen.getByLabelText("按现场搭建成员筛选"), "崔晓安");
+
+    const table = screen.getByRole("table", { name: "展商数据表格" });
+    expect(within(table).queryByText("汕头市昌隆机械科技有限公司")).toBeNull();
+    expect(within(table).getByText("郑州鼎来瑞农业科技有限公司")).not.toBeNull();
+  });
+
+  it("renders responsive exhibitor cards with the same key actions for narrow screens", () => {
+    render(
+      <AdminConfigCenter
+        config={config}
+        view="exhibition-data"
+        booths={[{
+          boothNumber: "1ET06",
+          companyName: "汕头市昌隆机械科技有限公司",
+          companyShortName: "昌隆机械",
+          location: "一楼 / 1E",
+          area: "36",
+          boothType: "普通绿搭",
+          salesOwner: "孙晓晓",
+          builder: "李铁：13607664172"
+        }]}
+        onRefresh={vi.fn()}
+      />
+    );
+
+    const cards = screen.getByRole("list", { name: "展商数据卡片列表" });
+    const card = within(cards).getByRole("listitem", { name: "汕头市昌隆机械科技有限公司 1ET06" });
+    expect(within(card).getByText("一楼 / 1E")).not.toBeNull();
+    expect(within(card).getByText("36㎡")).not.toBeNull();
+    expect(within(card).getByText("孙晓晓")).not.toBeNull();
+    expect(within(card).getByRole("button", { name: "查看汕头市昌隆机械科技有限公司" })).not.toBeNull();
+    expect(within(card).getByRole("button", { name: "添加汕头市昌隆机械科技有限公司搭建成员" })).not.toBeNull();
+  });
+
+  it("shows bulk actions and opens the exhibitor detail drawer", async () => {
+    const user = userEvent.setup();
+    render(
+      <AdminConfigCenter
+        config={config}
+        view="exhibition-data"
+        booths={[{
+          boothNumber: "1ET06",
+          companyName: "汕头市昌隆机械科技有限公司",
+          companyShortName: "昌隆机械",
+          location: "一楼 / 1E",
+          area: "36",
+          boothType: "普通绿搭",
+          salesOwner: "孙晓晓",
+          builder: "李铁：13607664172"
+        }]}
+        onRefresh={vi.fn()}
+      />
+    );
+
+    const table = screen.getByRole("table", { name: "展商数据表格" });
+
+    await user.click(within(table).getByLabelText("选择汕头市昌隆机械科技有限公司"));
+    expect(screen.getByText("已选择 1 个展商")).not.toBeNull();
+    expect(screen.getByRole("button", { name: "批量分配搭建成员" })).not.toBeNull();
+    expect(screen.getByRole("button", { name: "批量修改类型" })).not.toBeNull();
+
+    await user.click(within(table).getByRole("button", { name: "查看汕头市昌隆机械科技有限公司" }));
+    const drawer = screen.getByRole("complementary", { name: "展商详情" });
+    expect(within(drawer).getByRole("heading", { name: "汕头市昌隆机械科技有限公司" })).not.toBeNull();
+    expect(within(drawer).getByText("展位 1ET06")).not.toBeNull();
+    expect(within(drawer).getByText("展商基础数据")).not.toBeNull();
+    expect(within(drawer).getByText("现场搭建成员")).not.toBeNull();
+    expect(within(drawer).getByText("李铁")).not.toBeNull();
+
+    await user.click(within(drawer).getByRole("button", { name: "关闭详情" }));
+    expect(screen.queryByRole("complementary", { name: "展商详情" })).toBeNull();
+  });
+
+  it("opens import history and import-diff review panels from the dashboard toolbar", async () => {
+    const user = userEvent.setup();
+    render(
+      <AdminConfigCenter
+        config={config}
+        view="exhibition-data"
+        booths={[{
+          boothNumber: "1ET06",
+          companyName: "汕头市昌隆机械科技有限公司",
+          companyShortName: "昌隆机械",
+          location: "一楼 / 1E",
+          area: "",
+          boothType: "普通绿搭",
+          salesOwner: "孙晓晓",
+          builder: "李铁：13607664172"
+        }]}
+        onRefresh={vi.fn()}
+      />
+    );
+
+    await user.click(screen.getByRole("button", { name: "导入历史" }));
+    const historyPanel = screen.getByRole("region", { name: "导入历史面板" });
+    expect(within(historyPanel).getByText("最近导入记录")).not.toBeNull();
+    expect(within(historyPanel).getByText("第23届中原农资双交会后勤表.xlsx")).not.toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "处理导入差异" }));
+    const diffDialog = screen.getByRole("dialog", { name: "导入差异数值确认" });
+    expect(within(diffDialog).getByText("导入差异数值确认")).not.toBeNull();
+    expect(within(diffDialog).getByText("这些记录缺少看板必需字段，先在这里补齐；点击应用后只更新当前看板字段。")).not.toBeNull();
+    expect(within(diffDialog).getByText("汕头市昌隆机械科技有限公司")).not.toBeNull();
+    expect(within(diffDialog).getByText("缺失面积")).not.toBeNull();
+    const applyButton = within(diffDialog).getByRole("button", { name: "应用到看板并移出待确认" }) as HTMLButtonElement;
+    expect(applyButton.disabled).toBe(true);
+    await user.type(within(diffDialog).getByLabelText("汕头市昌隆机械科技有限公司面积"), "36");
+    expect(applyButton.disabled).toBe(false);
+  });
+
+  it("opens member assignment dialogs from row, bulk bar and detail drawer actions", async () => {
+    const user = userEvent.setup();
+    render(
+      <AdminConfigCenter
+        config={config}
+        view="exhibition-data"
+        booths={[
+          {
+            boothNumber: "1ET06",
+            companyName: "汕头市昌隆机械科技有限公司",
+            companyShortName: "昌隆机械",
+            location: "一楼 / 1E",
+            area: "36",
+            boothType: "普通绿搭",
+            salesOwner: "孙晓晓",
+            builder: "李铁：13607664172"
+          },
+          {
+            boothNumber: "1E05",
+            companyName: "山东省聊城经济开发区齐龙精细化工厂",
+            companyShortName: "齐龙精细化工厂",
+            location: "1E",
+            area: "9",
+            boothType: "精标",
+            salesOwner: "韩世军",
+            builder: ""
+          }
+        ]}
+        onRefresh={vi.fn()}
+      />
+    );
+
+    const table = screen.getByRole("table", { name: "展商数据表格" });
+
+    await user.click(within(table).getByRole("button", { name: "分配山东省聊城经济开发区齐龙精细化工厂搭建成员" }));
+    let dialog = screen.getByRole("dialog", { name: "分配现场搭建成员" });
+    expect(within(dialog).getByText("山东省聊城经济开发区齐龙精细化工厂")).not.toBeNull();
+    expect(within(dialog).getByRole("button", { name: "确认分配" })).not.toBeNull();
+    await user.click(within(dialog).getByRole("button", { name: "关闭成员分配" }));
+
+    await user.click(within(table).getByLabelText("选择汕头市昌隆机械科技有限公司"));
+    await user.click(screen.getByRole("button", { name: "批量分配搭建成员" }));
+    dialog = screen.getByRole("dialog", { name: "批量分配现场搭建成员" });
+    expect(within(dialog).getByText("已选择 1 个展商")).not.toBeNull();
+    await user.click(within(dialog).getByRole("button", { name: "关闭成员分配" }));
+
+    await user.click(within(table).getByRole("button", { name: "查看汕头市昌隆机械科技有限公司" }));
+    const drawer = screen.getByRole("complementary", { name: "展商详情" });
+    await user.click(within(drawer).getByRole("button", { name: "添加现场搭建成员" }));
+    dialog = screen.getByRole("dialog", { name: "分配现场搭建成员" });
+    expect(within(dialog).getByText("汕头市昌隆机械科技有限公司")).not.toBeNull();
+  });
+
+  it("opens exhibitor type settings from the type filter controls", async () => {
+    const user = userEvent.setup();
+    render(
+      <AdminConfigCenter
+        config={config}
+        view="exhibition-data"
+        booths={[{
+          boothNumber: "1ET06",
+          companyName: "汕头市昌隆机械科技有限公司",
+          companyShortName: "昌隆机械",
+          location: "一楼 / 1E",
+          area: "36",
+          boothType: "普通绿搭",
+          salesOwner: "孙晓晓",
+          builder: "李铁：13607664172"
+        }]}
+        onRefresh={vi.fn()}
+      />
+    );
+
+    await user.click(screen.getByRole("button", { name: "类型设置" }));
+    const dialog = screen.getByRole("dialog", { name: "展商类型设置" });
+    expect(within(dialog).getByText("普通绿搭")).not.toBeNull();
+    expect(within(dialog).getByText("普标")).not.toBeNull();
+    expect(within(dialog).getByText("精标")).not.toBeNull();
+
+    await user.type(within(dialog).getByLabelText("新增类型名称"), "彩搭");
+    await user.click(within(dialog).getByRole("button", { name: "新增类型" }));
+    expect(within(dialog).getByText("彩搭")).not.toBeNull();
+  });
+
+  it("renders prototype-style member avatars and dashboard pagination footer", () => {
+    render(
+      <AdminConfigCenter
+        config={config}
+        view="exhibition-data"
+        booths={[
+          {
+            boothNumber: "1ET06",
+            companyName: "汕头市昌隆机械科技有限公司",
+            companyShortName: "昌隆机械",
+            location: "一楼 / 1E",
+            area: "36",
+            boothType: "普通绿搭",
+            salesOwner: "孙晓晓",
+            builder: "李铁：13607664172"
+          },
+          {
+            boothNumber: "1E05",
+            companyName: "山东省聊城经济开发区齐龙精细化工厂",
+            companyShortName: "齐龙精细化工厂",
+            location: "1E",
+            area: "9",
+            boothType: "精标",
+            salesOwner: "韩世军",
+            builder: ""
+          }
+        ]}
+        onRefresh={vi.fn()}
+      />
+    );
+
+    const table = screen.getByRole("table", { name: "展商数据表格" });
+    expect(within(table).getByTitle("李铁")).not.toBeNull();
+    expect(within(table).getByText("李")).not.toBeNull();
+    expect(screen.getByText("共 2 条，显示 1-2 条")).not.toBeNull();
+    expect(screen.getByRole("navigation", { name: "分页" })).not.toBeNull();
+  });
+
+  it("closes the detail drawer with Escape and restores focus to the row action", async () => {
+    const user = userEvent.setup();
+    render(
+      <AdminConfigCenter
+        config={config}
+        view="exhibition-data"
+        booths={[{
+          boothNumber: "1ET06",
+          companyName: "汕头市昌隆机械科技有限公司",
+          companyShortName: "昌隆机械",
+          location: "一楼 / 1E",
+          area: "36",
+          boothType: "普通绿搭",
+          salesOwner: "孙晓晓",
+          builder: "李铁：13607664172"
+        }]}
+        onRefresh={vi.fn()}
+      />
+    );
+
+    const table = screen.getByRole("table", { name: "展商数据表格" });
+    const viewButton = within(table).getByRole("button", { name: "查看汕头市昌隆机械科技有限公司" });
+    await user.click(viewButton);
+    const drawer = screen.getByRole("complementary", { name: "展商详情" });
+    expect(within(drawer).getByText("李铁")).not.toBeNull();
+    expect(within(drawer).getByText("136****4172")).not.toBeNull();
+
+    await user.keyboard("{Escape}");
+
+    expect(screen.queryByRole("complementary", { name: "展商详情" })).toBeNull();
+    expect(document.activeElement).toBe(viewButton);
+  });
+
+  it("shows a text notice when one booth contains multiple exhibitors", () => {
+    render(
+      <AdminConfigCenter
+        config={config}
+        view="exhibition-data"
+        booths={[
+          {
+            boothNumber: "1AT27",
+            companyName: "郑州鼎来瑞农业科技有限公司",
+            companyShortName: "鼎来瑞农业",
+            location: "一楼 / 1A",
+            area: "18",
+            boothType: "普通绿搭",
+            salesOwner: "马永波",
+            builder: "崔晓安"
+          },
+          {
+            boothNumber: "1AT27",
+            companyName: "郑州鑫利农农业科技有限公司",
+            companyShortName: "鑫利农农业",
+            location: "一楼 / 1A",
+            area: "18",
+            boothType: "普通绿搭",
+            salesOwner: "马永波",
+            builder: "崔晓安"
+          }
+        ]}
+        onRefresh={vi.fn()}
+      />
+    );
+
+    const table = screen.getByRole("table", { name: "展商数据表格" });
+    expect(within(table).getAllByText("同展位存在其他展商")).toHaveLength(2);
   });
 
   it("renders imported booth records as a visible exhibition data table", () => {
@@ -964,16 +1566,16 @@ describe("AdminConfigCenter user groups", () => {
       />
     );
 
-    const table = screen.getByRole("table", { name: "展位数据明细" });
-    ["展位", "展商", "位置", "面积", "类型", "销售", "搭建商"].forEach((header) => {
+    const table = screen.getByRole("table", { name: "展商数据表格" });
+    ["展位号", "展商", "位置", "面积", "类型", "销售", "现场搭建成员", "操作"].forEach((header) => {
       expect(within(table).getByRole("columnheader", { name: header })).not.toBeNull();
     });
-    ["1ET06", "汕头市昌隆机械科技有限公司", "一楼 1E", "36", "普通绿搭", "孙晓晓", "李铁：13607664172"].forEach((value) => {
+    ["1ET06", "汕头市昌隆机械科技有限公司", "一楼 1E", "36㎡", "普通绿搭", "孙晓晓", "李铁"].forEach((value) => {
       expect(within(table).getByText(value)).not.toBeNull();
     });
   });
 
-  it("imports titled logistics workbook sheets instead of only the first sheet", async () => {
+  it("uploads titled logistics workbook for server-side sheet inspection instead of parsing only the first sheet", async () => {
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({ ok: true }), { status: 200 }));
     const onRefresh = vi.fn();
     const user = userEvent.setup();
@@ -1013,25 +1615,14 @@ describe("AdminConfigCenter user groups", () => {
     await user.upload(screen.getByLabelText("导入展位数据文件"), file);
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/admin/master-data", expect.objectContaining({ method: "POST" })));
-    const body = JSON.parse(String(fetchMock.mock.calls.at(-1)?.[1]?.body));
-    expect(body.rows).toContainEqual(expect.objectContaining({
-      展位号: "1ET06",
-      公司名称: "汕头市昌隆机械科技有限公司",
-      业务员: "孙晓晓",
-      搭建商: "李铁：13607664172",
-      位置: "一楼 1E",
-      面积: "36",
-      类型: "普通绿搭"
-    }));
-    expect(body.rows).toContainEqual(expect.objectContaining({
-      展位号: "1E01",
-      公司名称: "安徽省安邦矿物股份有限公司",
-      业务员: "孙晓晓",
-      搭建商: "",
-      位置: "1E",
-      面积: "6",
-      类型: "精标"
-    }));
+    const requestInit = fetchMock.mock.calls.at(-1)?.[1] as RequestInit;
+    expect(requestInit.headers).toBeUndefined();
+    const body = requestInit.body as FormData;
+    expect(typeof body.get).toBe("function");
+    const uploadedFile = body.get("file") as File;
+    expect(uploadedFile.name).toBe("logistics.xlsx");
+    expect(uploadedFile.size).toBeGreaterThan(0);
+    expect(body.get("dryRun")).toBe("false");
     await waitFor(() => expect(onRefresh).toHaveBeenCalled());
   });
 

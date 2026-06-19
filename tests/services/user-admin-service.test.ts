@@ -73,7 +73,7 @@ describe("user admin service", () => {
     await expect(service.createUser({
       ...validMutation,
       phone: "12345"
-    }, actor())).rejects.toThrow(/invalid/i);
+    }, actor())).rejects.toThrow(/手机号/);
 
     expect(repo.createUser).not.toHaveBeenCalled();
   });
@@ -81,7 +81,7 @@ describe("user admin service", () => {
   it("maps duplicate phone errors to conflict errors", async () => {
     const repo = repository({
       createUser: vi.fn().mockRejectedValue(
-        new Error("Mobile phone is already assigned to another user")
+        new Error("手机号已被其他用户占用")
       )
     });
     const service = createUserAdminService(repo);
@@ -117,7 +117,7 @@ describe("user admin service", () => {
 
   it("maps missing users to not found errors", async () => {
     const repo = repository({
-      updateUser: vi.fn().mockRejectedValue(new Error("User was not found"))
+      updateUser: vi.fn().mockRejectedValue(new Error("未找到用户"))
     });
     const service = createUserAdminService(repo);
 
@@ -129,7 +129,7 @@ describe("user admin service", () => {
   it("protects the final usable administrator", async () => {
     const repo = repository({
       setUserEnabled: vi.fn().mockRejectedValue(
-        new Error("At least one usable admin account is required")
+        new Error("至少需要保留一个可用管理员账号")
       )
     });
     const service = createUserAdminService(repo);

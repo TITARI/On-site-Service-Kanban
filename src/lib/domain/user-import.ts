@@ -290,7 +290,7 @@ export function canonicalSourceHash(input: UserImportPreviewInput) {
   const sourceHash = text(input.sourceHash).toLowerCase();
   if (/^[a-f0-9]{64}$/.test(sourceHash)) return sourceHash;
   throw new Error(
-    "sourceHash must be a lowercase 64-character hexadecimal SHA-256 digest"
+    "文件指纹必须是64位小写十六进制 SHA-256 摘要"
   );
 }
 
@@ -390,8 +390,8 @@ export async function previewUserImport(
   _actor: AuthenticatedActor
 ): Promise<UserImportPreview> {
   const sourceName = text(input.sourceName);
-  if (!sourceName) throw new Error("sourceName is required");
-  if (!Array.isArray(input.rows)) throw new Error("rows must be an array");
+  if (!sourceName) throw new Error("请提供导入文件名");
+  if (!Array.isArray(input.rows)) throw new Error("导入行必须是数组");
   const sourceHash = canonicalSourceHash(input);
   const groups = (await repository.getConfig()).userGroups ?? [];
   const normalized = input.rows.map((row, index) => ({
@@ -547,30 +547,30 @@ export function assertValidUserImportDecision(
 ) {
   const decision = parseUserImportDecision(decisionInput);
   if (!row.selectable) {
-    throw new Error("Cannot save a decision for a blocked import row");
+    throw new Error("阻塞行不能保存导入处理方式");
   }
   if (!row.allowedActions.includes(decision.action)) {
-    throw new Error("Import row decision action is not allowed");
+    throw new Error("该导入行不允许使用当前处理方式");
   }
   if (
     decision.action === "skip" &&
     (decision.confirmWechatRebind || decision.confirmWecomRebind)
   ) {
-    throw new Error("Skip decisions cannot confirm identity rebinding");
+    throw new Error("跳过行不能确认身份换绑");
   }
   if (
     row.conflicts.includes("wechat-occupied") &&
     decision.action !== "skip" &&
     decision.confirmWechatRebind !== true
   ) {
-    throw new Error("WeChat rebind confirmation is required");
+    throw new Error("需要确认微信身份换绑");
   }
   if (
     row.conflicts.includes("wecom-occupied") &&
     decision.action !== "skip" &&
     decision.confirmWecomRebind !== true
   ) {
-    throw new Error("WeCom rebind confirmation is required");
+    throw new Error("需要确认企业微信身份换绑");
   }
   return decision;
 }
@@ -582,7 +582,7 @@ function isObject(value: unknown): value is Record<string, unknown> {
 export function parseUserImportDecision(input: unknown): UserImportDecision {
   if (!isObject(input)) {
     throw new UserImportValidationError(
-      "Import row decision must be an object"
+      "导入行处理方式必须是对象"
     );
   }
   const {
@@ -596,7 +596,7 @@ export function parseUserImportDecision(input: unknown): UserImportDecision {
     action !== "skip"
   ) {
     throw new UserImportValidationError(
-      "Import row decision action is not allowed"
+      "导入行处理方式不允许"
     );
   }
   if (
@@ -604,7 +604,7 @@ export function parseUserImportDecision(input: unknown): UserImportDecision {
     typeof confirmWecomRebind !== "boolean"
   ) {
     throw new UserImportValidationError(
-      "Import row decision confirmations must be boolean"
+      "导入行确认项必须为布尔值"
     );
   }
   if (
@@ -612,7 +612,7 @@ export function parseUserImportDecision(input: unknown): UserImportDecision {
     (confirmWechatRebind !== false || confirmWecomRebind !== false)
   ) {
     throw new UserImportValidationError(
-      "Skip decisions must set confirmations to false"
+      "跳过行的确认项必须关闭"
     );
   }
   return {
@@ -626,18 +626,18 @@ export function parseUserImportDecisionPatches(
   input: unknown
 ): UserImportDecisionPatch[] {
   if (!Array.isArray(input)) {
-    throw new UserImportValidationError("decisions must be an array");
+    throw new UserImportValidationError("导入行处理方式必须是数组");
   }
   return input.map((item): UserImportDecisionPatch => {
     if (!isObject(item)) {
       throw new UserImportValidationError(
-        "Import row decision patch must be an object"
+        "导入行处理方式更新必须是对象"
       );
     }
     const rowId = typeof item.rowId === "string" ? item.rowId.trim() : "";
     if (!rowId) {
       throw new UserImportValidationError(
-        "Import row decision rowId is required"
+        "缺少导入行ID"
       );
     }
     return {

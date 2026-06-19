@@ -59,7 +59,8 @@ describe("initial MariaDB schema", () => {
   });
 
   it("keeps the indexes needed for current query paths", () => {
-    expect(schema).toContain("uniq_booth_per_exhibition");
+    expect(schema).toContain("uniq_booth_exhibitor_per_exhibition");
+    expect(schema).toContain("(exhibition_id, booth_number, company_name)");
     expect(schema).toContain("idx_tickets_status_priority");
     expect(schema).toContain("uniq_inbound_external_message");
     expect(schema).toContain("idx_outbound_claim");

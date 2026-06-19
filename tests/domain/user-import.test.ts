@@ -301,15 +301,15 @@ describe("user import parsing and preview", () => {
     expect(() => assertValidUserImportDecision(
       occupiedRow,
       { action: "overwrite", confirmWechatRebind: "false", confirmWecomRebind: false } as never
-    )).toThrow(/boolean|confirmation/i);
+    )).toThrow(/布尔值|确认/i);
     expect(() => assertValidUserImportDecision(
       occupiedRow,
       { action: "add" } as never
-    )).toThrow(/boolean|decision/i);
+    )).toThrow(/布尔值|决策/i);
     expect(() => assertValidUserImportDecision(
       occupiedRow,
       { action: "skip" } as never
-    )).toThrow(/boolean|decision/i);
+    )).toThrow(/布尔值|决策/i);
     expect(() => assertValidUserImportDecision(
       occupiedRow,
       {

@@ -65,11 +65,11 @@ export function userAdminErrorResponse(error: unknown) {
   }
   if (
     error instanceof Error &&
-    /phone.*already assigned|duplicate|usable admin|business history|cannot be deleted|referenced/i.test(error.message)
+    /duplicate|手机号.*占用|手机号.*重复|可用管理员|业务历史|不能删除|被引用/i.test(error.message)
   ) {
     return NextResponse.json({ message: error.message }, { status: 409 });
   }
-  if (error instanceof Error && /not found/i.test(error.message)) {
+  if (error instanceof Error && /未找到|不存在/i.test(error.message)) {
     return NextResponse.json({ message: error.message }, { status: 404 });
   }
   return NextResponse.json(

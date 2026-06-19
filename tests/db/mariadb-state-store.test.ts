@@ -163,11 +163,18 @@ function writableState(overrides: Partial<AppState> = {}): AppState {
   };
 }
 
-function recordingConnection() {
+function recordingConnection(
+  responder: (
+    sql: string,
+    params: unknown[]
+  ) => unknown[] | undefined = () => undefined
+) {
   const calls: Array<{ sql: string; params: unknown[] }> = [];
   const connection = {
     execute: vi.fn(async (sql: string, params: unknown[] = []) => {
       calls.push({ sql, params });
+      const response = responder(sql, params);
+      if (response !== undefined) return [response];
       if (sql.trimStart().startsWith("SELECT")) return [[]];
       return [{ affectedRows: 1 }];
     })
@@ -362,6 +369,34 @@ describe("MariaDbStateStore", () => {
       boothType: "普通绿搭"
     }));
     expect(normalizedSql(boothInsert?.sql ?? "")).toContain("raw_payload = VALUES(raw_payload)");
+  });
+
+  it("uses booth number and exhibitor name as the imported booth identity", async () => {
+    const { calls, connection } = recordingConnection();
+    databaseMocks.setConnection(connection);
+
+    await new MariaDbStateStore().importBooths([
+      {
+        boothNumber: "1AT27",
+        companyName: "Dinglai Agriculture",
+        companyShortName: "Dinglai",
+        salesOwner: "Ma",
+        builder: "Cui"
+      },
+      {
+        boothNumber: "1AT27",
+        companyName: "Xinli Agriculture",
+        companyShortName: "Xinli",
+        salesOwner: "Ma",
+        builder: "Cui"
+      }
+    ]);
+
+    const boothInserts = calls.filter((call) => call.sql.includes("INSERT INTO exhibition_booths"));
+    expect(boothInserts).toHaveLength(2);
+    expect(boothInserts[0].params[0]).not.toBe(boothInserts[1].params[0]);
+    expect(boothInserts.map((call) => call.params[2])).toEqual(["1AT27", "1AT27"]);
+    expect(boothInserts.map((call) => call.params[3])).toEqual(["Dinglai Agriculture", "Xinli Agriculture"]);
   });
 
   it("persists people group ids, group snapshots, and group locks", async () => {
@@ -595,6 +630,44 @@ describe("MariaDbStateStore", () => {
       call.sql.includes("INSERT INTO roles") &&
       call.params.includes("role-builder")
     )).toBe(true);
+  });
+
+  it("synchronizes current access roles before listing users", async () => {
+    const { calls, connection } = recordingConnection((sql) => {
+      if (sql.includes("FROM user_groups") && sql.includes("ORDER BY id")) {
+        return [{
+          id: "admin",
+          name: "Administrators",
+          description: "",
+          can_claim: 0,
+          can_process: 0,
+          can_accept: 0,
+          can_admin: 1,
+          enabled: 1
+        }];
+      }
+      if (sql.includes("COUNT(*) AS total")) return [{ total: 0 }];
+      return undefined;
+    });
+    databaseMocks.setConnection(connection);
+
+    await new MariaDbStateStore().listUsers({ page: 1, pageSize: 20 });
+
+    expect(databaseMocks.withDatabaseTransaction).toHaveBeenCalledOnce();
+    const groupReadIndex = calls.findIndex((call) =>
+      call.sql.includes("FROM user_groups") &&
+      call.sql.includes("ORDER BY id")
+    );
+    const adminPermissionIndex = calls.findIndex((call) =>
+      call.sql.includes("INSERT INTO role_permissions") &&
+      call.params.includes("admin.access")
+    );
+    const listCountIndex = calls.findIndex((call) =>
+      call.sql.includes("COUNT(*) AS total")
+    );
+    expect(groupReadIndex).toBeGreaterThanOrEqual(0);
+    expect(adminPermissionIndex).toBeGreaterThan(groupReadIndex);
+    expect(listCountIndex).toBeGreaterThan(adminPermissionIndex);
   });
 
   it("synchronizes access roles while writing imported state", async () => {

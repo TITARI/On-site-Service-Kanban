@@ -180,7 +180,7 @@ describe("admin subroutes", () => {
     await renderWithSession(<AdminWorkOrderSettingsPage />);
     expect(await screen.findByRole("heading", { name: "工单设置" })).not.toBeNull();
     expect(screen.getByRole("button", { name: "保存问题类型配置" })).not.toBeNull();
-    expect(screen.queryByRole("heading", { name: "AI接口" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: "智能接口" })).toBeNull();
 
     cleanup();
     localStorage.clear();
@@ -194,7 +194,7 @@ describe("admin subroutes", () => {
     vi.unstubAllGlobals();
     await renderWithSession(<AdminSystemPage />);
     expect(await screen.findByRole("heading", { name: "系统配置" })).not.toBeNull();
-    expect(screen.getByRole("heading", { name: "AI接口" })).not.toBeNull();
+    expect(screen.getByRole("heading", { name: "智能接口" })).not.toBeNull();
     expect(screen.getByRole("heading", { name: "wxauto 桌面服务" })).not.toBeNull();
     expect(screen.getByRole("button", { name: "保存 wxauto 设置" })).not.toBeNull();
     expect(screen.getByRole("heading", { name: "关键词配置" })).not.toBeNull();
@@ -256,8 +256,8 @@ describe("admin subroutes", () => {
     render(<AdminLogsPage />);
 
     expect(await screen.findByText("后台配置登录")).not.toBeNull();
-    await user.type(screen.getByLabelText("Admin phone"), "13800138000");
-    await user.type(screen.getByLabelText("Admin password"), "new-password-123");
+    await user.type(screen.getByLabelText("管理员手机号"), "13800138000");
+    await user.type(screen.getByLabelText("管理员密码"), "new-password-123");
     await user.click(screen.getByRole("button", { name: "进入后台" }));
 
     expect(localStorage.length).toBe(0);

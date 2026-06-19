@@ -132,7 +132,7 @@ function groupOf(state: AppState, groupId: string) {
 
 function enabledGroup(state: AppState, groupId: string) {
   const group = groupOf(state, groupId);
-  if (!group?.enabled) throw new Error("User group is disabled or missing");
+  if (!group?.enabled) throw new Error("用户分组已停用或不存在");
   return group;
 }
 
@@ -349,7 +349,7 @@ function assertUsableAdminRemains(
   hadUsableAdminAccount: boolean
 ) {
   if (hadUsableAdminAccount && !hasUsableAdminAccount(state)) {
-    throw new Error("At least one usable admin account is required");
+    throw new Error("至少需要保留一个可用管理员账号");
   }
 }
 
@@ -531,7 +531,7 @@ function createPersonAndAccount(
     state.people.some((person) => person.phone === phone) ||
     state.accounts.some((account) => account.loginName === phone)
   ) {
-    throw new Error("Mobile phone is already assigned to another user");
+    throw new Error("手机号已被其他用户占用");
   }
 
   const group = enabledGroup(state, input.groupId);
@@ -638,7 +638,7 @@ export function createAccountSessionInState(
   const state = normalizeAccessState(stateInput);
   const account = state.accounts.find((item) => item.id === accountId);
   if (!account || !actorForAccount(state, account, type)) {
-    throw new Error("Account is not allowed to create this session");
+    throw new Error("当前账号无权创建该会话");
   }
   const expiresAt = normalizeStrictIsoDate(expiresAtInput, "expiresAt");
   if (Date.parse(expiresAt) <= Date.now()) {
@@ -854,7 +854,7 @@ export function bootstrapAdminInState(
   let group: UserGroup;
   if (input.group.mode === "existing") {
     const existing = groupOf(state, input.group.groupId);
-    if (!existing) throw new Error("Bootstrap admin group was not found");
+    if (!existing) throw new Error("未找到管理员初始化分组");
     existing.enabled = true;
     existing.canAdmin = true;
     group = existing;
@@ -869,7 +869,7 @@ export function bootstrapAdminInState(
     group = {
       id,
       name,
-      description: "Bootstrap administrators",
+      description: "管理员初始化分组",
       canClaim: false,
       canProcess: false,
       canAccept: false,
@@ -926,7 +926,7 @@ export function bootstrapAdminInState(
   };
 
   const actor = actorForAccount(state, account, "admin");
-  if (!actor) throw new Error("Bootstrap admin access chain is invalid");
+  if (!actor) throw new Error("管理员初始化访问链无效");
   audit(
     state,
     "admin.bootstrap",
@@ -1091,7 +1091,7 @@ export function updateUserInState(
     (item) => item.id === userId || item.personId === userId
   );
   const person = account ? personForAccount(state, account) : undefined;
-  if (!account || !person) throw new Error("User was not found");
+  if (!account || !person) throw new Error("未找到用户");
 
   const groupChanged =
     input.groupId !== undefined &&
@@ -1111,7 +1111,7 @@ export function updateUserInState(
       (item) => item.id !== account.id && item.loginName === phone
     );
     if (duplicate) {
-      throw new Error("Mobile phone is already assigned to another user");
+      throw new Error("手机号已被其他用户占用");
     }
     if (phone !== account.loginName || phone !== person.phone) {
       changes.phone = { from: person.phone, to: phone };
@@ -1203,16 +1203,16 @@ export function deleteUserInState(
     (item) => item.id === userId || item.personId === userId
   );
   const person = account ? personForAccount(state, account) : undefined;
-  if (!account || !person) throw new Error("User was not found");
+  if (!account || !person) throw new Error("未找到用户");
   if (
     hadUsableAdminAccount &&
     isUsableAdminAccount(state, account) &&
     countUsableAdminsInState(state, userId) < 1
   ) {
-    throw new Error("At least one usable admin account is required");
+    throw new Error("至少需要保留一个可用管理员账号");
   }
   if (userDeletionHistoryForAccount(state, person.id, account.id).hasHistory) {
-    throw new Error("User has business history and cannot be deleted");
+    throw new Error("用户已有业务历史，不能删除");
   }
 
   state.accounts = state.accounts.filter((item) => item.id !== account.id);
@@ -1327,7 +1327,7 @@ export function setUserPasswordInState(
   const account = state.accounts.find(
     (item) => item.id === userId || item.personId === userId
   );
-  if (!account) throw new Error("User was not found");
+  if (!account) throw new Error("未找到用户");
   if (!passwordHash.trim()) throw new Error("Password hash is required");
 
   const at = nowIso();
@@ -1403,7 +1403,7 @@ function assertExpectedChatIdentityRebind(
     expected.fromPersonId !== actual.fromPersonId ||
     expected.toPersonId !== actual.toPersonId
   ) {
-    throw new Error("Chat identity binding changed; retry confirmation");
+    throw new Error("身份绑定已变化，请重新确认");
   }
 }
 
@@ -1421,7 +1421,7 @@ export function bindChatIdentityInState(
 ) {
   const state = normalizeAccessState(stateInput);
   const user = getUserFromState(state, input.userId);
-  if (!user) throw new Error("User was not found");
+  if (!user) throw new Error("未找到用户");
   const at = nowIso();
   let identity: ChatIdentity | undefined = state.chatIdentities.find((item) => (
     item.platform === input.platform &&
@@ -1429,7 +1429,7 @@ export function bindChatIdentityInState(
   ));
   if (!identity) {
     if (input.expectedRebind) {
-      throw new Error("Chat identity binding changed; retry confirmation");
+      throw new Error("身份绑定已变化，请重新确认");
     }
     identity = {
       id: stableId("chat", `${input.platform}:${input.externalUserId}`),
@@ -1443,7 +1443,7 @@ export function bindChatIdentityInState(
     state.chatIdentities.push(identity);
   }
   if (identity.isTemporary) {
-    throw new Error("Temporary identities cannot be bound by administrators");
+    throw new Error("临时身份不能由管理员绑定");
   }
 
   const previousPersonId = identity.personId;
@@ -1452,7 +1452,7 @@ export function bindChatIdentityInState(
     previousPersonId !== user.personId
   ) {
     if (!input.confirmedRebind) {
-      throw new Error("Chat identity is assigned to another user");
+      throw new Error("该身份已绑定给其他用户");
     }
     assertExpectedChatIdentityRebind(input.expectedRebind, {
       platform: identity.platform,
@@ -1518,7 +1518,7 @@ export function unbindChatIdentityInState(
 ) {
   const state = normalizeAccessState(stateInput);
   const user = getUserFromState(state, input.userId);
-  if (!user) throw new Error("User was not found");
+  if (!user) throw new Error("未找到用户");
   const at = nowIso();
   const identityIds: string[] = [];
   for (const identity of state.chatIdentities) {

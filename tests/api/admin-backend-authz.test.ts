@@ -54,9 +54,9 @@ function jsonRequest(url: string, method: "POST" | "PUT", body: unknown) {
   });
 }
 
-async function expectUnauthenticated(response: Response) {
+async function expectNotLoggedIn(response: Response) {
   expect(response.status).toBe(401);
-  await expect(response.json()).resolves.toMatchObject({ message: "Unauthenticated" });
+  await expect(response.json()).resolves.toMatchObject({ message: "未登录" });
 }
 
 beforeEach(() => {
@@ -105,7 +105,7 @@ describe("admin backend route authorization", () => {
   it("rejects unauthenticated admin bootstrap payload requests before loading backend data", async () => {
     const route = await import("@/app/api/bootstrap/route");
 
-    await expectUnauthenticated(await route.GET(new Request("http://localhost/api/bootstrap")));
+    await expectNotLoggedIn(await route.GET(new Request("http://localhost/api/bootstrap")));
 
     expect(store.runAutoAcceptance).not.toHaveBeenCalled();
     expect(store.adminBootstrap).not.toHaveBeenCalled();
@@ -151,8 +151,8 @@ describe("admin backend route authorization", () => {
   it("rejects unauthenticated admin config reads and writes", async () => {
     const route = await import("@/app/api/admin/config/route");
 
-    await expectUnauthenticated(await route.GET(new Request("http://localhost/api/admin/config")));
-    await expectUnauthenticated(await route.PUT(jsonRequest("http://localhost/api/admin/config", "PUT", { config: defaultConfig() })));
+    await expectNotLoggedIn(await route.GET(new Request("http://localhost/api/admin/config")));
+    await expectNotLoggedIn(await route.PUT(jsonRequest("http://localhost/api/admin/config", "PUT", { config: defaultConfig() })));
 
     expect(store.getConfig).not.toHaveBeenCalled();
     expect(store.saveConfig).not.toHaveBeenCalled();
@@ -161,8 +161,8 @@ describe("admin backend route authorization", () => {
   it("rejects unauthenticated keyword reads and writes", async () => {
     const route = await import("@/app/api/admin/keywords/route");
 
-    await expectUnauthenticated(await route.GET(new Request("http://localhost/api/admin/keywords")));
-    await expectUnauthenticated(await route.PUT(jsonRequest("http://localhost/api/admin/keywords", "PUT", { keywordGroups: [] })));
+    await expectNotLoggedIn(await route.GET(new Request("http://localhost/api/admin/keywords")));
+    await expectNotLoggedIn(await route.PUT(jsonRequest("http://localhost/api/admin/keywords", "PUT", { keywordGroups: [] })));
 
     expect(store.getConfig).not.toHaveBeenCalled();
     expect(store.saveKeywordGroups).not.toHaveBeenCalled();
@@ -171,7 +171,7 @@ describe("admin backend route authorization", () => {
   it("rejects unauthenticated master-data imports", async () => {
     const route = await import("@/app/api/admin/master-data/route");
 
-    await expectUnauthenticated(await route.POST(jsonRequest("http://localhost/api/admin/master-data", "POST", { rows: [] })));
+    await expectNotLoggedIn(await route.POST(jsonRequest("http://localhost/api/admin/master-data", "POST", { rows: [] })));
 
     expect(store.importBooths).not.toHaveBeenCalled();
   });
@@ -179,7 +179,7 @@ describe("admin backend route authorization", () => {
   it("rejects unauthenticated WeChat order log reads", async () => {
     const route = await import("@/app/api/admin/wechat-order-logs/route");
 
-    await expectUnauthenticated(await route.GET(new Request("http://localhost/api/admin/wechat-order-logs?limit=20")));
+    await expectNotLoggedIn(await route.GET(new Request("http://localhost/api/admin/wechat-order-logs?limit=20")));
 
     expect(store.listWechatOrderLogs).not.toHaveBeenCalled();
   });
@@ -187,19 +187,19 @@ describe("admin backend route authorization", () => {
   it("rejects unauthenticated wxauto MCP reads and writes before saving config", async () => {
     const route = await import("@/app/api/admin/wxauto-mcp/route");
 
-    await expectUnauthenticated(await route.GET(new Request("http://localhost/api/admin/wxauto-mcp")));
-    await expectUnauthenticated(await route.PUT(jsonRequest("http://localhost/api/admin/wxauto-mcp", "PUT", { enabled: true })));
+    await expectNotLoggedIn(await route.GET(new Request("http://localhost/api/admin/wxauto-mcp")));
+    await expectNotLoggedIn(await route.PUT(jsonRequest("http://localhost/api/admin/wxauto-mcp", "PUT", { enabled: true })));
 
     expect(store.getConfig).not.toHaveBeenCalled();
     expect(store.saveConfig).not.toHaveBeenCalled();
   });
 
-  it("rejects unauthenticated AI model discovery before reading config or calling providers", async () => {
+  it("rejects unauthenticated intelligent model discovery before reading config or calling providers", async () => {
     const route = await import("@/app/api/admin/ai-models/route");
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
 
-    await expectUnauthenticated(await route.POST(jsonRequest("http://localhost/api/admin/ai-models", "POST", {
+    await expectNotLoggedIn(await route.POST(jsonRequest("http://localhost/api/admin/ai-models", "POST", {
       endpoint: "https://api.example.com/v1/chat/completions",
       modelId: "fast"
     })));

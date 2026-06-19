@@ -86,7 +86,7 @@ describe("admin ai models route", () => {
     const response = await POST(request({ endpoint: "https://api.example.com/v1/chat/completions" }));
 
     expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toMatchObject({ message: "请填写接口地址和API密钥" });
+    await expect(response.json()).resolves.toMatchObject({ message: "请填写接口地址和接口密钥" });
   });
 
   it("uses a saved api key when a configured model id is provided", async () => {

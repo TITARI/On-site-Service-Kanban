@@ -9,8 +9,8 @@ const config: AppConfig = {
     { id: "network", name: "Network", urgencyMinutes: 20, priorityWeight: 25, assignmentGroup: "Builder", enabled: true }
   ],
   aiModels: [
-    { id: "fast", label: "Fast AI", provider: "mock", modelName: "fast-local", timeoutMs: 800, enabled: true },
-    { id: "smart", label: "Smart AI", provider: "mock", modelName: "smart-local", timeoutMs: 3000, enabled: true }
+    { id: "fast", label: "快速智能模型", provider: "mock", modelName: "fast-local", timeoutMs: 800, enabled: true },
+    { id: "smart", label: "高阶智能模型", provider: "mock", modelName: "smart-local", timeoutMs: 3000, enabled: true }
   ],
   messageIntegrations: [
     { id: "wechat", channel: "wechat", label: "WeChat MCP", enabled: false, mcpServerName: "wechat-mcp", endpoint: "/api/integrations/wechat/messages", secretEnv: "WECHAT_MCP_SECRET", autoCreateTickets: false },
@@ -84,8 +84,8 @@ describe("admin page login", () => {
     render(<AdminPage />);
 
     expect(await screen.findByText("后台配置登录")).not.toBeNull();
-    expect(screen.getByLabelText("Admin phone")).not.toBeNull();
-    expect(screen.getByLabelText("Admin password")).not.toBeNull();
+    expect(screen.getByLabelText("管理员手机号")).not.toBeNull();
+    expect(screen.getByLabelText("管理员密码")).not.toBeNull();
     expect(screen.queryByText("配置总览")).toBeNull();
     expect(fetchMock).toHaveBeenCalledWith("/api/auth/session?type=admin", { cache: "no-store" });
   });
@@ -97,8 +97,8 @@ describe("admin page login", () => {
     render(<AdminPage />);
 
     expect(await screen.findByText("首个管理员初始化")).not.toBeNull();
-    expect(screen.getByLabelText("Bootstrap legacy password")).not.toBeNull();
-    expect(screen.getByLabelText("Bootstrap admin password")).not.toBeNull();
+    expect(screen.getByLabelText("初始化旧口令")).not.toBeNull();
+    expect(screen.getByLabelText("管理员密码")).not.toBeNull();
     expect(screen.queryByText("配置总览")).toBeNull();
   });
 
@@ -109,8 +109,8 @@ describe("admin page login", () => {
 
     render(<AdminPage />);
 
-    await user.type(await screen.findByLabelText("Admin phone"), "13800138000");
-    await user.type(screen.getByLabelText("Admin password"), "new-password-123");
+    await user.type(await screen.findByLabelText("管理员手机号"), "13800138000");
+    await user.type(screen.getByLabelText("管理员密码"), "new-password-123");
     await user.click(screen.getByRole("button", { name: "进入后台" }));
 
     expect(await screen.findByRole("heading", { name: "后台工作台" })).not.toBeNull();
@@ -130,11 +130,11 @@ describe("admin page login", () => {
 
     render(<AdminPage />);
 
-    await user.type(await screen.findByLabelText("Bootstrap legacy password"), "admin123");
-    await user.type(screen.getByLabelText("Bootstrap admin name"), "Admin");
-    await user.type(screen.getByLabelText("Bootstrap admin phone"), "13800138000");
-    await user.type(screen.getByLabelText("Bootstrap admin password"), "new-password-123");
-    await user.type(screen.getByLabelText("Bootstrap admin group"), "Administrators");
+    await user.type(await screen.findByLabelText("初始化旧口令"), "admin123");
+    await user.type(screen.getByLabelText("管理员姓名"), "Admin");
+    await user.type(screen.getByLabelText("管理员手机号"), "13800138000");
+    await user.type(screen.getByLabelText("管理员密码"), "new-password-123");
+    expect((screen.getByLabelText("管理员分组") as HTMLInputElement).value).toBe("管理员");
     await user.click(screen.getByRole("button", { name: "创建管理员" }));
 
     expect(await screen.findByRole("heading", { name: "后台工作台" })).not.toBeNull();

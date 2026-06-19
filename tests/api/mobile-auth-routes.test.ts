@@ -172,7 +172,7 @@ describe("mobile auth routes", () => {
 
   it("returns 403 when the repository rejects mobile session creation", async () => {
     const route = await import("@/app/api/auth/mobile/login/route");
-    store.createAccountSession.mockRejectedValue(new Error("Account is not allowed to create this session"));
+    store.createAccountSession.mockRejectedValue(new Error("当前账号无权创建该会话"));
 
     const response = await route.POST(jsonRequest(
       "https://board.example/api/auth/mobile/login",
@@ -181,7 +181,7 @@ describe("mobile auth routes", () => {
     const payload = await response.json();
 
     expect(response.status).toBe(403);
-    expect(payload.message).toBe("Account is not allowed to create this session");
+    expect(payload.message).toBe("当前账号无权创建该会话");
     expect(response.headers.get("set-cookie")).toBeNull();
   });
 

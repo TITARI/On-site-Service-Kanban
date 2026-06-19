@@ -415,7 +415,7 @@ describe("chat identity access-state mutations", () => {
       platform: "wechat",
       externalUserId: "wxid-occupied",
       confirmedRebind: false
-    }, adminActor())).toThrow(/assigned to another user/i);
+    }, adminActor())).toThrow(/身份已绑定给其他用户/);
 
     expect(state.chatIdentities?.find((item) => item.id === "identity-current")).toMatchObject({
       personId: "person-1",
@@ -517,7 +517,7 @@ describe("chat identity access-state mutations", () => {
         fromPersonId: "person-other",
         toPersonId: "person-1"
       }
-    }, adminActor())).toThrow(/changed.*retry|retry.*changed/i);
+    }, adminActor())).toThrow(/身份绑定已变化|重新确认/);
 
     expect(state.chatIdentities?.find((item) => item.id === "identity-current")).toMatchObject({
       personId: "person-1"

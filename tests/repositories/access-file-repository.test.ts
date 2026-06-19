@@ -997,7 +997,7 @@ describe("file access repository", () => {
 
     await expect(
       repository.setUserEnabled(user.personId, true, adminActor())
-    ).rejects.toThrow(/group.*disabled|missing/i);
+    ).rejects.toThrow(/用户分组.*(停用|不存在)/);
     expect(store.snapshot().people?.find(
       (person) => person.id === user.personId
     )?.enabled).toBe(false);
@@ -1233,7 +1233,7 @@ describe("file access repository", () => {
 
     await expect(
       repository.deleteUser(user.personId, adminActor())
-    ).rejects.toThrow(/business history|cannot be deleted/i);
+    ).rejects.toThrow(/业务历史|不能删除/);
     await expect(repository.getUser(user.personId)).resolves.toBeDefined();
   });
 
@@ -1278,10 +1278,10 @@ describe("file access repository", () => {
 
     await expect(
       repository.setUserEnabled(admin.personId, false, admin)
-    ).rejects.toThrow("At least one usable admin account is required");
+    ).rejects.toThrow("至少需要保留一个可用管理员账号");
     await expect(
       repository.deleteUser(admin.personId, admin)
-    ).rejects.toThrow("At least one usable admin account is required");
+    ).rejects.toThrow("至少需要保留一个可用管理员账号");
 
     await expect(repository.getUser(admin.personId)).resolves.toMatchObject({
       enabled: true,
@@ -1383,7 +1383,7 @@ describe("file access repository", () => {
           ? { ...group, canAdmin: false }
           : group
       ))
-    })).rejects.toThrow("At least one usable admin account is required");
+    })).rejects.toThrow("至少需要保留一个可用管理员账号");
 
     expect(store.snapshot().config.userGroups?.find((group) => group.id === "admin")?.canAdmin).toBe(true);
   });
@@ -1401,10 +1401,10 @@ describe("file access repository", () => {
 
     await expect(
       repository.setUserEnabled(admin.personId, false, admin)
-    ).rejects.toThrow("At least one usable admin account is required");
+    ).rejects.toThrow("至少需要保留一个可用管理员账号");
     await expect(
       repository.deleteUser(admin.personId, admin)
-    ).rejects.toThrow("At least one usable admin account is required");
+    ).rejects.toThrow("至少需要保留一个可用管理员账号");
 
     const snapshot = store.snapshot();
     expect(snapshot.people?.find(
@@ -1507,7 +1507,7 @@ describe("file access repository", () => {
     });
     await expect(
       repository.deleteUser(user.personId, adminActor())
-    ).rejects.toThrow(/business history|cannot be deleted/i);
+    ).rejects.toThrow(/业务历史|不能删除/);
   });
 
   it("keeps auto acceptance and an interleaved access mutation atomic", async () => {

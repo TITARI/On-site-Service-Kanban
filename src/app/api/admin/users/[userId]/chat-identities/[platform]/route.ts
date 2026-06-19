@@ -17,14 +17,30 @@ type RouteContext = {
 
 function platformFrom(value: string): MessageChannel {
   if (value === "wechat" || value === "wecom") return value;
-  throw new ChatIdentityValidationError("Unsupported chat platform");
+  throw new ChatIdentityValidationError("不支持的消息平台");
+}
+
+function chatIdentityMessage(error: Error) {
+  if (/身份绑定.*重新确认|确认令牌已不匹配/i.test(error.message)) {
+    return "身份绑定已变化，请重新确认";
+  }
+  if (/临时身份/.test(error.message)) {
+    return "临时身份不能由管理员绑定";
+  }
+  if (/身份.*其他用户/.test(error.message)) {
+    return "该身份已绑定给其他用户";
+  }
+  if (/未找到.*(用户|消息身份)|用户.*不存在|消息身份.*不存在/.test(error.message)) {
+    return "未找到用户或消息身份";
+  }
+  return error.message;
 }
 
 function chatIdentityErrorResponse(error: unknown) {
   if (error instanceof ChatIdentityConflictError) {
     return NextResponse.json({
       code: error.code,
-      message: error.message,
+      message: chatIdentityMessage(error),
       confirmationToken: error.confirmationToken,
       currentOwner: error.currentOwner
     }, { status: 409 });
@@ -32,26 +48,26 @@ function chatIdentityErrorResponse(error: unknown) {
   if (error instanceof ChatIdentityTemporaryError) {
     return NextResponse.json({
       code: error.code,
-      message: error.message
+      message: chatIdentityMessage(error)
     }, { status: 409 });
   }
   if (error instanceof ChatIdentityNotFoundError) {
     return NextResponse.json({
       code: error.code,
-      message: error.message
+      message: chatIdentityMessage(error)
     }, { status: 404 });
   }
   if (
     error instanceof Error &&
-    /chat identity binding changed.*retry confirmation/i.test(error.message)
+    /身份绑定.*重新确认|确认令牌已不匹配/i.test(error.message)
   ) {
     return NextResponse.json({
       code: "IDENTITY_REBIND_STALE",
-      message: error.message
+      message: chatIdentityMessage(error)
     }, { status: 409 });
   }
   if (error instanceof ChatIdentityValidationError) {
-    return badRequest(error.message);
+    return badRequest(chatIdentityMessage(error));
   }
   return NextResponse.json(
     { message: errorMessage(error) },

@@ -16,11 +16,10 @@ import {
   UsersRound,
   type LucideIcon
 } from "lucide-react";
-import * as XLSX from "xlsx";
 import { AdminUsersPanel } from "@/components/admin-users-panel";
+import { ExhibitionDataPanel } from "@/components/exhibition-data-panel";
 import { AI_PROVIDER_PRESETS, aiPromptDefaultsOf, aiPromptTemplatesOf, copyAiPromptTemplate, providerPresetFor } from "@/lib/domain/ai-config";
 import { keywordRuleSetsOf, normalizeKeywordGroups } from "@/lib/domain/keyword-config";
-import { extractMasterDataRowsFromWorkbookSheets } from "@/lib/domain/master-data";
 import type { AiPromptDefaults, AiPromptScenario, AiPromptTemplate, AiProviderPresetId, BoothRecord, ChatIdentity, Conversation, InboundMessageRecord, KeywordGroup, KeywordRuleSet, KeywordTerm, OutboundMessage, PendingWorkOrderSession, Person, WxautoMcpConfig } from "@/lib/domain/types";
 import type { TicketSummary } from "@/lib/domain/ticket-summary";
 import { messageIntegrationsOf, userGroupsOf, type AppConfig } from "@/lib/seed";
@@ -183,7 +182,7 @@ const QUICK_CONFIG_LINKS: Array<{ label: string; href: string; icon: LucideIcon 
   { label: "用户分组", href: "/admin/work-order-settings#admin-groups", icon: Layers },
   { label: "问题类型", href: "/admin/work-order-settings#admin-issues", icon: ClipboardList },
   { label: "关键词规则", href: "/admin/system#admin-keywords", icon: Sparkles },
-  { label: "AI 接口", href: "/admin/system#admin-ai", icon: Bot }
+  { label: "智能接口", href: "/admin/system#admin-ai", icon: Bot }
 ];
 
 function adminViewLabel(view: AdminView) {
@@ -195,7 +194,7 @@ function adminViewDescription(view: AdminView) {
   if (view === "users") return "维护后台用户、移动端人员账号、分组权限和登录凭据。";
   if (view === "work-order-settings") return "维护用户分组、问题类型和工单识别规则。";
   if (view === "exhibition-data") return "查看展位主数据状态并承接导入校验。";
-  if (view === "system") return "维护 AI 接口、微信/企微 MCP 和系统级配置。";
+  if (view === "system") return "维护智能接口、微信/企微 MCP 和系统级配置。";
   return "集中查看今日状态、待处理风险和常用后台入口。";
 }
 
@@ -227,11 +226,6 @@ function shortDateTime(value: string) {
   return `${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")} ${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
 }
 
-function displayText(value?: string) {
-  const text = value?.trim();
-  return text || "—";
-}
-
 function isOpenTicket(ticket: TicketSummary) {
   return ticket.status !== "已关闭";
 }
@@ -243,6 +237,26 @@ function isPendingTicket(ticket: TicketSummary) {
 function metricPercent(part: number, total: number) {
   if (total <= 0) return 0;
   return Math.round((part / total) * 100);
+}
+
+function boothSnapshot(booth: BoothRecord) {
+  return [
+    booth.boothNumber,
+    booth.companyName,
+    booth.companyShortName,
+    booth.salesOwner,
+    booth.builder,
+    booth.location,
+    booth.area,
+    booth.boothType
+  ].map((value) => value?.trim() ?? "").join("\u0001");
+}
+
+function sameBoothRecords(left: BoothRecord[], right: BoothRecord[]) {
+  if (left.length !== right.length) return false;
+  const leftSnapshot = left.map(boothSnapshot).sort();
+  const rightSnapshot = right.map(boothSnapshot).sort();
+  return leftSnapshot.every((value, index) => value === rightSnapshot[index]);
 }
 
 function actionBadgeText(action: string) {
@@ -261,6 +275,14 @@ function channelLabel(channel: string) {
 
 function actionLabel(action: string) {
   return actionBadgeText(action);
+}
+
+function logStatusLabel(status: string) {
+  if (status === "processed") return "已处理";
+  if (status === "ignored") return "已忽略";
+  if (status === "failed") return "失败";
+  if (status === "pending") return "待处理";
+  return status;
 }
 
 function pendingFieldsText(session: PendingWorkOrderSession) {
@@ -293,7 +315,7 @@ function AdminSidebar({
         <span className="admin-brand-mark" aria-hidden="true"><ShieldCheck size={18} /></span>
         <div>
           <strong>主场看板</strong>
-          <small>PC 后台管理</small>
+          <small>电脑端后台管理</small>
         </div>
       </div>
       <nav className="admin-side-nav" aria-label="后台主导航">
@@ -324,7 +346,7 @@ function AdminSidebar({
       </nav>
       <div className="admin-side-status">
         <strong>系统在线</strong>
-        <span>{messageIntegrationsEnabled} 个消息接入，{aiEnabled} 个 AI 模型启用</span>
+        <span>{messageIntegrationsEnabled} 个消息接入，{aiEnabled} 个智能模型启用</span>
       </div>
     </aside>
   );
@@ -580,6 +602,8 @@ export function AdminConfigCenter({
   const [aiModelNameDrafts, setAiModelNameDrafts] = useState<Partial<Record<"fast" | "smart", string>>>({});
   const [aiModelLists, setAiModelLists] = useState<Partial<Record<"fast" | "smart", AiModelListState>>>({});
   const [wxautoMcpState, setWxautoMcpState] = useState<WxautoMcpAdminState>(() => wxautoMcpStateFromConfig(config));
+  const [displayedBooths, setDisplayedBooths] = useState<BoothRecord[]>(booths);
+  const [pendingImportedBooths, setPendingImportedBooths] = useState<BoothRecord[] | null>(null);
   const groups = config.userGroups?.length ? config.userGroups : userGroupsOf(config);
   const messageIntegrations = messageIntegrationsOf(config);
   const wxautoMcp = wxautoMcpState;
@@ -609,6 +633,17 @@ export function AdminConfigCenter({
     }));
   const showAll = view === "all";
   const activeStatusId = statusQueue[0]?.id;
+
+  useEffect(() => {
+    if (!pendingImportedBooths) {
+      setDisplayedBooths((current) => sameBoothRecords(current, booths) ? current : booths);
+      return;
+    }
+    if (sameBoothRecords(booths, pendingImportedBooths)) {
+      setPendingImportedBooths(null);
+      setDisplayedBooths(booths);
+    }
+  }, [booths, pendingImportedBooths]);
 
   useEffect(() => {
     if (!activeStatusId) return;
@@ -691,30 +726,24 @@ export function AdminConfigCenter({
     }
   }
 
-  async function importFile(file: File) {
+  async function importFile(file: File, sheetNames?: string[]) {
     setIsImporting(true);
     setStatus("正在导入");
     try {
-      const buffer = await file.arrayBuffer();
-      const workbook = XLSX.read(buffer);
-      const sheetRows = workbook.SheetNames.map((sheetName) => ({
-        sheetName,
-        rows: XLSX.utils.sheet_to_json<unknown[]>(
-          workbook.Sheets[sheetName],
-          { header: 1, defval: "", blankrows: false }
-        )
-      }));
-      if (sheetRows.length === 0) throw new Error("表格为空");
-      const extractedRows = extractMasterDataRowsFromWorkbookSheets(sheetRows);
-      const rows = extractedRows.length > 0
-        ? extractedRows
-        : XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]]);
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("dryRun", "false");
+      if (sheetNames) formData.append("sheetNames", JSON.stringify(sheetNames));
       const response = await fetch("/api/admin/master-data", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ rows, dryRun: false })
+        body: formData
       });
       if (!response.ok) throw new Error("主数据导入失败");
+      const payload = await response.json() as { booths?: BoothRecord[] };
+      if (payload.booths) {
+        setPendingImportedBooths(payload.booths);
+        setDisplayedBooths(payload.booths);
+      }
       setStatus("导入完成");
       onRefresh();
     } catch (error) {
@@ -934,7 +963,7 @@ export function AdminConfigCenter({
     const modelName = String(formData.get("modelName") ?? "").trim();
     const apiKey = apiKeyValue(formData);
     if (!modelName || !Number.isFinite(timeoutMs) || timeoutMs <= 0) {
-      setStatus("请检查AI模型名称和超时时间");
+      setStatus("请检查智能模型名称和超时时间");
       return;
     }
     const nextAiModels = config.aiModels.map((model) => {
@@ -951,7 +980,7 @@ export function AdminConfigCenter({
         enabled: formData.get("enabled") === "on"
       } : persistedModel;
     });
-    void saveConfig({ ...config, aiModels: nextAiModels }, "AI接口已更新", `ai-${modelId}`);
+    void saveConfig({ ...config, aiModels: nextAiModels }, "智能接口已更新", `ai-${modelId}`);
   }
 
   function selectedAiProviderPresetId(model: AppConfig["aiModels"][number]) {
@@ -964,6 +993,13 @@ export function AdminConfigCenter({
 
   function selectedAiModelName(model: AppConfig["aiModels"][number], presetModelName?: string) {
     return aiModelNameDrafts[model.id] ?? model.modelName ?? presetModelName;
+  }
+
+  function aiModelControlLabel(modelLabel: string, suffix: string) {
+    if (modelLabel.endsWith("模型") && suffix.startsWith("模型")) {
+      return `${modelLabel}${suffix.slice("模型".length)}`;
+    }
+    return `${modelLabel}${suffix}`;
   }
 
   function fillAiProviderPresetFields(form: HTMLFormElement, presetId: string, modelId: "fast" | "smart") {
@@ -999,7 +1035,7 @@ export function AdminConfigCenter({
     const currentModelName = textValue(formData, "modelName");
     const savedApiKeyAvailable = Boolean(config.aiModels.find((model) => model.id === modelId)?.apiKeyConfigured);
     if (!endpoint || (!apiKey && !savedApiKeyAvailable)) {
-      setStatus("请先填写AI接口地址和API密钥，或保存已配置密钥后再获取模型列表");
+      setStatus("请先填写智能接口地址和接口密钥，或保存已配置密钥后再获取模型列表");
       return;
     }
     setAiModelLists((current) => ({ ...current, [modelId]: { models: current[modelId]?.models ?? [], loading: true } }));
@@ -1015,7 +1051,7 @@ export function AdminConfigCenter({
       if (models.length === 0) throw new Error("未获取到可用模型");
       setAiModelLists((current) => ({ ...current, [modelId]: { models, loading: false } }));
       setAiModelNameDrafts((current) => ({ ...current, [modelId]: models.includes(currentModelName) ? currentModelName : models[0] }));
-      setStatus("AI模型列表已更新");
+      setStatus("智能模型列表已更新");
     } catch (error) {
       const message = error instanceof Error ? error.message : "模型列表获取失败";
       setAiModelLists((current) => ({ ...current, [modelId]: { models: current[modelId]?.models ?? [], loading: false, error: message } }));
@@ -1032,7 +1068,7 @@ export function AdminConfigCenter({
     saveAiPromptConfig(
       [...aiPromptTemplates, copied],
       { ...aiPromptDefaults, [template.scenario]: copied.id },
-      "AI提示词预设已复制",
+      "智能提示词预设已复制",
       `ai-prompt-${template.scenario}`
     );
   }
@@ -1041,7 +1077,7 @@ export function AdminConfigCenter({
     saveAiPromptConfig(
       aiPromptTemplates,
       { ...aiPromptDefaults, [template.scenario]: template.id },
-      "AI默认提示词已更新",
+      "智能默认提示词已更新",
       `ai-prompt-${template.scenario}`
     );
   }
@@ -1055,7 +1091,7 @@ export function AdminConfigCenter({
       aiPromptDefaults[template.scenario] === template.id
         ? { ...aiPromptDefaults, [template.scenario]: builtInDefault }
         : aiPromptDefaults,
-      "AI提示词模板已删除",
+      "智能提示词模板已删除",
       `ai-prompt-${template.scenario}`
     );
   }
@@ -1065,7 +1101,7 @@ export function AdminConfigCenter({
     const name = textValue(formData, "promptName");
     const systemPrompt = textValue(formData, "systemPrompt");
     if (!name || !systemPrompt) {
-      setStatus("请填写AI提示词名称和系统提示词");
+      setStatus("请填写智能提示词名称和系统提示词");
       return;
     }
     const nextTemplates = aiPromptTemplates.map((item) => item.id === template.id ? {
@@ -1079,7 +1115,7 @@ export function AdminConfigCenter({
     saveAiPromptConfig(
       nextTemplates,
       setDefault ? { ...aiPromptDefaults, [template.scenario]: template.id } : aiPromptDefaults,
-      setDefault ? "AI默认提示词已更新" : "AI提示词模板已保存",
+      setDefault ? "智能默认提示词已更新" : "智能提示词模板已保存",
       `ai-prompt-${template.scenario}`
     );
   }
@@ -1128,7 +1164,7 @@ export function AdminConfigCenter({
       {view === "workbench" && (
         <AdminWorkbench
           tickets={tickets}
-          booths={booths}
+          booths={displayedBooths}
           recentLogs={recentLogs}
           failedOutboundMessages={failedOutboundMessages}
           messageRecords={messageRecords}
@@ -1165,7 +1201,7 @@ export function AdminConfigCenter({
                 <strong>{actionLabel(log.action)}</strong>
                 <p>{log.summary}</p>
                 <small>{log.ticketId ?? "未关联"}</small>
-                <em>{log.status}</em>
+                <em>{logStatusLabel(log.status)}</em>
               </article>
             ))}
             {recentLogs.length === 0 && <p className="admin-empty-note">暂无微信下单日志</p>}
@@ -1443,7 +1479,7 @@ export function AdminConfigCenter({
         </div>
       )}
       {(showAll || view === "system") && <div className="admin-card config-list" id="admin-ai">
-        <h3>AI接口</h3>
+        <h3>智能接口</h3>
         {config.aiModels.map((item) => {
           const selectedPreset = providerPresetFor(selectedAiProviderPresetId(item));
           const presetHasDefaults = selectedPreset.id !== "custom";
@@ -1471,7 +1507,7 @@ export function AdminConfigCenter({
                   <span>{item.label}供应商</span>
                   <select name="provider" defaultValue={presetHasDefaults ? "http" : item.provider} aria-label={`${item.label}供应商`}>
                     <option value="mock">本地模拟</option>
-                    <option value="http">HTTP接口</option>
+                    <option value="http">网络接口</option>
                   </select>
                 </label>
                 <label>
@@ -1479,16 +1515,16 @@ export function AdminConfigCenter({
                   <input name="endpoint" defaultValue={presetHasDefaults ? selectedPreset.endpoint ?? "" : item.endpoint ?? ""} placeholder="https://api.openai.com/v1/chat/completions" aria-label={`${item.label}接口地址`} />
                 </label>
                 <label>
-                  <span>{item.label}模型名称</span>
-                  <select name="modelName" value={modelName} aria-label={`${item.label}模型名称`} onChange={(event) => changeAiModelName(event, item.id)}>
+                  <span>{aiModelControlLabel(item.label, "模型名称")}</span>
+                  <select name="modelName" value={modelName} aria-label={aiModelControlLabel(item.label, "模型名称")} onChange={(event) => changeAiModelName(event, item.id)}>
                     {modelOptions.map((option) => (
                       <option key={option} value={option}>{option}</option>
                     ))}
                   </select>
                 </label>
                 <label>
-                  <span>{item.label}API密钥</span>
-                  <input name="apiKey" type="password" defaultValue={item.apiKeyConfigured ? MASKED_API_KEY : ""} placeholder="输入API密钥" aria-label={`${item.label}API密钥`} autoComplete="off" onFocus={(event) => {
+                  <span>{item.label}接口密钥</span>
+                  <input name="apiKey" type="password" defaultValue={item.apiKeyConfigured ? MASKED_API_KEY : ""} placeholder="输入接口密钥" aria-label={`${item.label}接口密钥`} autoComplete="off" onFocus={(event) => {
                     if (event.currentTarget.value === MASKED_API_KEY) event.currentTarget.select();
                   }} />
                 </label>
@@ -1500,16 +1536,16 @@ export function AdminConfigCenter({
               <p className="config-lock-note">{selectedPreset.helper}</p>
               {modelList?.error && <p className="config-lock-note">{modelList.error}</p>}
               <label className="check-row"><input name="enabled" type="checkbox" defaultChecked={item.enabled} />{item.label}启用</label>
-              <button aria-label={`获取${item.label}模型列表`} className="secondary-button" type="button" onClick={(event) => loadAiModelList(event, item.id)} disabled={modelList?.loading}>{modelList?.loading ? "获取中" : "获取模型列表"}</button>
+              <button aria-label={`获取${aiModelControlLabel(item.label, "模型列表")}`} className="secondary-button" type="button" onClick={(event) => loadAiModelList(event, item.id)} disabled={modelList?.loading}>{modelList?.loading ? "获取中" : "获取模型列表"}</button>
               <button aria-label={`保存${item.label}`} className="secondary-button" type="submit" disabled={savingConfigId === `ai-${item.id}`}>保存{item.label}</button>
             </form>
           );
         })}
       </div>}
       {(showAll || view === "system") && <div className="admin-card config-list" id="admin-ai-prompts">
-        <h3>AI调用预设</h3>
+        <h3>智能调用预设</h3>
         <p className="config-lock-note">内置预设只读；复制后会生成自定义模板，可编辑并设为当前默认。</p>
-        <p className="config-lock-note">识别顺序：自定义关键词优先判断是否处理和问题类型；未命中问题类型时才调用 AI 分类。创建工单时，AI 仍会参与相似工单判重。AI 提示词只影响实际调用 AI 的场景，不会覆盖已命中的关键词规则。</p>
+        <p className="config-lock-note">识别顺序：自定义关键词优先判断是否处理和问题类型；未命中问题类型时才调用智能分类。创建工单时，智能模型仍会参与相似工单判重。智能提示词只影响实际调用智能模型的场景，不会覆盖已命中的关键词规则。</p>
         <div className="ai-prompt-scenario-list">
           {AI_PROMPT_SCENARIOS.map((scenario) => {
             const templates = aiPromptTemplates.filter((template) => template.scenario === scenario.id);
@@ -1604,7 +1640,7 @@ export function AdminConfigCenter({
         <form className="config-list-form" onSubmit={saveWxautoMcp}>
           <article className="config-edit-card" key={`${wxautoMcp.enabled}-${wxautoMcp.autoCreateTickets}-${wxautoMcp.accessToken ?? wxautoMcp.tokenPreview ?? ""}`}>
             <strong className="config-edit-title">内置标准 MCP 服务</strong>
-            <p className="config-lock-note">打开后台后，看板会自动准备 wxauto MCP 服务。桌面 App 只需要填写服务地址和访问令牌，不再需要配置微信 MCP 服务器名、接收地址或密钥环境变量。</p>
+            <p className="config-lock-note">打开后台后，看板会自动准备 wxauto MCP 服务。桌面应用只需要填写服务地址和访问令牌，不再需要配置微信 MCP 服务器名、接收地址或密钥环境变量。</p>
             <div className="config-edit-grid">
               <label>
                 <span>MCP 服务地址</span>
@@ -1619,7 +1655,7 @@ export function AdminConfigCenter({
               <label className="check-row"><input name="wxautoMcp-enabled" type="checkbox" defaultChecked={wxautoMcp.enabled} />启用 wxauto 桌面服务</label>
               <label className="check-row"><input name="wxautoMcp-autoCreateTickets" type="checkbox" defaultChecked={wxautoMcp.autoCreateTickets} />自动建单</label>
             </div>
-            <p className="config-lock-note">当前令牌：{wxautoMcp.tokenPreview ?? (wxautoMcp.accessToken ? "已设置" : "未设置")}。桌面 App 填写看板地址加 <code>/api/mcp</code>，访问令牌填写上方令牌。</p>
+            <p className="config-lock-note">当前令牌：{wxautoMcp.tokenPreview ?? (wxautoMcp.accessToken ? "已设置" : "未设置")}。桌面应用填写看板地址加 <code>/api/mcp</code>，访问令牌填写上方令牌。</p>
           </article>
           <div className="config-action-row">
             <button className="secondary-button" type="submit" disabled={savingConfigId === "wxauto-mcp"}>保存 wxauto 设置</button>
@@ -1670,51 +1706,9 @@ export function AdminConfigCenter({
           <button className="secondary-button" type="submit" disabled={savingConfigId === "keywords"}>保存关键词配置</button>
         </form>
       </div>}
-      {(showAll || view === "exhibition-data") && <div className="admin-card config-list" id="admin-master-data">
-        <h3>展览数据</h3>
-        <div className="admin-data-placeholder">
-          <strong>当前展位数据 {booths.length} 条</strong>
-          <p>上传展位主数据表格，系统仅保留展位、展商、位置、面积、类型、销售、搭建商。</p>
-        </div>
-        {booths.length > 0 && (
-          <div className="booth-data-table" role="table" aria-label="展位数据明细">
-            <div className="booth-data-row booth-data-head" role="row">
-              <span role="columnheader">展位</span>
-              <span role="columnheader">展商</span>
-              <span role="columnheader">位置</span>
-              <span role="columnheader">面积</span>
-              <span role="columnheader">类型</span>
-              <span role="columnheader">销售</span>
-              <span role="columnheader">搭建商</span>
-            </div>
-            {booths.map((booth) => (
-              <div className="booth-data-row" role="row" key={`${booth.boothNumber}-${booth.companyName}`}>
-                <strong role="cell">{booth.boothNumber}</strong>
-                <span role="cell">{booth.companyName}</span>
-                <span role="cell">{displayText(booth.location)}</span>
-                <span role="cell">{displayText(booth.area)}</span>
-                <span role="cell">{displayText(booth.boothType)}</span>
-                <span role="cell">{displayText(booth.salesOwner)}</span>
-                <span role="cell">{displayText(booth.builder)}</span>
-              </div>
-            ))}
-          </div>
-        )}
-        <label className="file-import">
-          <span>导入展位数据文件</span>
-          <input
-            aria-label="导入展位数据文件"
-            type="file"
-            accept=".xlsx,.xls,.csv"
-            disabled={isImporting}
-            onChange={(event) => {
-              const file = event.currentTarget.files?.[0];
-              if (file) void importFile(file);
-              event.currentTarget.value = "";
-            }}
-          />
-        </label>
-      </div>}
+      {(showAll || view === "exhibition-data") && (
+        <ExhibitionDataPanel booths={displayedBooths} isImporting={isImporting} onImportFile={importFile} />
+      )}
         </div>
       </div>
     </section>

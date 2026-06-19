@@ -86,5 +86,8 @@ export const mockAiProvider: AiProvider = {
       reason: highPressure ? "用户表达客户持续催促，建议加急处理。" : "信息不足，需要补充后再处理。",
       latencyMs: model.id === "smart" ? 480 : 180
     };
+  },
+  async mapExhibitorFields() {
+    return { mappings: [] };
   }
 };

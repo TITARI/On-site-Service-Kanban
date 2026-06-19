@@ -193,8 +193,8 @@ export function defaultConfig(): AppConfig {
       { id: "service", name: "综合服务", urgencyMinutes: 45, priorityWeight: 10, assignmentGroup: "客服组", enabled: true }
     ],
     aiModels: [
-      { id: "fast", label: "快速AI", provider: "mock", modelName: "fast-local", timeoutMs: 800, enabled: true },
-      { id: "smart", label: "高智商AI", provider: "mock", modelName: "smart-local", timeoutMs: 3000, enabled: true }
+      { id: "fast", label: "快速智能模型", provider: "mock", modelName: "fast-local", timeoutMs: 800, enabled: true },
+      { id: "smart", label: "高阶智能模型", provider: "mock", modelName: "smart-local", timeoutMs: 3000, enabled: true }
     ],
     messageIntegrations: defaultMessageIntegrations(),
     wxautoMcp: defaultWxautoMcpConfig(),

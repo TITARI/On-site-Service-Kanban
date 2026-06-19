@@ -91,7 +91,7 @@ function pageFetchForTicketMutation(mutationPath: string) {
       return new Response(JSON.stringify({ ticket }), { status: 200 });
     }
     if (url === mutationPath) {
-      return new Response(JSON.stringify({ message: "Unauthenticated" }), { status: 401 });
+      return new Response(JSON.stringify({ message: "未登录" }), { status: 401 });
     }
     return new Response(null, { status: 404 });
   });
@@ -477,7 +477,7 @@ describe("TicketDetail", () => {
         return new Response(JSON.stringify({ user: builderUser }), { status: 200 });
       }
       if (url === "/api/bootstrap?scope=mobile") {
-        return new Response(JSON.stringify({ message: "Unauthenticated" }), { status: 401 });
+        return new Response(JSON.stringify({ message: "未登录" }), { status: 401 });
       }
       if (url === "/api/bootstrap?scope=login") {
         return new Response(JSON.stringify({

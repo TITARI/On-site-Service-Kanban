@@ -279,7 +279,7 @@ describe("bootstrap route", () => {
     const payload = await response.json();
 
     expect(response.status).toBe(401);
-    expect(payload).toEqual({ message: "Unauthenticated" });
+    expect(payload).toEqual({ message: "未登录" });
     expect(fallbackStore.mobileBootstrap).not.toHaveBeenCalled();
   });
 

@@ -177,7 +177,7 @@ describe("admin users routes", () => {
 
   it("maps duplicate phone conflicts to 409", async () => {
     store.createUser.mockRejectedValue(
-      new Error("Mobile phone is already assigned to another user")
+      new Error("手机号已被其他用户占用")
     );
     const route = await import("@/app/api/admin/users/route");
 
@@ -243,7 +243,7 @@ describe("admin users routes", () => {
     const disableRoute = await import("@/app/api/admin/users/[userId]/disable/route");
     const params = Promise.resolve({ userId: "person-1" });
 
-    store.updateUser.mockRejectedValueOnce(new Error("User was not found"));
+    store.updateUser.mockRejectedValueOnce(new Error("未找到用户"));
     const missing = await detailRoute.PATCH(request(
       "https://board.example/api/admin/users/person-1",
       "PATCH",
@@ -251,7 +251,7 @@ describe("admin users routes", () => {
     ), { params });
 
     store.setUserEnabled.mockRejectedValueOnce(
-      new Error("At least one usable admin account is required")
+      new Error("至少需要保留一个可用管理员账号")
     );
     const lastAdmin = await disableRoute.POST(request(
       "https://board.example/api/admin/users/person-1/disable",
@@ -260,7 +260,7 @@ describe("admin users routes", () => {
     ), { params });
 
     store.deleteUser.mockRejectedValueOnce(
-      new Error("User cannot be deleted because business history exists")
+      new Error("用户已有业务历史，不能删除")
     );
     const history = await detailRoute.DELETE(request(
       "https://board.example/api/admin/users/person-1",

@@ -1,6 +1,6 @@
 import { decideDeduplication } from "../domain/deduplication";
-import type { AiDecision, AiModelConfig, Ticket } from "../domain/types";
-import type { AiProvider } from "./types";
+import type { AiDecision, AiModelConfig, ImportSystemField, Ticket } from "../domain/types";
+import type { AiProvider, ExhibitorFieldMappingContext, ExhibitorFieldMappingDecision } from "./types";
 
 type ChatCompletionResponse = {
   choices?: Array<{ message?: { content?: string } }>;
@@ -44,7 +44,7 @@ function pressureLevel(value: unknown) {
 }
 
 async function callChatJson(model: AiModelConfig, system: string, payload: Record<string, unknown>) {
-  if (!model.endpoint) throw new Error("AI接口地址未配置");
+  if (!model.endpoint) throw new Error("智能接口地址未配置");
   const startedAt = Date.now();
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), model.timeoutMs);
@@ -66,7 +66,7 @@ async function callChatJson(model: AiModelConfig, system: string, payload: Recor
         response_format: { type: "json_object" }
       })
     });
-    if (!response.ok) throw new Error(`AI接口异常：${response.status}`);
+    if (!response.ok) throw new Error(`智能接口异常：${response.status}`);
     const data = await response.json() as ChatCompletionResponse;
     return { json: parseJsonContent(responseContent(data)), latencyMs: Date.now() - startedAt };
   } finally {
@@ -181,8 +181,38 @@ export const httpAiProvider: AiProvider = {
       action,
       matchedTicketId: typeof result.json.matchedTicketId === "string" ? result.json.matchedTicketId : undefined,
       replyText: typeof result.json.replyText === "string" ? result.json.replyText : "收到，我来帮您跟进处理进度。",
-      reason: typeof result.json.reason === "string" ? result.json.reason : "AI客服研判未返回明确原因",
+      reason: typeof result.json.reason === "string" ? result.json.reason : "智能客服研判未返回明确原因",
       latencyMs: result.latencyMs
+    };
+  },
+  async mapExhibitorFields(model, context: ExhibitorFieldMappingContext, systemPrompt): Promise<ExhibitorFieldMappingDecision> {
+    const result = await callChatJson(
+      model,
+      systemPrompt ??
+      "你是展商导入表格字段映射助手。只允许根据表头、样例值和工作表名输出 JSON，不要编造不存在的列。输出格式：{\"mappings\":[{\"field\":\"boothNumber|companyName|floor|hall|area|areaSpecification|exhibitorType|salesOwner|builder\",\"columnIndex\":0,\"confidence\":0.0,\"reason\":\"简短理由\"}]}。只为无法通过规则可靠识别的字段给建议；如果无法判断就返回空数组。",
+      context
+    );
+    const validFields = new Set<ImportSystemField>([
+      "boothNumber",
+      "companyName",
+      "floor",
+      "hall",
+      "area",
+      "areaSpecification",
+      "exhibitorType",
+      "salesOwner",
+      "builder"
+    ]);
+    const mappings = Array.isArray(result.json.mappings) ? result.json.mappings : [];
+    return {
+      mappings: mappings.flatMap((mapping) => {
+        const field = typeof mapping?.field === "string" && validFields.has(mapping.field as ImportSystemField) ? mapping.field as ImportSystemField : undefined;
+        const columnIndex = Number(mapping?.columnIndex);
+        const confidence = clampConfidence(mapping?.confidence, 0);
+        const reason = typeof mapping?.reason === "string" ? mapping.reason : "";
+        if (!field || !Number.isInteger(columnIndex) || columnIndex < 0 || !reason) return [];
+        return [{ field, columnIndex, confidence, reason }];
+      })
     };
   }
 };

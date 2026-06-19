@@ -4,7 +4,7 @@ import type { AiModelConfig, Ticket } from "@/lib/domain/types";
 
 const httpFastModel: AiModelConfig = {
   id: "fast",
-  label: "快速AI",
+  label: "快速智能模型",
   provider: "http",
   endpoint: "https://ai.example/v1/chat/completions",
   apiKeyEnv: "OPENAI_API_KEY",
@@ -16,7 +16,7 @@ const httpFastModel: AiModelConfig = {
 const httpSmartModel: AiModelConfig = {
   ...httpFastModel,
   id: "smart",
-  label: "高智商AI",
+  label: "高阶智能模型",
   modelName: "gpt-smart"
 };
 

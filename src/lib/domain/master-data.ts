@@ -27,6 +27,16 @@ function uniqueJoined(values: string[]) {
   return [...new Set(values.map(text).filter(Boolean))].join(" / ");
 }
 
+function exhibitorRecordKey(record: Pick<BoothRecord, "boothNumber" | "companyName">) {
+  return `${record.boothNumber.trim()}::${record.companyName.trim()}`;
+}
+
+function sortBoothRecords(a: BoothRecord, b: BoothRecord) {
+  const boothOrder = a.boothNumber.localeCompare(b.boothNumber, "zh-CN", { numeric: true });
+  if (boothOrder !== 0) return boothOrder;
+  return a.companyName.localeCompare(b.companyName, "zh-CN", { numeric: true });
+}
+
 const TARGET_SHEET_NAMES = [
   "普通绿色搭建汇总",
   "标展楣牌"
@@ -145,7 +155,7 @@ export function extractMasterDataRowsFromWorkbookSheets(
 
 export function parseMasterDataRows(rows: RawRow[]): MasterDataImportResult {
   const errors: Array<{ row: number; message: string }> = [];
-  const rowsByBooth = new Map<string, Array<BoothRecord & { rowNumber: number }>>();
+  const rowsByExhibitor = new Map<string, Array<BoothRecord & { rowNumber: number }>>();
 
   rows.forEach((row, index) => {
     const rowNumber = index + 2;
@@ -162,8 +172,7 @@ export function parseMasterDataRows(rows: RawRow[]): MasterDataImportResult {
     if (!companyName) errors.push({ row: rowNumber, message: "公司名称不能为空" });
 
     if (boothNumber && companyName) {
-      const boothRows = rowsByBooth.get(boothNumber) ?? [];
-      boothRows.push({
+      const record = {
         boothNumber,
         companyName,
         companyShortName,
@@ -173,12 +182,15 @@ export function parseMasterDataRows(rows: RawRow[]): MasterDataImportResult {
         area,
         boothType,
         rowNumber
-      });
-      rowsByBooth.set(boothNumber, boothRows);
+      };
+      const key = exhibitorRecordKey(record);
+      const exhibitorRows = rowsByExhibitor.get(key) ?? [];
+      exhibitorRows.push(record);
+      rowsByExhibitor.set(key, exhibitorRows);
     }
   });
 
-  const records = [...rowsByBooth.values()].map((boothRows) => ({
+  const records = [...rowsByExhibitor.values()].map((boothRows) => ({
     boothNumber: boothRows[0].boothNumber,
     companyName: uniqueJoined(boothRows.map((row) => row.companyName)),
     companyShortName: uniqueJoined(boothRows.map((row) => row.companyShortName || row.companyName)),
@@ -199,13 +211,13 @@ export function parseMasterDataRows(rows: RawRow[]): MasterDataImportResult {
     if (record.area) next.area = record.area;
     if (record.boothType) next.boothType = record.boothType;
     return next;
-  }).sort((a, b) => a.boothNumber.localeCompare(b.boothNumber, "zh-CN", { numeric: true }));
+  }).sort(sortBoothRecords);
 
   return { records, errors };
 }
 
 export function upsertBoothRecords(existing: BoothRecord[], incoming: BoothRecord[]) {
-  const byBooth = new Map(existing.map((record) => [record.boothNumber, record]));
-  incoming.forEach((record) => byBooth.set(record.boothNumber, record));
-  return Array.from(byBooth.values()).sort((a, b) => a.boothNumber.localeCompare(b.boothNumber, "zh-CN", { numeric: true }));
+  const byExhibitor = new Map(existing.map((record) => [exhibitorRecordKey(record), record]));
+  incoming.forEach((record) => byExhibitor.set(exhibitorRecordKey(record), record));
+  return Array.from(byExhibitor.values()).sort(sortBoothRecords);
 }

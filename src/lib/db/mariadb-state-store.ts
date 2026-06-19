@@ -803,6 +803,17 @@ async function writeImportedAccessAccounts(
   }
 }
 
+let accessRoleReadSync: Promise<void> | undefined;
+
+async function syncAccessRolesFromCurrentGroups() {
+  accessRoleReadSync ??= withDatabaseTransaction(async (connection) => {
+    await syncDatabaseAccessRoles(connection, await readAccessGroups(connection));
+  }).finally(() => {
+    accessRoleReadSync = undefined;
+  });
+  await accessRoleReadSync;
+}
+
 function hydrateRuntimePeopleGroups(state: AppState) {
   const groups = state.config.userGroups ?? [];
   for (const person of state.people ?? []) {
@@ -967,7 +978,7 @@ async function writeBooths(connection: DatabaseConnection, booths: BoothRecord[]
         contact_name, contact_phone, raw_payload, enabled, created_at, updated_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
-        stableId("booth", booth.boothNumber),
+        stableId("booth", `${booth.boothNumber}::${booth.companyName}`),
         CURRENT_EXHIBITION_ID,
         booth.boothNumber,
         booth.companyName,
@@ -1902,7 +1913,7 @@ async function upsertBoothRecords(connection: DatabaseConnection, booths: BoothR
         enabled = true,
         updated_at = VALUES(updated_at)`,
       [
-        stableId("booth", booth.boothNumber),
+        stableId("booth", `${booth.boothNumber}::${booth.companyName}`),
         CURRENT_EXHIBITION_ID,
         booth.boothNumber,
         booth.companyName,
@@ -2388,10 +2399,12 @@ export class MariaDbStateStore {
   }
 
   async listUsers(query: UserQuery) {
+    await syncAccessRolesFromCurrentGroups();
     return await listAccessUsers(getDatabasePool(), query);
   }
 
   async getUser(userId: string) {
+    await syncAccessRolesFromCurrentGroups();
     return await readAccessUser(getDatabasePool(), userId);
   }
 

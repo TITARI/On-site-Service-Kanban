@@ -18,7 +18,7 @@ const ADMIN_SESSION_DAYS = 1;
 const ADMIN_FAILURE_LOCK_THRESHOLD = 5;
 const ADMIN_LOCKOUT_MINUTES = 15;
 const DEFAULT_ADMIN_BOOTSTRAP_PASSWORD = "admin123";
-const GENERIC_ADMIN_PASSWORD_ERROR = "Invalid phone or password";
+const GENERIC_ADMIN_PASSWORD_ERROR = "手机号或密码不正确";
 
 export class AuthError extends Error {
   constructor(
@@ -33,7 +33,7 @@ export class AuthError extends Error {
 export function normalizePhone(phone: string) {
   const normalized = String(phone ?? "").replace(/\D/g, "");
   if (!/^1[3-9]\d{9}$/.test(normalized)) {
-    throw new AuthError(400, "Mobile phone must contain 11 valid digits");
+    throw new AuthError(400, "手机号需为11位有效号码");
   }
   return normalized;
 }
@@ -41,24 +41,36 @@ export function normalizePhone(phone: string) {
 function domainAuthError(error: unknown): AuthError | undefined {
   if (!(error instanceof Error)) return undefined;
   const message = error.message;
-  if (/disabled|not allowed|access chain/i.test(message)) {
-    return new AuthError(403, message);
+  const localizedMessage = localizedDomainAuthMessage(message);
+  if (/disabled|not allowed|access chain|已停用|无权|权限链/i.test(message)) {
+    return new AuthError(403, localizedMessage);
   }
-  if (/group|phone|name|required|valid/i.test(message)) {
-    return new AuthError(400, message);
+  if (/group|phone|name|required|valid|分组|手机号|姓名|密码|有效/i.test(message)) {
+    return new AuthError(400, localizedMessage);
   }
   return undefined;
 }
 
+function localizedDomainAuthMessage(message: string) {
+  if (/mobile phone.*11 valid digits/i.test(message)) return "手机号需为11位有效号码";
+  if (/user name is required/i.test(message)) return "请填写姓名";
+  if (/password.*required/i.test(message)) return "请填写密码";
+  if (/user group.*disabled|user group.*missing/i.test(message)) return "用户分组已停用或不存在";
+  if (/not allowed|access chain.*disabled/i.test(message)) return "当前账号无权创建该会话";
+  if (/无权|权限链/.test(message)) return "当前账号无权创建该会话";
+  if (/已停用/.test(message)) return message;
+  return message;
+}
+
 function normalizeName(name: string) {
   const normalized = String(name ?? "").replace(/\s+/g, " ").trim();
-  if (!normalized) throw new AuthError(400, "User name is required");
+  if (!normalized) throw new AuthError(400, "请填写姓名");
   return normalized;
 }
 
 function normalizePassword(password: string) {
   const normalized = String(password ?? "");
-  if (!normalized) throw new AuthError(400, "Password is required");
+  if (!normalized) throw new AuthError(400, "请填写密码");
   return normalized;
 }
 
@@ -97,7 +109,7 @@ export async function mobileLogin(
   const config = await repository.getConfig();
   const group = (config.userGroups ?? []).find((item) => item.id === groupId);
   if (!group?.enabled) {
-    throw new AuthError(400, "User group is disabled or missing");
+    throw new AuthError(400, "用户分组已停用或不存在");
   }
 
   let actor: AuthenticatedActor;
@@ -120,12 +132,12 @@ export async function bootstrapFirstAdmin(
 ): Promise<{ actor: AuthenticatedActor; token: string; expiresAt: Date }> {
   const status = await repository.bootstrapStatus();
   if (!status.required) {
-    throw new AuthError(403, "Admin bootstrap has already completed");
+    throw new AuthError(403, "管理员初始化已完成");
   }
 
   const legacyPassword = String(input.legacyPassword ?? "");
   if (legacyPassword !== adminBootstrapPassword(env)) {
-    throw new AuthError(401, "Invalid bootstrap password");
+    throw new AuthError(401, "初始化口令不正确");
   }
 
   const token = createSessionToken();
@@ -211,18 +223,18 @@ export async function resolveRequestActor(
     : maybeRequiredPermission;
 
   const token = requestSessionToken(request, type);
-  if (!token) throw new AuthError(401, "Unauthenticated");
+  if (!token) throw new AuthError(401, "未登录");
 
   const resolution = await repository.resolveAccountSession(
     sessionTokenHash(token),
     type
   );
-  if (!resolution) throw new AuthError(401, "Unauthenticated");
+  if (!resolution) throw new AuthError(401, "未登录");
   if (
     requiredPermission &&
     !resolution.actor.permissions.includes(requiredPermission)
   ) {
-    throw new AuthError(403, "Forbidden");
+    throw new AuthError(403, "没有访问权限");
   }
   return resolution.actor;
 }
@@ -235,7 +247,7 @@ export function authErrorResponse(error: unknown) {
     };
   }
   return {
-    message: "Authentication failed",
+    message: "认证失败",
     status: 500
   };
 }

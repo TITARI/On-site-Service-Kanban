@@ -30,12 +30,13 @@ describe("ai config helpers", () => {
     const templates = aiPromptTemplatesOf({});
     const defaults = aiPromptDefaultsOf({});
 
-    expect(templates).toHaveLength(4);
-    expect(templates.map((template) => template.scenario)).toEqual(["classify", "dedupe", "escalation", "customer-service"]);
+    expect(templates).toHaveLength(5);
+    expect(templates.map((template) => template.scenario)).toEqual(["classify", "dedupe", "escalation", "customer-service", "exhibitor-import"]);
     expect(defaults.classify).toBe("builtin-classify-standard");
     expect(defaults.dedupe).toBe("builtin-dedupe-standard");
     expect(defaults.escalation).toBe("builtin-escalation-standard");
     expect(defaults["customer-service"]).toBe("builtin-customer-service-standard");
+    expect(defaults["exhibitor-import"]).toBe("builtin-exhibitor-import-standard");
   });
 
   it("selects a configured custom default template for a scenario", () => {

@@ -66,8 +66,8 @@ export function validateConfig(config: AppConfig) {
   };
   const enabledIssueTypes = normalizedConfig.issueTypes.filter((item) => item.enabled && item.name !== "自动" && item.id !== "auto");
   if (enabledIssueTypes.length < 1) throw new Error("至少需要配置1个非自动问题类型");
-  if (!normalizedConfig.aiModels.some((model) => model.id === "fast" && model.enabled)) throw new Error("快速AI未启用");
-  if (!normalizedConfig.aiModels.some((model) => model.id === "smart" && model.enabled)) throw new Error("高智商AI未启用");
+  if (!normalizedConfig.aiModels.some((model) => model.id === "fast" && model.enabled)) throw new Error("快速智能模型未启用");
+  if (!normalizedConfig.aiModels.some((model) => model.id === "smart" && model.enabled)) throw new Error("高阶智能模型未启用");
   const enabledGroups = normalizedConfig.userGroups?.filter((group) => group.enabled) ?? [];
   if (enabledGroups.length < 1) throw new Error("至少需要配置1个用户分组");
   if (!enabledGroups.some((group) => group.canAccept)) throw new Error("至少需要1个可验收分组");

@@ -113,6 +113,19 @@ function groupIdForPerson(person, groups) {
   return null;
 }
 
+function accountForPerson(person, accounts = []) {
+  return accounts.find((account) => account.personId === person.id) ?? {
+    id: `account-${person.id}`,
+    personId: person.id,
+    loginName: person.phone,
+    enabled: person.enabled,
+    authVersion: 1,
+    lastLoginAt: undefined,
+    createdAt: person.createdAt,
+    updatedAt: person.updatedAt
+  };
+}
+
 function normalizeKeywordGroups(keywordGroups = []) {
   return keywordGroups.map((group) => ({
     id: group.id,
@@ -365,7 +378,7 @@ export async function importState(connection, state, sourceName) {
         contact_name, contact_phone, raw_payload, enabled, created_at, updated_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
-        stableId("booth", booth.boothNumber),
+        stableId("booth", `${booth.boothNumber}::${booth.companyName}`),
         "current",
         booth.boothNumber,
         booth.companyName,
@@ -410,28 +423,81 @@ export async function importState(connection, state, sourceName) {
 
   for (const person of state.people ?? []) {
     const groupId = groupIdForPerson(person, userGroups);
-    const accountId = `account-${person.id}`;
+    const account = accountForPerson(person, state.accounts ?? []);
     await execute(
       connection,
       `INSERT INTO accounts (
         id, person_id, login_name, enabled, auth_version, last_login_at, created_at, updated_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       [
-        accountId,
-        person.id,
-        person.phone,
-        person.enabled,
-        1,
-        null,
-        dateOrNow(person.createdAt, now),
-        dateOrNow(person.updatedAt, now)
+        account.id,
+        account.personId,
+        account.loginName,
+        account.enabled,
+        account.authVersion ?? 1,
+        account.lastLoginAt ? dateOrNow(account.lastLoginAt, now) : null,
+        dateOrNow(account.createdAt ?? person.createdAt, now),
+        dateOrNow(account.updatedAt ?? person.updatedAt, now)
       ]
     );
     if (!groupId) continue;
     await execute(
       connection,
       "INSERT INTO account_roles (account_id, role_id, created_at) VALUES (?, ?, ?)",
-      [accountId, roleIdForGroup(groupId), now]
+      [account.id, roleIdForGroup(groupId), now]
+    );
+  }
+
+  for (const credential of state.accountCredentials ?? []) {
+    await execute(
+      connection,
+      `INSERT INTO account_credentials (
+        account_id, password_hash, password_changed_at, must_change_password, failed_attempts, locked_until
+      ) VALUES (?, ?, ?, ?, ?, ?)`,
+      [
+        credential.accountId,
+        credential.passwordHash,
+        dateOrNow(credential.passwordChangedAt, now),
+        Boolean(credential.mustChangePassword),
+        credential.failedAttempts ?? 0,
+        credential.lockedUntil ? dateOrNow(credential.lockedUntil, now) : null
+      ]
+    );
+  }
+
+  for (const session of state.accountSessions ?? []) {
+    await execute(
+      connection,
+      `INSERT INTO account_sessions (
+        id, account_id, session_type, token_hash, auth_version, expires_at, last_seen_at, revoked_at, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        session.id,
+        session.accountId,
+        session.sessionType,
+        session.tokenHash,
+        session.authVersion ?? 1,
+        dateOrNow(session.expiresAt, now),
+        dateOrNow(session.lastSeenAt, now),
+        session.revokedAt ? dateOrNow(session.revokedAt, now) : null,
+        dateOrNow(session.createdAt, now)
+      ]
+    );
+  }
+
+  if (state.authBootstrap?.completedAt || state.authBootstrap?.completedByAccountId) {
+    await execute(
+      connection,
+      `UPDATE auth_bootstrap_state
+       SET completed_at = ?, completed_by_account_id = ?
+       WHERE id = ?`,
+      [
+        state.authBootstrap.completedAt
+          ? dateOrNow(state.authBootstrap.completedAt, now)
+          : null,
+        state.authBootstrap.completedByAccountId ?? null,
+        "admin"
+      ]
     );
   }
 

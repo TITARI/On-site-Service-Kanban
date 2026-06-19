@@ -293,7 +293,7 @@ async function readEnabledGroup(
      LIMIT 1`,
     [groupId]
   );
-  if (!row) throw new Error("User group is disabled or missing");
+  if (!row) throw new Error("用户分组已停用或不存在");
   return {
     id: String(row.id),
     name: String(row.name),
@@ -564,7 +564,7 @@ export async function syncAccessRoles(
   );
 
   if (hadUsableAdminAccount && await usableAdminCount(connection) < 1) {
-    throw new Error("At least one usable admin account is required");
+    throw new Error("至少需要保留一个可用管理员账号");
   }
 
   const after = await authorizationFingerprints(connection);
@@ -576,7 +576,7 @@ export async function syncAccessRoles(
 
 function enabledConfigGroup(config: AppConfig, groupId: string) {
   const group = config.userGroups?.find((item) => item.id === groupId);
-  if (!group?.enabled) throw new Error("User group is disabled or missing");
+  if (!group?.enabled) throw new Error("用户分组已停用或不存在");
   return group;
 }
 
@@ -637,7 +637,7 @@ async function assertPhoneAvailable(
 ) {
   const [duplicate] = await duplicatePhoneOwners(connection, phone, exclude);
   if (duplicate) {
-    throw new Error("Mobile phone is already assigned to another user");
+    throw new Error("手机号已被其他用户占用");
   }
 }
 
@@ -823,7 +823,7 @@ export async function createAccountSession(
     type
   );
   if (!authorized) {
-    throw new Error("Account is not allowed to create this session");
+    throw new Error("当前账号无权创建该会话");
   }
 
   const now = new Date();
@@ -1165,7 +1165,7 @@ export async function bootstrapAdmin(
       [new Date(), groupId]
     );
     if (result.affectedRows < 1) {
-      throw new Error("Bootstrap admin group was not found");
+      throw new Error("未找到管理员初始化分组");
     }
   } else {
     const groupName = nonEmptyName(input.group.name);
@@ -1193,7 +1193,7 @@ export async function bootstrapAdmin(
       [
         groupId,
         groupName,
-        "Bootstrap administrators",
+        "管理员初始化分组",
         false,
         false,
         false,
@@ -1208,7 +1208,7 @@ export async function bootstrapAdmin(
   const groups = await readGroups(connection);
   await syncAccessRoles(connection, groups);
   const group = groups.find((item) => item.id === groupId);
-  if (!group) throw new Error("Bootstrap admin group was not found");
+  if (!group) throw new Error("未找到管理员初始化分组");
 
   const phone = normalizeMobilePhone(input.phone);
   const name = nonEmptyName(input.name);
@@ -1308,7 +1308,7 @@ export async function bootstrapAdmin(
     ["admin", now, accountId]
   );
   const actor = await readActor(connection, accountId, "admin");
-  if (!actor) throw new Error("Bootstrap admin access chain is invalid");
+  if (!actor) throw new Error("管理员初始化访问链无效");
   await writeAudit(
     connection,
     "admin.bootstrap",
@@ -1639,7 +1639,7 @@ async function accountPersonForUpdate(
      FOR UPDATE`,
     [userId, userId]
   );
-  if (!record) throw new Error("User was not found");
+  if (!record) throw new Error("未找到用户");
   return record;
 }
 
@@ -1663,7 +1663,7 @@ async function assertMutationKeepsLastAdmin(
     return;
   }
   if (await removingTargetAdminWouldLeaveNone(connection, accountId)) {
-    throw new Error("At least one usable admin account is required");
+    throw new Error("至少需要保留一个可用管理员账号");
   }
 }
 
@@ -1846,7 +1846,7 @@ export async function updateUser(
     !groupChanged &&
     !bool(current.group_enabled)
   ) {
-    throw new Error("User group is disabled or missing");
+    throw new Error("用户分组已停用或不存在");
   }
   const nextGroupId = group?.id ?? currentGroupId;
   const nextRole = group ? roleForGroup(group) : currentRole;
@@ -1966,7 +1966,7 @@ export async function deleteUser(
   const accountId = String(current.account_id);
   const personId = String(current.person_id);
   if (await removingTargetAdminWouldLeaveNone(connection, accountId)) {
-    throw new Error("At least one usable admin account is required");
+    throw new Error("至少需要保留一个可用管理员账号");
   }
   const history = await userDeletionHistoryForAccount(
     connection,
@@ -1974,7 +1974,7 @@ export async function deleteUser(
     accountId
   );
   if (history.hasHistory) {
-    throw new Error("User has business history and cannot be deleted");
+    throw new Error("用户已有业务历史，不能删除");
   }
   const now = new Date();
   await execute(
@@ -2031,7 +2031,7 @@ export async function setUserPassword(
      LIMIT 1`,
     [userId, userId]
   );
-  if (!account) throw new Error("User was not found");
+  if (!account) throw new Error("未找到用户");
   const accountId = String(account.id);
   const personId = String(account.person_id);
   const now = new Date();
@@ -2118,7 +2118,7 @@ async function userPersonForIdentityMutation(
      FOR UPDATE`,
     [userId, userId]
   );
-  if (!record) throw new Error("User was not found");
+  if (!record) throw new Error("未找到用户");
   return String(record.person_id);
 }
 
@@ -2150,7 +2150,7 @@ function assertExpectedChatIdentityRebind(
     expected.fromPersonId !== actual.fromPersonId ||
     expected.toPersonId !== actual.toPersonId
   ) {
-    throw new Error("Chat identity binding changed; retry confirmation");
+    throw new Error("身份绑定已变化，请重新确认");
   }
 }
 
@@ -2175,7 +2175,7 @@ export async function bindChatIdentity(
   );
   if (!identity) {
     if (input.expectedRebind) {
-      throw new Error("Chat identity binding changed; retry confirmation");
+      throw new Error("身份绑定已变化，请重新确认");
     }
     const identityId = `chat-${createHash("sha256")
       .update(`${input.platform}:${input.externalUserId}`)
@@ -2205,9 +2205,9 @@ export async function bindChatIdentity(
       input.externalUserId
     );
   }
-  if (!identity) throw new Error("Chat identity was not found");
+  if (!identity) throw new Error("未找到消息身份");
   if (bool(identity.is_temporary)) {
-    throw new Error("Temporary identities cannot be bound by administrators");
+    throw new Error("临时身份不能由管理员绑定");
   }
   const identityId = String(identity.id);
   const fromPersonId = identity.person_id
@@ -2218,7 +2218,7 @@ export async function bindChatIdentity(
     fromPersonId !== personId
   ) {
     if (!input.confirmedRebind) {
-      throw new Error("Chat identity is assigned to another user");
+      throw new Error("该身份已绑定给其他用户");
     }
     assertExpectedChatIdentityRebind(input.expectedRebind, {
       platform: String(identity.platform) as MessageChannel,

@@ -71,13 +71,13 @@ export async function POST(request: Request) {
       return badRequest(errorMessage(error));
     }
   }
-  if (!endpoint || !apiKey) return badRequest("请填写接口地址和API密钥");
+  if (!endpoint || !apiKey) return badRequest("请填写接口地址和接口密钥");
 
   let modelsEndpoint: string;
   try {
     modelsEndpoint = modelsEndpointFor(endpoint);
   } catch {
-    return badRequest("AI接口地址不正确");
+    return badRequest("智能接口地址不正确");
   }
 
   try {
@@ -93,7 +93,7 @@ export async function POST(request: Request) {
     const models = modelIdsFrom(await response.json() as ModelListResponse);
     if (models.length === 0) return badRequest("未获取到可用模型");
     return NextResponse.json({ models });
-  } catch (error) {
-    return badRequest(errorMessage(error));
+  } catch {
+    return badRequest("模型列表获取失败，请检查接口地址和网络");
   }
 }
