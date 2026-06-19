@@ -6188,10 +6188,11 @@ textarea {
 
 .admin-import-panel {
   position: absolute;
-  inset: 3vh 3vw;
+  inset: 3vh 3vw auto;
   display: grid;
   grid-template-rows: auto auto minmax(0, 1fr);
   max-width: 1180px;
+  max-height: calc(100dvh - 6vh);
   margin: 0 auto;
   border-radius: 0;
   background: #fffdf8;
