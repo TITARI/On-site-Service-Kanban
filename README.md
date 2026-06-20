@@ -65,13 +65,30 @@ npm run build
 
 ## 数据存储
 
-当前版本使用文件存储，运行时数据会写入：
+当前版本支持 MariaDB 和文件存储两种模式。默认规则如下：
+
+- 配置了 `DATABASE_URL` 时使用 MariaDB。
+- 显式设置 `APP_STORAGE=mariadb` 或 `APP_STORAGE=database` 时使用 MariaDB，且必须提供 `DATABASE_URL`。
+- 显式设置 `APP_STORAGE=file` 或 `APP_STORAGE=json` 时使用本地 JSON 文件存储。
+- 开发环境未配置 `DATABASE_URL` 时会回退到文件存储；生产环境未配置 `DATABASE_URL` 会启动失败。
+
+本地开发示例：
+
+```env
+DATABASE_URL=mysql://collaboration_board_app:password@127.0.0.1:3306/collaboration_board
+```
+
+数据库结构通过迁移脚本维护：
+
+```bash
+npm run db:migrate
+```
+
+文件存储仅作为本地开发/离线演示兜底，运行时数据会写入：
 
 ```text
 data/app-state.json
 ```
-
-这是为了先快速跑通现场流程。后续接微信/企业微信、多端并发和正式生产时，建议替换为数据库或云端 KV/文档存储。
 
 ## RBAC rollout notes
 
