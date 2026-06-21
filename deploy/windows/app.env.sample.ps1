@@ -1,6 +1,9 @@
 $env:PORT = "3000"
 $env:HOSTNAME = "0.0.0.0"
 $env:DATABASE_URL = "mysql://collaboration_board_app:replace-with-password@127.0.0.1:3306/collaboration_board"
+$env:ADMIN_BOOTSTRAP_PASSWORD = "replace-with-long-random-bootstrap-password"
+# Production keeps MariaDB failures hard-fail by default. Only enable for a planned emergency JSON fallback.
+# $env:APP_ALLOW_JSON_FALLBACK = "true"
 # Optional fixed public site URL. When set, WeChat ticket receipts use this instead of the temporary tunnel URL.
 # $env:APP_PUBLIC_BASE_URL = "https://your-domain.example"
 

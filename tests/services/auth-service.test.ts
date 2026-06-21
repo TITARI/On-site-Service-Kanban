@@ -186,6 +186,29 @@ describe("auth service", () => {
     }
   });
 
+  it("requires an explicit bootstrap password in production", async () => {
+    const bootstrapAdminWithSession = vi.fn();
+    const repo = repository({
+      bootstrapStatus: vi.fn(async () => ({ required: true })),
+      bootstrapAdminWithSession
+    } as Partial<AppRepository>);
+    const input = {
+      legacyPassword: "admin123",
+      name: "Root Admin",
+      phone: "13700137000",
+      password: "StrongPass123!",
+      group: { mode: "existing" as const, groupId: "admin" }
+    };
+
+    await expect(bootstrapFirstAdmin(
+      repo,
+      input,
+      { NODE_ENV: "production" } as NodeJS.ProcessEnv
+    )).rejects.toThrow("ADMIN_BOOTSTRAP_PASSWORD is required in production.");
+
+    expect(bootstrapAdminWithSession).not.toHaveBeenCalled();
+  });
+
   it("rejects invalid mobile phone numbers before writing account state", async () => {
     const repo = repository();
 

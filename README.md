@@ -71,7 +71,7 @@
 建议使用 Node.js 20 LTS 或更新版本。
 
 ```bash
-npm install
+npm ci
 npm run dev
 ```
 
@@ -93,7 +93,7 @@ http://localhost:3000/admin
 data/app-state.json
 ```
 
-首次进入后台时需要创建第一个管理员。生产环境请先设置 `ADMIN_BOOTSTRAP_PASSWORD`；未设置时默认旧口令是 `admin123`，仅适合本地开发。
+首次进入后台时需要创建第一个管理员。生产环境必须先设置 `ADMIN_BOOTSTRAP_PASSWORD`；未设置时仅非生产环境会兼容旧口令 `admin123`，用于本地开发。
 
 ## 运行脚本
 
@@ -121,6 +121,7 @@ data/app-state.json
 | `HOSTNAME` | 否 | 监听地址，外部访问通常设为 `0.0.0.0` |
 | `APP_STORAGE` | 否 | `mariadb`/`database` 使用 MariaDB，`file`/`json` 使用本地 JSON |
 | `DATABASE_URL` | 生产建议必填 | MariaDB 连接串，例如 `mysql://user:password@127.0.0.1:3306/collaboration_board` |
+| `APP_ALLOW_JSON_FALLBACK` | 否 | 生产环境默认禁止 MariaDB 异常时自动 JSON 降级；确需临时降级时显式设为 `true` |
 | `ADMIN_BOOTSTRAP_PASSWORD` | 生产必填 | 首个管理员初始化旧口令 |
 | `APP_PUBLIC_BASE_URL` | 否 | 固定公网地址；微信工单回执短链会优先使用它 |
 
@@ -460,7 +461,7 @@ python scripts/wxauto-local-rest.py
 | 开发环境未配置 `DATABASE_URL` | 回退到 JSON 文件 |
 | 生产环境未配置 `DATABASE_URL` | 启动失败 |
 
-部分 bootstrap 接口在 MariaDB 暂时不可用时会尝试 JSON fallback，让页面能给出降级提示；正式生产仍建议把 MariaDB 作为唯一可信数据源并做好备份。
+非生产环境下，部分 bootstrap 接口在 MariaDB 暂时不可用时会尝试 JSON fallback，让页面能给出降级提示。生产环境默认禁止自动 JSON 降级，避免 MariaDB 与本地 JSON 出现数据分裂；如确需临时应急降级，必须显式设置 `APP_ALLOW_JSON_FALLBACK=true` 并做好数据合并预案。
 
 ### MariaDB 初始化
 
@@ -506,6 +507,7 @@ npm run test:run
 生产构建：
 
 ```bash
+npm ci
 npm run build
 ```
 
@@ -530,6 +532,7 @@ npm run start
 构建 Windows standalone 部署包：
 
 ```powershell
+npm ci
 powershell -ExecutionPolicy Bypass -File .\scripts\build-windows-package.ps1
 ```
 

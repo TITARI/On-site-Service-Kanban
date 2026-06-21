@@ -540,6 +540,223 @@ describe("wechat watchtower service", () => {
     expect(appState.tickets.at(-1)).toMatchObject({ boothNumber: "A01", issueType: "电力", submitterName: "王五" });
   });
 
+  it("keeps image-first messages in the draft and creates the ticket with those images", async () => {
+    const appState = state();
+    await processWechatWatchtowerMessage(appState, {
+      channel: "wechat",
+      externalMessageId: "msg-register-image-first",
+      senderId: "wxid-image-first",
+      senderName: "图片用户",
+      senderGroup: "现场群",
+      sourceConversationId: "conv-image",
+      text: "注册 业务组 图片用户 13900139011"
+    });
+
+    const imageResult = await processWechatWatchtowerMessage(appState, {
+      channel: "wechat",
+      externalMessageId: "msg-image-first",
+      senderId: "wxid-image-first",
+      senderName: "图片用户",
+      senderGroup: "现场群",
+      sourceConversationId: "conv-image",
+      imageUrls: ["data:image/jpeg;base64,first"]
+    });
+
+    expect(imageResult.action).toBe("prompted");
+    expect(appState.pendingWorkOrderSessions?.[0]).toMatchObject({
+      missingFields: ["boothNumber"],
+      draftImages: ["data:image/jpeg;base64,first"]
+    });
+
+    const textResult = await processWechatWatchtowerMessage(appState, {
+      channel: "wechat",
+      externalMessageId: "msg-image-first-text",
+      senderId: "wxid-image-first",
+      senderName: "图片用户",
+      senderGroup: "现场群",
+      sourceConversationId: "conv-image",
+      text: "A01 网络断了，扫码收款失败"
+    });
+
+    expect(textResult.action).toBe("processed");
+    expect(appState.pendingWorkOrderSessions).toEqual([]);
+    expect(appState.tickets.at(-1)).toMatchObject({
+      boothNumber: "A01",
+      issueType: "网络",
+      imageUrls: ["data:image/jpeg;base64,first"]
+    });
+  });
+
+  it("attaches image-only follow-ups to a recently created ticket from the same WeChat user", async () => {
+    const appState = state();
+    await processWechatWatchtowerMessage(appState, {
+      channel: "wechat",
+      externalMessageId: "msg-register-text-first",
+      senderId: "wxid-text-first",
+      senderName: "补图用户",
+      senderGroup: "现场群",
+      sourceConversationId: "conv-follow-image",
+      text: "注册 业务组 补图用户 13900139012"
+    });
+
+    await processWechatWatchtowerMessage(appState, {
+      channel: "wechat",
+      externalMessageId: "msg-text-before-image",
+      senderId: "wxid-text-first",
+      senderName: "补图用户",
+      senderGroup: "现场群",
+      sourceConversationId: "conv-follow-image",
+      text: "A01 网络断了，扫码收款失败"
+    });
+    const ticket = appState.tickets.at(-1)!;
+
+    const imageResult = await processWechatWatchtowerMessage(appState, {
+      channel: "wechat",
+      externalMessageId: "msg-image-after-ticket",
+      senderId: "wxid-text-first",
+      senderName: "补图用户",
+      senderGroup: "现场群",
+      sourceConversationId: "conv-follow-image",
+      imageUrls: ["data:image/jpeg;base64,after"]
+    });
+
+    expect(imageResult.action).toBe("processed");
+    expect(ticket.imageUrls).toEqual(["data:image/jpeg;base64,after"]);
+    expect(appState.messageRecords.at(-1)?.analysis).toMatchObject({
+      matchedTicketId: ticket.id,
+      reason: expect.stringContaining("补充图片")
+    });
+  });
+
+  it("keeps unknown user image drafts through registration and later ticket creation", async () => {
+    const appState = state();
+    await processWechatWatchtowerMessage(appState, {
+      channel: "wechat",
+      externalMessageId: "msg-unknown-image-first",
+      senderId: "wxid-unknown-image",
+      senderName: "未注册图片用户",
+      senderGroup: "现场群",
+      sourceConversationId: "conv-unknown-image",
+      imageUrls: ["data:image/jpeg;base64,unknown"]
+    });
+
+    const registerResult = await processWechatWatchtowerMessage(appState, {
+      channel: "wechat",
+      externalMessageId: "msg-unknown-image-register",
+      senderId: "wxid-unknown-image",
+      senderName: "未注册图片用户",
+      senderGroup: "现场群",
+      sourceConversationId: "conv-unknown-image",
+      text: "注册 业务组 未知图 13900139013"
+    });
+
+    expect(registerResult.action).toBe("prompted");
+    expect(appState.pendingWorkOrderSessions?.[0]).toMatchObject({
+      missingFields: ["boothNumber"],
+      draftImages: ["data:image/jpeg;base64,unknown"]
+    });
+
+    const textResult = await processWechatWatchtowerMessage(appState, {
+      channel: "wechat",
+      externalMessageId: "msg-unknown-image-text",
+      senderId: "wxid-unknown-image",
+      senderName: "未注册图片用户",
+      senderGroup: "现场群",
+      sourceConversationId: "conv-unknown-image",
+      text: "A01 网络断了，扫码收款失败"
+    });
+
+    expect(textResult.action).toBe("processed");
+    expect(appState.tickets.at(-1)).toMatchObject({
+      boothNumber: "A01",
+      issueType: "网络",
+      submitterName: "未知图",
+      imageUrls: ["data:image/jpeg;base64,unknown"]
+    });
+  });
+
+  it("lets a builder WeChat reply resolve an assigned ticket and notify the reporter", async () => {
+    const appState = state();
+    const timestamp = "2026-05-22T08:00:00.000Z";
+    appState.people = [{
+      id: "person-builder",
+      name: "李工",
+      phone: "13900139014",
+      role: "handler",
+      groupName: "搭建组",
+      enabled: true,
+      createdAt: timestamp,
+      updatedAt: timestamp
+    }];
+    appState.chatIdentities = [{
+      id: "identity-builder",
+      platform: "wechat",
+      externalUserId: "wxid-builder",
+      displayName: "李工微信",
+      personId: "person-builder",
+      verifiedBy: "phone",
+      verifiedAt: timestamp,
+      firstSeenAt: timestamp,
+      lastSeenAt: timestamp
+    }];
+    appState.tickets.push({
+      id: "ticket-builder",
+      title: "A01 星河科技 搭建",
+      boothNumber: "A01",
+      companyName: "上海星河科技有限公司",
+      companyShortName: "星河科技",
+      description: "A01 门头松动",
+      imageUrls: [],
+      issueType: "搭建",
+      submitterId: "person-reporter",
+      submitterName: "王宁",
+      submitterPhone: "13700137000",
+      reporterChatIdentityId: "identity-reporter",
+      sourceConversationId: "客户群",
+      feedbackUsers: [],
+      status: "处理中",
+      acceptedAt: timestamp,
+      assignmentGroup: "搭建组",
+      urgeCount: 0,
+      urgeLevel: 0,
+      priorityScore: 20,
+      aiDecisions: [],
+      replies: [],
+      timeline: [{ id: "timeline-builder", ticketId: "ticket-builder", type: "submitted", body: "A01 门头松动", createdAt: timestamp, actorName: "王宁" }],
+      createdAt: timestamp,
+      updatedAt: timestamp
+    });
+
+    const result = await processWechatWatchtowerMessage(appState, {
+      channel: "wechat",
+      externalMessageId: "msg-builder-done",
+      senderId: "wxid-builder",
+      senderName: "李工微信",
+      senderGroup: "搭建组",
+      sourceConversationId: "搭建组",
+      text: "A01 已处理完成，现场测试正常",
+      imageUrls: ["data:image/jpeg;base64,done"]
+    });
+
+    const ticket = appState.tickets[0];
+    expect(result.action).toBe("processed");
+    expect(ticket.status).toBe("已解决");
+    expect(ticket.handlerName).toBe("李工");
+    expect(ticket.replies.at(-1)).toMatchObject({
+      authorName: "李工",
+      role: "handler",
+      imageUrls: ["data:image/jpeg;base64,done"]
+    });
+    expect(appState.outboundMessages?.some((message) => (
+      message.targetName === "客户群" &&
+      message.text.includes("工单已解决：A01 星河科技 搭建")
+    ))).toBe(true);
+    expect(appState.messageRecords.at(-1)?.analysis).toMatchObject({
+      matchedTicketId: "ticket-builder",
+      reason: expect.stringContaining("完成反馈")
+    });
+  });
+
   it("does not process duplicate external messages twice", async () => {
     const appState = state();
     const input = {

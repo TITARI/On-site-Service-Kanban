@@ -160,6 +160,7 @@ function mobileSession() {
 
 describe("bootstrap route", () => {
   beforeEach(() => {
+    vi.unstubAllEnvs();
     store.state = state();
     store.runAutoAcceptance.mockReset();
     store.adminBootstrap.mockReset();
@@ -306,6 +307,66 @@ describe("bootstrap route", () => {
     expect(payload.config).toEqual(defaultConfig());
     expect(payload.storage).toEqual(expect.objectContaining({ mode: "file", fallback: true }));
     expect(fallbackStore.getConfig).toHaveBeenCalled();
+  });
+
+  it("does not fall back to JSON in production unless explicitly allowed", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    const route = await import("@/app/api/bootstrap/route");
+    store.getConfig.mockRejectedValue(Object.assign(
+      new Error("connect ECONNREFUSED 127.0.0.1:3306"),
+      { code: "ECONNREFUSED" }
+    ));
+
+    await expect(route.GET(new Request("http://localhost/api/bootstrap?scope=login")))
+      .rejects.toThrow("connect ECONNREFUSED");
+    expect(fallbackStore.getConfig).not.toHaveBeenCalled();
+
+    vi.stubEnv("APP_ALLOW_JSON_FALLBACK", "true");
+    const response = await route.GET(new Request("http://localhost/api/bootstrap?scope=login"));
+    const payload = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(payload.storage).toEqual(expect.objectContaining({ mode: "file", fallback: true }));
+    expect(fallbackStore.getConfig).toHaveBeenCalledOnce();
+  });
+
+  it("does not fall back to JSON for mobile bootstrap in production", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    const route = await import("@/app/api/bootstrap/route");
+    store.resolveAccountSession.mockRejectedValue(Object.assign(
+      new Error("connect ECONNREFUSED 127.0.0.1:3306"),
+      { code: "ECONNREFUSED" }
+    ));
+
+    await expect(route.GET(mobileRequest())).rejects.toThrow("connect ECONNREFUSED");
+
+    expect(fallbackStore.resolveAccountSession).not.toHaveBeenCalled();
+    expect(fallbackStore.runAutoAcceptance).not.toHaveBeenCalled();
+    expect(fallbackStore.mobileBootstrap).not.toHaveBeenCalled();
+  });
+
+  it("treats database authorization and schema errors as deployment failures", async () => {
+    const route = await import("@/app/api/bootstrap/route");
+    const deploymentErrors = [
+      Object.assign(new Error("Access denied for user 'board'@'localhost'"), {
+        code: "ER_ACCESS_DENIED_ERROR"
+      }),
+      Object.assign(new Error("Table 'collaboration_board.tickets' doesn't exist"), {
+        code: "ER_NO_SUCH_TABLE"
+      }),
+      Object.assign(new Error("Unknown database 'collaboration_board'"), {
+        code: "ER_BAD_DB_ERROR"
+      })
+    ];
+
+    for (const error of deploymentErrors) {
+      fallbackStore.getConfig.mockClear();
+      store.getConfig.mockRejectedValueOnce(error);
+
+      await expect(route.GET(new Request("http://localhost/api/bootstrap?scope=login")))
+        .rejects.toThrow(error.message);
+      expect(fallbackStore.getConfig).not.toHaveBeenCalled();
+    }
   });
 
   it("returns a clear degraded error when neither MariaDB nor JSON bootstrap can load", async () => {

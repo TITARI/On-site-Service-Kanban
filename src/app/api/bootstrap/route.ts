@@ -31,10 +31,7 @@ const RECOVERABLE_DATABASE_CODES = new Set([
   "ENOTFOUND",
   "EHOSTUNREACH",
   "ETIMEDOUT",
-  "PROTOCOL_CONNECTION_LOST",
-  "ER_ACCESS_DENIED_ERROR",
-  "ER_BAD_DB_ERROR",
-  "ER_NO_SUCH_TABLE"
+  "PROTOCOL_CONNECTION_LOST"
 ]);
 
 function errorCode(error: unknown) {
@@ -48,7 +45,14 @@ function errorMessage(error: unknown) {
 function isRecoverableDatabaseError(error: unknown) {
   const code = errorCode(error);
   if (code && RECOVERABLE_DATABASE_CODES.has(code)) return true;
-  return /DATABASE_URL|connect|connection|access denied|unknown database|table .* doesn't exist/i.test(errorMessage(error));
+  return /connect|connection/i.test(errorMessage(error));
+}
+
+function allowJsonFallback() {
+  return (
+    process.env.NODE_ENV !== "production" ||
+    process.env.APP_ALLOW_JSON_FALLBACK?.trim() === "true"
+  );
 }
 
 function successStorage(repository: AppRepository): BootstrapStorage | undefined {
@@ -88,6 +92,7 @@ async function loadWithJsonFallback<T>(
     return { ok: true, data: await primary(repository), storage: successStorage(repository) };
   } catch (primaryError) {
     if (!isRecoverableDatabaseError(primaryError)) throw primaryError;
+    if (!allowJsonFallback()) throw primaryError;
 
     try {
       const repository = createFileAppRepository();
@@ -115,6 +120,7 @@ async function loadMobileWithJsonFallback(request: Request): Promise<BootstrapRe
   } catch (primaryError) {
     if (primaryError instanceof AuthError) return authFailure(primaryError);
     if (!isRecoverableDatabaseError(primaryError)) throw primaryError;
+    if (!allowJsonFallback()) throw primaryError;
 
     try {
       const repository = createFileAppRepository();

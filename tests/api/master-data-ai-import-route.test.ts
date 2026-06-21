@@ -246,6 +246,104 @@ describe("master data route AI assisted import", () => {
     ]);
   });
 
+  it("rejects oversized uploaded workbooks before reading them", async () => {
+    const formData = new FormData();
+    formData.append(
+      "file",
+      new File(
+        [new Uint8Array(10 * 1024 * 1024 + 1)],
+        "huge.xlsx",
+        { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }
+      )
+    );
+
+    const route = await import("@/app/api/admin/master-data/route");
+    const response = await route.POST(multipartRequest(formData));
+    const payload = await response.json();
+
+    expect(response.status).toBe(413);
+    expect(payload.message).toBe("文件过大，请控制在 10MB 以内。");
+    expect(store.importBooths).not.toHaveBeenCalled();
+  });
+
+  it("rejects uploaded workbooks with too many sheets or rows before expanding sheet JSON", async () => {
+    const route = await import("@/app/api/admin/master-data/route");
+    const manySheetsWorkbook = XLSX.utils.book_new();
+    for (let index = 0; index < 11; index += 1) {
+      XLSX.utils.book_append_sheet(
+        manySheetsWorkbook,
+        XLSX.utils.aoa_to_sheet([[`sheet-${index}`]]),
+        `Sheet${index}`
+      );
+    }
+    const manySheetsForm = new FormData();
+    manySheetsForm.append(
+      "file",
+      new File([
+        XLSX.write(manySheetsWorkbook, { type: "array", bookType: "xlsx" })
+      ], "many-sheets.xlsx")
+    );
+
+    const manySheetsResponse = await route.POST(multipartRequest(manySheetsForm));
+    await expect(manySheetsResponse.json()).resolves.toMatchObject({
+      message: "工作表数量过多，请控制在 10 个以内。"
+    });
+    expect(manySheetsResponse.status).toBe(400);
+
+    const manyRowsWorkbook = XLSX.utils.book_new();
+    const manyRowsSheet = XLSX.utils.aoa_to_sheet([["展位号"]]);
+    manyRowsSheet["!ref"] = "A1:A20001";
+    XLSX.utils.book_append_sheet(manyRowsWorkbook, manyRowsSheet, "普通绿色搭建汇总");
+    const manyRowsForm = new FormData();
+    manyRowsForm.append(
+      "file",
+      new File([
+        XLSX.write(manyRowsWorkbook, { type: "array", bookType: "xlsx" })
+      ], "many-rows.xlsx")
+    );
+
+    const manyRowsResponse = await route.POST(multipartRequest(manyRowsForm));
+    await expect(manyRowsResponse.json()).resolves.toMatchObject({
+      message: "单个工作表行数过多，请控制在 20000 行以内。"
+    });
+    expect(manyRowsResponse.status).toBe(400);
+    expect(store.importBooths).not.toHaveBeenCalled();
+  });
+
+  it("rejects oversized JSON import sheets, rows, and cells", async () => {
+    const route = await import("@/app/api/admin/master-data/route");
+    const tooManyRows = await route.POST(request({
+      rows: Array.from({ length: 20_001 }, (_, index) => ({
+        boothNumber: `A${index}`,
+        companyName: "测试公司"
+      }))
+    }));
+    await expect(tooManyRows.json()).resolves.toMatchObject({
+      message: "JSON 行数过多，请控制在 20000 行以内。"
+    });
+    expect(tooManyRows.status).toBe(400);
+
+    const tooManySheetRows = await route.POST(request({
+      sheets: [{
+        sheetName: "普通绿色搭建汇总",
+        rows: Array.from({ length: 20_001 }, () => ["A01", "测试公司"])
+      }]
+    }));
+    await expect(tooManySheetRows.json()).resolves.toMatchObject({
+      message: "单个工作表行数过多，请控制在 20000 行以内。"
+    });
+    expect(tooManySheetRows.status).toBe(400);
+
+    const longCell = await route.POST(request({
+      rows: [{ boothNumber: "A01", companyName: "长".repeat(501) }]
+    }));
+    await expect(longCell.json()).resolves.toMatchObject({
+      message: "单元格内容过长，请控制在 500 字以内。"
+    });
+    expect(longCell.status).toBe(400);
+    expect(store.importBooths).not.toHaveBeenCalled();
+  });
+
   it("returns workbook sheet inspection details without committing", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
       choices: [{ message: { content: JSON.stringify({ mappings: [] }) } }]

@@ -22,7 +22,7 @@ const GENERIC_ADMIN_PASSWORD_ERROR = "手机号或密码不正确";
 
 export class AuthError extends Error {
   constructor(
-    public readonly status: 400 | 401 | 403,
+    public readonly status: 400 | 401 | 403 | 429,
     message: string
   ) {
     super(message);
@@ -75,7 +75,12 @@ function normalizePassword(password: string) {
 }
 
 function adminBootstrapPassword(env: NodeJS.ProcessEnv = process.env) {
-  return env.ADMIN_BOOTSTRAP_PASSWORD ?? DEFAULT_ADMIN_BOOTSTRAP_PASSWORD;
+  const configured = env.ADMIN_BOOTSTRAP_PASSWORD?.trim();
+  if (configured) return configured;
+  if (env.NODE_ENV === "production") {
+    throw new Error("ADMIN_BOOTSTRAP_PASSWORD is required in production.");
+  }
+  return DEFAULT_ADMIN_BOOTSTRAP_PASSWORD;
 }
 
 async function createAccountSession(

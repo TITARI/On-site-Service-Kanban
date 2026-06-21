@@ -27,6 +27,40 @@ export type WatchtowerResult = {
   record?: InboundMessageRecord;
 };
 
+const MEDIA_FOLLOWUP_WINDOW_MS = 2 * 60 * 1000;
+const HANDLER_COMPLETION_KEYWORDS = [
+  "已处理",
+  "处理好了",
+  "处理完成",
+  "已完成",
+  "完成",
+  "修好了",
+  "修复",
+  "已修复",
+  "已解决",
+  "解决了",
+  "好了",
+  "搞定",
+  "完工",
+  "测试正常",
+  "恢复正常"
+];
+const HANDLER_PROGRESS_KEYWORDS = [
+  "处理",
+  "维修",
+  "更换",
+  "调整",
+  "加固",
+  "测试",
+  "排查",
+  "到场",
+  "已到",
+  "施工",
+  "照片",
+  "已补"
+];
+const HANDLER_REPLY_SESSION_MARK = "__handler-reply";
+
 function now() {
   return new Date().toISOString();
 }
@@ -37,6 +71,45 @@ function id(prefix: string) {
 
 function normalizeText(value?: string) {
   return String(value ?? "").replace(/\s+/g, " ").trim();
+}
+
+function imageUrlsOf(input: IntakeMessageInput) {
+  return input.imageUrls ?? [];
+}
+
+function mergeImageUrls(existing: string[], incoming: string[]) {
+  return Array.from(new Set([...existing, ...incoming.map((item) => item.trim()).filter(Boolean)]));
+}
+
+function mergeDraftText(existing: string, incoming?: string) {
+  const current = normalizeText(existing);
+  const next = normalizeText(incoming);
+  if (!next) return current;
+  if (!current) return next;
+  if (current.includes(next)) return current;
+  if (next.includes(current)) return next;
+  return `${current} ${next}`;
+}
+
+function isImageOnlyInput(input: IntakeMessageInput) {
+  return imageUrlsOf(input).length > 0 && !normalizeText(input.text);
+}
+
+function inputTimestampMs(input: IntakeMessageInput) {
+  const timestamp = normalizeText(input.receivedAt);
+  const parsed = timestamp ? new Date(timestamp).getTime() : NaN;
+  return Number.isFinite(parsed) ? parsed : Date.now();
+}
+
+function isWithinMediaWindow(referenceIso: string | undefined, input: IntakeMessageInput) {
+  if (!referenceIso) return false;
+  const referenceMs = new Date(referenceIso).getTime();
+  if (!Number.isFinite(referenceMs)) return false;
+  return Math.abs(inputTimestampMs(input) - referenceMs) <= MEDIA_FOLLOWUP_WINDOW_MS;
+}
+
+function looksLikeBoothReference(text: string) {
+  return /(?:展位|展台|摊位|booth)?\s*((?:\d+[A-Za-z]{1,4}|[A-Za-z]{1,4})[-\s]?\d{1,5}[A-Za-z]?)/i.test(text);
 }
 
 function publicBaseUrlFromFile() {
@@ -113,12 +186,35 @@ function isIdentityRegistrationSession(session: PendingWorkOrderSession) {
   return session.missingFields.some((field) => ["identityGroup", "name", "phone"].includes(field));
 }
 
+function isHandlerReplySession(session: PendingWorkOrderSession) {
+  return session.issueType === HANDLER_REPLY_SESSION_MARK;
+}
+
+function markHandlerReplySession(session: PendingWorkOrderSession) {
+  session.issueType = HANDLER_REPLY_SESSION_MARK;
+}
+
 function isOperatorInitiatedInput(input: IntakeMessageInput) {
   return input.operatorInitiated === true || input.raw?.operatorInitiated === true;
 }
 
 function isConfiguredOperationalText(state: AppState, text: string, imageUrls: string[] = []) {
   return hasKeywordOperationalIntent(normalizeText(text), imageUrls, keywordGroupsForConfig(state.config));
+}
+
+function shouldAccumulateWorkOrderDraft(state: AppState, input: IntakeMessageInput) {
+  const text = normalizeText(input.text);
+  const imageUrls = imageUrlsOf(input);
+  if (imageUrls.length > 0) return true;
+  if (!text) return false;
+  return isConfiguredOperationalText(state, text, imageUrls) || looksLikeBoothReference(text);
+}
+
+function accumulateWorkOrderDraft(state: AppState, session: PendingWorkOrderSession, input: IntakeMessageInput) {
+  if (!shouldAccumulateWorkOrderDraft(state, input)) return;
+  session.draftText = mergeDraftText(session.draftText, input.text);
+  session.draftImages = mergeImageUrls(session.draftImages, imageUrlsOf(input));
+  session.updatedAt = now();
 }
 
 function createPromptSession(
@@ -136,7 +232,7 @@ function createPromptSession(
     existing.conversationId = conversationId;
     existing.originalMessageRecordId = originalMessageRecordId ?? existing.originalMessageRecordId;
     existing.draftText = normalizeText(input.text) || existing.draftText;
-    existing.draftImages = input.imageUrls ?? existing.draftImages;
+    existing.draftImages = mergeImageUrls(existing.draftImages, imageUrlsOf(input));
     existing.missingFields = missingFields;
     existing.updatedAt = timestamp;
     existing.lastPromptAt = timestamp;
@@ -150,7 +246,7 @@ function createPromptSession(
     chatIdentityId,
     originalMessageRecordId,
     draftText: normalizeText(input.text),
-    draftImages: input.imageUrls ?? [],
+    draftImages: mergeImageUrls([], imageUrlsOf(input)),
     missingFields,
     createdAt: timestamp,
     updatedAt: timestamp,
@@ -204,7 +300,7 @@ function mergedSessionInput(input: IntakeMessageInput, session: PendingWorkOrder
   return {
     ...input,
     text,
-    imageUrls: [...session.draftImages, ...(input.imageUrls ?? [])]
+    imageUrls: mergeImageUrls(session.draftImages, imageUrlsOf(input))
   };
 }
 
@@ -402,6 +498,239 @@ async function tryProcessCustomerServiceExpedite(
   return { action: "processed", record };
 }
 
+function isHandlerPerson(state: AppState, person: NonNullable<AppState["people"]>[number] | undefined) {
+  if (!person?.enabled) return false;
+  if (person.role === "handler") return true;
+  const group = state.config.userGroups?.find((item) => item.enabled && item.name === person.groupName);
+  return Boolean(group?.canClaim || group?.canProcess);
+}
+
+function handlerTextIncludes(text: string, keywords: string[]) {
+  const normalized = normalizeText(text);
+  return keywords.some((keyword) => normalized.includes(keyword));
+}
+
+function isHandlerCompletionText(text: string) {
+  return handlerTextIncludes(text, HANDLER_COMPLETION_KEYWORDS);
+}
+
+function hasHandlerProgressSignal(text: string, imageUrls: string[]) {
+  if (imageUrls.length > 0) return true;
+  if (isHandlerCompletionText(text)) return true;
+  return looksLikeBoothReference(text) && handlerTextIncludes(text, HANDLER_PROGRESS_KEYWORDS);
+}
+
+function ticketAssignedToHandler(ticket: Ticket, person: NonNullable<AppState["people"]>[number]) {
+  return Boolean(
+    ticket.handlerId === person.id ||
+    ticket.handlerPhone === person.phone ||
+    ticket.handlerName === person.name ||
+    ticket.assignmentGroup === person.groupName
+  );
+}
+
+function handlerCandidateTickets(
+  state: AppState,
+  person: NonNullable<AppState["people"]>[number],
+  analysis: { boothNumber?: string }
+) {
+  return state.tickets
+    .filter((ticket) => ticket.status !== "已关闭")
+    .filter((ticket) => ticketAssignedToHandler(ticket, person))
+    .filter((ticket) => !analysis.boothNumber || ticket.boothNumber === analysis.boothNumber)
+    .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+}
+
+function handlerPromptText() {
+  return "已收到处理反馈，请补充展位号或工单短链，例如：A01 已处理完成";
+}
+
+function handlerReplyBody(input: IntakeMessageInput) {
+  return normalizeText(input.text) || "现场已补充处理照片";
+}
+
+function applyHandlerReplyToTicket(
+  state: AppState,
+  ticket: Ticket,
+  input: IntakeMessageInput,
+  person: NonNullable<AppState["people"]>[number]
+) {
+  const timestamp = now();
+  const body = handlerReplyBody(input);
+  const imageUrls = imageUrlsOf(input);
+  const resolved = isHandlerCompletionText(body);
+  const previousStatus = ticket.status;
+
+  ticket.handlerId = ticket.handlerId ?? person.id;
+  ticket.handlerName = ticket.handlerName ?? person.name;
+  ticket.handlerPhone = ticket.handlerPhone ?? person.phone;
+  ticket.assignmentGroup = ticket.assignmentGroup ?? person.groupName;
+  ticket.acceptedAt = ticket.acceptedAt ?? timestamp;
+  ticket.replies.push({
+    id: id("reply"),
+    ticketId: ticket.id,
+    authorId: person.id,
+    authorName: person.name,
+    authorPhone: person.phone,
+    role: "handler",
+    body,
+    imageUrls,
+    createdAt: timestamp
+  });
+
+  if (resolved) {
+    ticket.status = "已解决";
+  } else if (ticket.status === "待受理" || ticket.status === "挂起") {
+    ticket.status = "处理中";
+  }
+
+  ticket.timeline.push({
+    id: id("timeline"),
+    ticketId: ticket.id,
+    type: "status-changed",
+    body: resolved ? `状态变更为已解决：${body}` : `处理进度：${body}`,
+    createdAt: timestamp,
+    actorName: person.name
+  });
+  ticket.updatedAt = timestamp;
+
+  if (resolved && previousStatus !== "已解决") {
+    queueTicketFeedbackMessage(state, ticket, `工单已解决：${ticket.title}\n处理说明：${body}`);
+  }
+}
+
+async function tryProcessHandlerReply(
+  state: AppState,
+  input: IntakeMessageInput,
+  person: NonNullable<AppState["people"]>[number],
+  chatIdentityId: string,
+  conversationId: string,
+  conversationExternalId: string,
+  session?: PendingWorkOrderSession
+): Promise<WatchtowerResult | undefined> {
+  const mergedInput = session ? mergedSessionInput(input, session) : input;
+  const text = normalizeText(mergedInput.text);
+  const imageUrls = imageUrlsOf(mergedInput);
+  if (!session && !hasHandlerProgressSignal(text, imageUrls)) return undefined;
+
+  const analysis = await analyzeIntakeMessage(state, mergedInput);
+  const candidates = handlerCandidateTickets(state, person, analysis);
+  if (candidates.length !== 1) {
+    if (!session && isImageOnlyInput(input)) return undefined;
+    const record = await recordRawMessage(state, input);
+    record.analysis = {
+      boothNumber: analysis.boothNumber,
+      issueType: analysis.issueType,
+      confidence: analysis.confidence,
+      suggestedAction: "needs-review",
+      reason: candidates.length > 1 ? "处理人员反馈匹配到多个工单，需要补充展位或工单信息" : "处理人员反馈未匹配到负责的未关闭工单"
+    };
+    const promptSession = createPromptSession(state, mergedInput, conversationId, chatIdentityId, ["boothNumber"], session?.originalMessageRecordId ?? record.id);
+    promptSession.personId = person.id;
+    markHandlerReplySession(promptSession);
+    queuePrompt(state, input, conversationExternalId, chatIdentityId, handlerPromptText(), promptSession.id);
+    return { action: "prompted", record };
+  }
+
+  const ticket = candidates[0];
+  const record = await recordRawMessage(state, input);
+  record.analysis = {
+    boothNumber: ticket.boothNumber,
+    issueType: ticket.issueType,
+    confidence: Math.max(0.8, analysis.confidence),
+    suggestedAction: "needs-review",
+    matchedTicketId: ticket.id,
+    reason: isHandlerCompletionText(text) ? "识别到处理人员完成反馈，已更新工单为已解决" : "识别到处理人员进度反馈，已追加到工单"
+  };
+  if (session) removeSession(state, session.id);
+  applyHandlerReplyToTicket(state, ticket, mergedInput, person);
+  return { action: "processed", record };
+}
+
+function reporterTicketMatches(
+  ticket: Ticket,
+  personId: string | undefined,
+  chatIdentityId: string,
+  conversationExternalId: string
+) {
+  return Boolean(
+    ticket.reporterPersonId === personId ||
+    ticket.submitterId === personId ||
+    ticket.reporterChatIdentityId === chatIdentityId ||
+    ticket.sourceConversationId === conversationExternalId
+  );
+}
+
+function recentReporterTicketForImages(
+  state: AppState,
+  input: IntakeMessageInput,
+  personId: string | undefined,
+  chatIdentityId: string,
+  conversationExternalId: string
+) {
+  return state.tickets
+    .filter((ticket) => ticket.status !== "已关闭")
+    .filter((ticket) => reporterTicketMatches(ticket, personId, chatIdentityId, conversationExternalId))
+    .filter((ticket) => isWithinMediaWindow(ticket.createdAt, input) || isWithinMediaWindow(ticket.updatedAt, input))
+    .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())[0];
+}
+
+function imageFollowupPromptText() {
+  return "已收到图片，请补充展位号和具体问题，例如：A01 网络断了";
+}
+
+function attachReporterImagesToTicket(ticket: Ticket, input: IntakeMessageInput, actorName: string) {
+  const timestamp = now();
+  ticket.imageUrls = mergeImageUrls(ticket.imageUrls, imageUrlsOf(input));
+  ticket.timeline.push({
+    id: id("timeline"),
+    ticketId: ticket.id,
+    type: "reply",
+    body: "微信补充现场图片",
+    createdAt: timestamp,
+    actorName
+  });
+  ticket.updatedAt = timestamp;
+}
+
+async function processImageOnlyWorkOrderMessage(
+  state: AppState,
+  input: IntakeMessageInput,
+  personId: string | undefined,
+  chatIdentityId: string,
+  conversationId: string,
+  conversationExternalId: string,
+  operatorInitiated: boolean
+): Promise<WatchtowerResult | undefined> {
+  if (!isImageOnlyInput(input)) return undefined;
+
+  const recentTicket = recentReporterTicketForImages(state, input, personId, chatIdentityId, conversationExternalId);
+  if (recentTicket) {
+    const record = await recordRawMessage(state, input);
+    record.analysis = {
+      boothNumber: recentTicket.boothNumber,
+      issueType: recentTicket.issueType,
+      confidence: 0.85,
+      suggestedAction: "needs-review",
+      matchedTicketId: recentTicket.id,
+      reason: "同一微信会话短时间内补充图片，已归入刚创建或刚更新的工单"
+    };
+    attachReporterImagesToTicket(recentTicket, input, normalizeText(input.senderName) || "微信用户");
+    return { action: "processed", record };
+  }
+
+  const record = await recordRawMessage(state, input);
+  const needsIdentity = !personId && !operatorInitiated;
+  const missingFields: PendingWorkOrderField[] = needsIdentity ? ["identityGroup", "name", "phone"] : ["boothNumber"];
+  const promptSession = createPromptSession(state, input, conversationId, chatIdentityId, missingFields, record.id);
+  if (personId) promptSession.personId = personId;
+  const promptText = needsIdentity
+    ? `已收到图片。${identityPromptText(missingFields, enabledIdentityGroups(state))}`
+    : imageFollowupPromptText();
+  queuePrompt(state, input, conversationExternalId, chatIdentityId, promptText, promptSession.id);
+  return { action: "prompted", record };
+}
+
 function queuePrompt(
   state: AppState,
   input: IntakeMessageInput,
@@ -432,6 +761,7 @@ async function continueSession(
   if (session.missingFields.some((field) => ["identityGroup", "name", "phone"].includes(field))) {
     const missingFields = applyIdentityReplyToSession(state, session, input.text ?? "");
     if (missingFields.length > 0) {
+      accumulateWorkOrderDraft(state, session, input);
       session.lastPromptAt = now();
       const record = await recordRawMessage(state, input);
       queuePrompt(state, input, conversationExternalId, chatIdentityId, identityPromptText(missingFields, enabledIdentityGroups(state)), session.id);
@@ -553,6 +883,23 @@ export async function processWechatWatchtowerMessage(state: AppState, input: Int
   if (session && !activeSession) {
     removeSession(state, session.id);
   }
+  if (identityPerson && isHandlerPerson(state, identityPerson)) {
+    const handlerSession = activeSession
+      && !isIdentityRegistrationSession(activeSession)
+      && (isHandlerReplySession(activeSession) || hasHandlerProgressSignal(input.text ?? "", imageUrlsOf(input)))
+      ? activeSession
+      : undefined;
+    const handlerResult = await tryProcessHandlerReply(
+      state,
+      input,
+      identityPerson,
+      identity.id,
+      conversation.id,
+      conversation.externalConversationId,
+      handlerSession
+    );
+    if (handlerResult) return handlerResult;
+  }
   if (activeSession) {
     return continueSession(
       state,
@@ -566,6 +913,17 @@ export async function processWechatWatchtowerMessage(state: AppState, input: Int
   }
 
   const imageUrls = input.imageUrls ?? [];
+  const imageOnlyResult = await processImageOnlyWorkOrderMessage(
+    state,
+    input,
+    identityPerson?.id,
+    identity.id,
+    conversation.id,
+    conversation.externalConversationId,
+    operatorInitiated
+  );
+  if (imageOnlyResult) return imageOnlyResult;
+
   const analysis = await analyzeIntakeMessage(state, input);
   const operational = isConfiguredOperationalText(state, input.text ?? "", imageUrls) || analysis.suggestedAction !== "ignore";
 

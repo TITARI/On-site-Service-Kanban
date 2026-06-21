@@ -17,24 +17,24 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.29.0",
-    "lucide-react": "latest",
-    "mysql2": "^3.22.4",
-    "next": "latest",
-    "react": "latest",
-    "react-dom": "latest",
-    "xlsx": "latest",
-    "zod": "latest"
+    "lucide-react": "1.16.0",
+    "mysql2": "3.22.4",
+    "next": "16.2.6",
+    "react": "19.2.6",
+    "react-dom": "19.2.6",
+    "xlsx": "0.18.5",
+    "zod": "4.4.3"
   },
   "devDependencies": {
-    "@testing-library/jest-dom": "latest",
-    "@testing-library/react": "latest",
-    "@testing-library/user-event": "latest",
-    "@types/node": "latest",
-    "@types/react": "latest",
-    "@types/react-dom": "latest",
-    "@vitejs/plugin-react": "latest",
-    "jsdom": "latest",
-    "typescript": "latest",
-    "vitest": "latest"
+    "@testing-library/jest-dom": "6.9.1",
+    "@testing-library/react": "16.3.2",
+    "@testing-library/user-event": "14.6.1",
+    "@types/node": "25.9.1",
+    "@types/react": "19.2.15",
+    "@types/react-dom": "19.2.3",
+    "@vitejs/plugin-react": "6.0.2",
+    "jsdom": "29.1.1",
+    "typescript": "6.0.3",
+    "vitest": "4.1.7"
   }
 }

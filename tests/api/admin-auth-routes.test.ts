@@ -70,11 +70,17 @@ function session(
   };
 }
 
-function jsonRequest(url: string, body: unknown, cookie?: string) {
+function jsonRequest(
+  url: string,
+  body: unknown,
+  cookie?: string,
+  headers?: Record<string, string>
+) {
   return new Request(url, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
+      ...headers,
       ...(cookie ? { Cookie: cookie } : {})
     },
     body: JSON.stringify(body)
@@ -163,7 +169,7 @@ describe("admin auth routes", () => {
     expect(cookie).toContain("SameSite=Lax");
   });
 
-  it("allows admin123 as the compatibility bootstrap password when no env override is set", async () => {
+  it("allows admin123 as the non-production compatibility bootstrap password when no env override is set", async () => {
     const route = await import("@/app/api/admin/auth/bootstrap/route");
 
     const response = await route.POST(jsonRequest(
@@ -177,6 +183,29 @@ describe("admin auth routes", () => {
       expect.stringMatching(/^[a-f0-9]{64}$/),
       expect.stringMatching(/^20\d\d-/)
     );
+  });
+
+  it("rate-limits repeated first-admin bootstrap attempts from the same client", async () => {
+    vi.stubEnv("ADMIN_BOOTSTRAP_PASSWORD", "legacy-secret");
+    const route = await import("@/app/api/admin/auth/bootstrap/route");
+    const request = () => jsonRequest(
+      "https://board.example/api/admin/auth/bootstrap",
+      bootstrapBody({ legacyPassword: "wrong-secret" }),
+      undefined,
+      { "x-forwarded-for": "203.0.113.10, 10.0.0.1" }
+    );
+
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const response = await route.POST(request());
+      expect(response.status).toBe(401);
+    }
+    const limited = await route.POST(request());
+    const payload = await limited.json();
+
+    expect(limited.status).toBe(429);
+    expect(payload.message).toBe("初始化尝试过于频繁，请稍后再试");
+    expect(store.bootstrapStatus).toHaveBeenCalledTimes(5);
+    expect(store.bootstrapAdminWithSession).not.toHaveBeenCalled();
   });
 
   it("rejects bootstrap after completion without creating an admin", async () => {
