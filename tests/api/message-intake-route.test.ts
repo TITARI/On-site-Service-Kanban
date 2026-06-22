@@ -28,6 +28,12 @@ function request(body: unknown, headers: Record<string, string> = {}) {
   });
 }
 
+function enableWechat() {
+  store.state!.config.messageIntegrations = [
+    { id: "wechat", channel: "wechat", label: "微信 MCP", enabled: true, mcpServerName: "wechat-mcp", endpoint: "/api/integrations/wechat/messages", secretEnv: "WECHAT_MCP_SECRET", autoCreateTickets: true }
+  ];
+}
+
 beforeEach(() => {
   delete process.env.WECOM_MCP_SECRET;
   delete process.env.WECHAT_MCP_SECRET;
@@ -106,9 +112,7 @@ describe("message intake route", () => {
   });
 
   it("prompts unknown WeChat users to register before creating a ticket", async () => {
-    store.state!.config.messageIntegrations = [
-      { id: "wechat", channel: "wechat", label: "微信 MCP", enabled: true, mcpServerName: "wechat-mcp", endpoint: "/api/integrations/wechat/messages", secretEnv: "WECHAT_MCP_SECRET", autoCreateTickets: true }
-    ];
+    enableWechat();
 
     const response = await POST(request({
       channel: "wechat",
@@ -129,9 +133,7 @@ describe("message intake route", () => {
   });
 
   it("registers a WeChat user and continues the pending request", async () => {
-    store.state!.config.messageIntegrations = [
-      { id: "wechat", channel: "wechat", label: "微信 MCP", enabled: true, mcpServerName: "wechat-mcp", endpoint: "/api/integrations/wechat/messages", secretEnv: "WECHAT_MCP_SECRET", autoCreateTickets: true }
-    ];
+    enableWechat();
 
     await POST(request({
       channel: "wechat",
@@ -164,9 +166,7 @@ describe("message intake route", () => {
   });
 
   it("keeps prompting for missing work-order fields after registration", async () => {
-    store.state!.config.messageIntegrations = [
-      { id: "wechat", channel: "wechat", label: "微信 MCP", enabled: true, mcpServerName: "wechat-mcp", endpoint: "/api/integrations/wechat/messages", secretEnv: "WECHAT_MCP_SECRET", autoCreateTickets: true }
-    ];
+    enableWechat();
 
     await POST(request({
       channel: "wechat",
@@ -195,5 +195,182 @@ describe("message intake route", () => {
     expect(store.state?.pendingWorkOrderSessions).toHaveLength(1);
     expect(store.state?.pendingWorkOrderSessions?.[0]).toMatchObject({ missingFields: ["boothNumber"] });
     expect(store.state?.outboundMessages?.at(-1)?.text).toContain("请补充展位号");
+  });
+
+  it("keeps image-only first messages through registration and ticket creation", async () => {
+    enableWechat();
+
+    const imageResponse = await POST(request({
+      channel: "wechat",
+      externalMessageId: "wx-image-first",
+      senderId: "wxid-image-first",
+      senderName: "图片用户",
+      senderGroup: "现场群",
+      sourceConversationId: "conv-image-first",
+      images: [{ url: "data:image/jpeg;base64,first" }]
+    }));
+
+    expect(imageResponse.status).toBe(200);
+    expect((await imageResponse.json()).action).toBe("prompted");
+    expect(store.state?.pendingWorkOrderSessions?.[0]).toMatchObject({
+      missingFields: ["identityGroup", "name", "phone"],
+      draftImages: ["data:image/jpeg;base64,first"]
+    });
+
+    const registerResponse = await POST(request({
+      channel: "wechat",
+      externalMessageId: "wx-image-register",
+      senderId: "wxid-image-first",
+      senderName: "图片用户",
+      senderGroup: "现场群",
+      sourceConversationId: "conv-image-first",
+      text: "注册 业务组 图片用户 13900139011"
+    }));
+
+    expect(registerResponse.status).toBe(200);
+    expect((await registerResponse.json()).action).toBe("prompted");
+    expect(store.state?.pendingWorkOrderSessions?.[0]).toMatchObject({
+      missingFields: ["boothNumber"],
+      draftImages: ["data:image/jpeg;base64,first"]
+    });
+
+    const textResponse = await POST(request({
+      channel: "wechat",
+      externalMessageId: "wx-image-text",
+      senderId: "wxid-image-first",
+      senderName: "图片用户",
+      senderGroup: "现场群",
+      sourceConversationId: "conv-image-first",
+      text: "A01 网络断了，扫码收款失败"
+    }));
+
+    expect(textResponse.status).toBe(200);
+    expect((await textResponse.json()).action).toBe("processed");
+    expect(store.state?.pendingWorkOrderSessions).toEqual([]);
+    expect(store.state?.tickets.at(-1)).toMatchObject({
+      boothNumber: "A01",
+      issueType: "网络",
+      submitterName: "图片用户",
+      imageUrls: ["data:image/jpeg;base64,first"]
+    });
+  });
+
+  it("attaches image-only follow-ups to the latest ticket from the same REST conversation", async () => {
+    enableWechat();
+
+    await POST(request({
+      channel: "wechat",
+      externalMessageId: "wx-follow-register",
+      senderId: "wxid-follow",
+      senderName: "补图用户",
+      senderGroup: "现场群",
+      sourceConversationId: "conv-follow",
+      text: "注册 业务组 补图用户 13900139012"
+    }));
+    await POST(request({
+      channel: "wechat",
+      externalMessageId: "wx-follow-create",
+      senderId: "wxid-follow",
+      senderName: "补图用户",
+      senderGroup: "现场群",
+      sourceConversationId: "conv-follow",
+      text: "A01 网络断了，扫码收款失败"
+    }));
+
+    const ticket = store.state!.tickets.at(-1)!;
+    const response = await POST(request({
+      channel: "wechat",
+      externalMessageId: "wx-follow-image",
+      senderId: "wxid-follow",
+      senderName: "补图用户",
+      senderGroup: "现场群",
+      sourceConversationId: "conv-follow",
+      image_urls: ["data:image/jpeg;base64,after"]
+    }));
+
+    expect(response.status).toBe(200);
+    expect((await response.json()).action).toBe("processed");
+    expect(ticket.imageUrls).toEqual(["data:image/jpeg;base64,after"]);
+    expect(store.state?.messageRecords.at(-1)?.analysis).toMatchObject({
+      matchedTicketId: ticket.id,
+      reason: expect.stringContaining("补充图片")
+    });
+  });
+
+  it("updates an assigned ticket when the handler sends a completion receipt with images", async () => {
+    enableWechat();
+    const timestamp = "2026-05-22T08:00:00.000Z";
+    store.state!.people = [{
+      id: "person-builder",
+      name: "李工",
+      phone: "13900139014",
+      role: "handler",
+      groupName: "搭建组",
+      enabled: true,
+      createdAt: timestamp,
+      updatedAt: timestamp
+    }];
+    store.state!.chatIdentities = [{
+      id: "identity-builder",
+      platform: "wechat",
+      externalUserId: "wxid-builder",
+      displayName: "李工微信",
+      personId: "person-builder",
+      verifiedBy: "phone",
+      verifiedAt: timestamp,
+      firstSeenAt: timestamp,
+      lastSeenAt: timestamp
+    }];
+    store.state!.tickets.push({
+      id: "ticket-builder",
+      title: "A01 星河科技 搭建",
+      boothNumber: "A01",
+      companyName: "上海星河科技有限公司",
+      companyShortName: "星河科技",
+      description: "A01 门头松动",
+      imageUrls: [],
+      issueType: "搭建",
+      submitterId: "person-reporter",
+      submitterName: "王宁",
+      submitterPhone: "13700137000",
+      reporterChatIdentityId: "identity-reporter",
+      sourceConversationId: "客户群",
+      feedbackUsers: [],
+      status: "处理中",
+      acceptedAt: timestamp,
+      assignmentGroup: "搭建组",
+      urgeCount: 0,
+      urgeLevel: 0,
+      priorityScore: 20,
+      aiDecisions: [],
+      replies: [],
+      timeline: [{ id: "timeline-builder", ticketId: "ticket-builder", type: "submitted", body: "A01 门头松动", createdAt: timestamp, actorName: "王宁" }],
+      createdAt: timestamp,
+      updatedAt: timestamp
+    });
+
+    const response = await POST(request({
+      channel: "wechat",
+      externalMessageId: "wx-builder-done",
+      senderId: "wxid-builder",
+      senderName: "李工微信",
+      senderGroup: "搭建组",
+      sourceConversationId: "搭建组",
+      text: "A01 已处理完成，现场测试正常",
+      imageUrls: ["data:image/jpeg;base64,done"]
+    }));
+
+    expect(response.status).toBe(200);
+    expect((await response.json()).action).toBe("processed");
+    const ticket = store.state!.tickets[0];
+    expect(ticket.status).toBe("已解决");
+    expect(ticket.replies.at(-1)).toMatchObject({
+      authorName: "李工",
+      role: "handler",
+      imageUrls: ["data:image/jpeg;base64,done"]
+    });
+    expect(store.state?.outboundMessages?.some((message) => (
+      message.targetName === "客户群" && message.text.includes("工单已解决：A01 星河科技 搭建")
+    ))).toBe(true);
   });
 });

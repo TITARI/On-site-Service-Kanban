@@ -671,7 +671,14 @@ function recentReporterTicketForImages(
   return state.tickets
     .filter((ticket) => ticket.status !== "已关闭")
     .filter((ticket) => reporterTicketMatches(ticket, personId, chatIdentityId, conversationExternalId))
-    .filter((ticket) => isWithinMediaWindow(ticket.createdAt, input) || isWithinMediaWindow(ticket.updatedAt, input))
+    .filter((ticket) => (
+      isWithinMediaWindow(ticket.createdAt, input) ||
+      isWithinMediaWindow(ticket.updatedAt, input) ||
+      (state.messageRecords ?? []).some((record) => (
+        record.analysis.matchedTicketId === ticket.id &&
+        (isWithinMediaWindow(record.receivedAt, input) || isWithinMediaWindow(record.createdAt, input))
+      ))
+    ))
     .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())[0];
 }
 

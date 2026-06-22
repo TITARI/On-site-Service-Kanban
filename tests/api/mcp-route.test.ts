@@ -1,10 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import type { AppState } from "@/lib/domain/app-state";
 import type { AppRepository } from "@/lib/repositories/app-repository";
 import { defaultConfig } from "@/lib/seed";
+import { processWechatWatchtowerMessage } from "@/lib/services/wechat-watchtower-service";
 
 const store = vi.hoisted(() => ({
+  state: undefined as AppState | undefined,
   runAutoAcceptance: vi.fn(),
   getConfig: vi.fn(),
   processWechatMessage: vi.fn(),
@@ -43,6 +46,13 @@ function contentResult<T extends Record<string, unknown>>(result: Awaited<Return
   throw new Error("Tool result did not contain structured content or JSON text");
 }
 
+async function submitWechatEvent(client: Client, event: Record<string, unknown>) {
+  return contentResult<{ receipts: Array<{ messageId: string; action: string; inboundMessageId?: string }> }>(await client.callTool({
+    name: "submit_wechat_events",
+    arguments: { deviceId: "device-a", events: [event] }
+  }));
+}
+
 async function connectClient(token = "test-token") {
   const client = new Client({ name: "wxauto-route-test", version: "0.1.0" });
   const transport = new StreamableHTTPClientTransport(new URL("https://board.example/api/mcp"), {
@@ -53,9 +63,32 @@ async function connectClient(token = "test-token") {
   return client;
 }
 
+function mcpState(): AppState {
+  return {
+    booths: [
+      { boothNumber: "A01", companyName: "上海星河科技有限公司", companyShortName: "星河科技", salesOwner: "王宁", builder: "青木搭建" }
+    ],
+    tickets: [],
+    messageRecords: [],
+    people: [],
+    chatIdentities: [],
+    conversations: [],
+    pendingWorkOrderSessions: [],
+    outboundMessages: [],
+    config: {
+      ...defaultConfig(),
+      wxautoMcp: { enabled: true, endpoint: "/api/mcp", accessToken: "test-token", autoCreateTickets: true },
+      messageIntegrations: [
+        { id: "wechat", channel: "wechat", label: "wxauto 桌面服务", enabled: true, mcpServerName: "wxauto-desktop", endpoint: "/api/mcp", secretEnv: "WXAUTO_MCP_TOKEN", autoCreateTickets: true }
+      ]
+    }
+  };
+}
+
 beforeEach(() => {
   process.env.WXAUTO_MCP_TOKEN = "test-token";
   delete process.env.WECHAT_MCP_SECRET;
+  store.state = undefined;
   store.runAutoAcceptance.mockReset().mockResolvedValue(undefined);
   store.getConfig.mockReset().mockResolvedValue({
     ...defaultConfig(),
@@ -168,6 +201,160 @@ describe("POST /api/mcp", () => {
         senderName: "张三",
         senderGroup: "conv-site"
       }));
+    } finally {
+      await client.close();
+    }
+  });
+
+  it("keeps image work orders intact through MCP event submission", async () => {
+    store.state = mcpState();
+    store.getConfig.mockImplementation(async () => store.state!.config);
+    store.processWechatMessage.mockImplementation(async (input) => processWechatWatchtowerMessage(store.state!, input));
+
+    const client = await connectClient();
+    try {
+      const image = await submitWechatEvent(client, {
+        messageId: "mcp-image-first",
+        sequence: 1,
+        conversationId: "conv-image",
+        conversationType: "group",
+        senderId: "wxid-image",
+        senderName: "图片用户",
+        text: "",
+        imageUrls: ["data:image/jpeg;base64,first"],
+        receivedAt: "2026-06-05T08:00:00.000Z"
+      });
+      expect(image.receipts[0]).toMatchObject({ messageId: "mcp-image-first", action: "prompted" });
+      expect(store.state.pendingWorkOrderSessions?.[0]).toMatchObject({
+        missingFields: ["identityGroup", "name", "phone"],
+        draftImages: ["data:image/jpeg;base64,first"]
+      });
+
+      const registration = await submitWechatEvent(client, {
+        messageId: "mcp-image-register",
+        sequence: 1,
+        conversationId: "conv-image",
+        conversationType: "group",
+        senderId: "wxid-image",
+        senderName: "图片用户",
+        text: "注册 业务组 图片用户 13900139011",
+        receivedAt: "2026-06-05T08:00:10.000Z"
+      });
+      expect(registration.receipts[0]).toMatchObject({ messageId: "mcp-image-register", action: "prompted" });
+
+      const detail = await submitWechatEvent(client, {
+        messageId: "mcp-image-detail",
+        sequence: 1,
+        conversationId: "conv-image",
+        conversationType: "group",
+        senderId: "wxid-image",
+        senderName: "图片用户",
+        text: "A01 网络断了，扫码收款失败",
+        receivedAt: "2026-06-05T08:00:20.000Z"
+      });
+      expect(detail.receipts[0]).toMatchObject({ messageId: "mcp-image-detail", action: "processed" });
+      expect(store.state.tickets.at(-1)).toMatchObject({
+        boothNumber: "A01",
+        issueType: "网络",
+        imageUrls: ["data:image/jpeg;base64,first"]
+      });
+
+      const followup = await submitWechatEvent(client, {
+        messageId: "mcp-image-followup",
+        sequence: 1,
+        conversationId: "conv-image",
+        conversationType: "group",
+        senderId: "wxid-image",
+        senderName: "图片用户",
+        text: "",
+        imageUrls: ["data:image/jpeg;base64,after"],
+        receivedAt: "2026-06-05T08:00:30.000Z"
+      });
+      expect(followup.receipts[0]).toMatchObject({ messageId: "mcp-image-followup", action: "processed" });
+      expect(store.state.tickets.at(-1)?.imageUrls).toEqual([
+        "data:image/jpeg;base64,first",
+        "data:image/jpeg;base64,after"
+      ]);
+    } finally {
+      await client.close();
+    }
+  });
+
+  it("updates tickets from handler image receipts submitted through MCP", async () => {
+    store.state = mcpState();
+    store.getConfig.mockImplementation(async () => store.state!.config);
+    store.processWechatMessage.mockImplementation(async (input) => processWechatWatchtowerMessage(store.state!, input));
+    const timestamp = "2026-06-05T08:00:00.000Z";
+    store.state.people = [{
+      id: "person-builder",
+      name: "李工",
+      phone: "13900139014",
+      role: "handler",
+      groupName: "搭建组",
+      enabled: true,
+      createdAt: timestamp,
+      updatedAt: timestamp
+    }];
+    store.state.chatIdentities = [{
+      id: "identity-builder",
+      platform: "wechat",
+      externalUserId: "wxid-builder",
+      displayName: "李工微信",
+      personId: "person-builder",
+      verifiedBy: "phone",
+      verifiedAt: timestamp,
+      firstSeenAt: timestamp,
+      lastSeenAt: timestamp
+    }];
+    store.state.tickets.push({
+      id: "ticket-builder",
+      title: "A01 星河科技 搭建",
+      boothNumber: "A01",
+      companyName: "上海星河科技有限公司",
+      companyShortName: "星河科技",
+      description: "A01 门头松动",
+      imageUrls: [],
+      issueType: "搭建",
+      submitterId: "person-reporter",
+      submitterName: "王宁",
+      submitterPhone: "13700137000",
+      reporterChatIdentityId: "identity-reporter",
+      sourceConversationId: "客户群",
+      feedbackUsers: [],
+      status: "处理中",
+      acceptedAt: timestamp,
+      assignmentGroup: "搭建组",
+      urgeCount: 0,
+      urgeLevel: 0,
+      priorityScore: 20,
+      aiDecisions: [],
+      replies: [],
+      timeline: [{ id: "timeline-builder", ticketId: "ticket-builder", type: "submitted", body: "A01 门头松动", createdAt: timestamp, actorName: "王宁" }],
+      createdAt: timestamp,
+      updatedAt: timestamp
+    });
+
+    const client = await connectClient();
+    try {
+      const result = await submitWechatEvent(client, {
+        messageId: "mcp-builder-done",
+        sequence: 1,
+        conversationId: "搭建组",
+        conversationType: "group",
+        senderId: "wxid-builder",
+        senderName: "李工微信",
+        text: "A01 已处理完成，现场测试正常",
+        imageUrls: ["data:image/jpeg;base64,done"],
+        receivedAt: "2026-06-05T08:01:00.000Z"
+      });
+
+      expect(result.receipts[0]).toMatchObject({ messageId: "mcp-builder-done", action: "processed" });
+      expect(store.state.tickets[0].status).toBe("已解决");
+      expect(store.state.tickets[0].replies.at(-1)).toMatchObject({
+        authorName: "李工",
+        role: "handler",
+        imageUrls: ["data:image/jpeg;base64,done"]
+      });
     } finally {
       await client.close();
     }
