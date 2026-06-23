@@ -1,5 +1,6 @@
 import { decideDeduplication } from "../domain/deduplication";
 import type { AiDecision, AiModelConfig, ImportSystemField, Ticket } from "../domain/types";
+import { assertApiKeyEnv, validateAiEndpoint } from "./endpoint-validation";
 import type { AiProvider, ExhibitorFieldMappingContext, ExhibitorFieldMappingDecision } from "./types";
 
 type ChatCompletionResponse = {
@@ -10,7 +11,10 @@ type ChatCompletionResponse = {
 
 function readApiKey(model: AiModelConfig) {
   if (model.apiKey) return model.apiKey;
-  if (model.apiKeyEnv) return process.env[model.apiKeyEnv];
+  if (model.apiKeyEnv) {
+    assertApiKeyEnv(model.apiKeyEnv);
+    return process.env[model.apiKeyEnv];
+  }
   return undefined;
 }
 
@@ -45,6 +49,8 @@ function pressureLevel(value: unknown) {
 
 async function callChatJson(model: AiModelConfig, system: string, payload: Record<string, unknown>) {
   if (!model.endpoint) throw new Error("智能接口地址未配置");
+  const endpointValidation = validateAiEndpoint(model.endpoint);
+  if (!endpointValidation.ok) throw new Error(`AI endpoint invalid: ${endpointValidation.reason}`);
   const startedAt = Date.now();
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), model.timeoutMs);
