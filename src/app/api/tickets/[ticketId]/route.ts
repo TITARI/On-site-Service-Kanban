@@ -40,14 +40,19 @@ function canActorClaimTicket(actor: { groupName: string }, ticket: { handlerId?:
 export async function GET(request: Request, { params }: { params: Promise<{ ticketId: string }> }) {
   const { ticketId } = await params;
   const repository = getAppRepository();
+  let actor;
   try {
-    await resolveRequestActor(repository, request, "mobile");
+    actor = await resolveRequestActor(repository, request, "mobile");
   } catch (error) {
     const response = authErrorResponse(error);
     return NextResponse.json({ message: response.message }, { status: response.status });
   }
   await repository.runAutoAcceptance();
-  const ticket = await repository.getTicket(ticketId);
+  const ticket = await repository.getTicket(ticketId, {
+    personId: actor.personId,
+    groupName: actor.groupName,
+    permissions: actor.permissions
+  });
   if (!ticket) return NextResponse.json({ message: "工单不存在" }, { status: 404 });
   return NextResponse.json({ ticket });
 }

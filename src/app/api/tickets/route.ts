@@ -13,14 +13,19 @@ const submitSchema = z.object({
 
 export async function GET(request: Request) {
   const repository = getAppRepository();
+  let actor;
   try {
-    await resolveRequestActor(repository, request, "mobile");
+    actor = await resolveRequestActor(repository, request, "mobile");
   } catch (error) {
     const response = authErrorResponse(error);
     return NextResponse.json({ message: response.message }, { status: response.status });
   }
   await repository.runAutoAcceptance();
-  const tickets = await repository.listTicketSummaries();
+  const tickets = await repository.listTicketSummaries({
+    personId: actor.personId,
+    groupName: actor.groupName,
+    permissions: actor.permissions
+  });
   return NextResponse.json({ tickets });
 }
 

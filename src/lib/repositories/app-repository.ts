@@ -91,6 +91,29 @@ export type AdminBootstrapData = {
   config: AppConfig;
 };
 
+export type TicketActor = {
+  personId: string;
+  groupName: string;
+  permissions: string[];
+};
+
+export function isTicketVisibleTo(
+  ticket: { submitterId: string; handlerId?: string; assignmentGroup?: string },
+  actor: TicketActor
+) {
+  return actor.permissions.includes("admin.access")
+    || ticket.submitterId === actor.personId
+    || ticket.handlerId === actor.personId
+    || ticket.assignmentGroup === actor.groupName;
+}
+
+function visibleTickets<T extends { submitterId: string; handlerId?: string; assignmentGroup?: string }>(
+  tickets: T[],
+  actor?: TicketActor
+) {
+  return actor ? tickets.filter((ticket) => isTicketVisibleTo(ticket, actor)) : tickets;
+}
+
 export type AppRepository = {
   kind: StorageMode;
   runAutoAcceptance(now?: Date): Promise<void>;
@@ -100,8 +123,8 @@ export type AppRepository = {
   saveConfig(config: AppConfig): Promise<AppConfig>;
   saveKeywordGroups(keywordGroups: KeywordGroup[]): Promise<KeywordGroup[]>;
   importBooths(booths: BoothRecord[]): Promise<BoothRecord[]>;
-  listTicketSummaries(): Promise<TicketSummary[]>;
-  getTicket(ticketId: string): Promise<Ticket | undefined>;
+  listTicketSummaries(actor?: TicketActor): Promise<TicketSummary[]>;
+  getTicket(ticketId: string, actor?: TicketActor): Promise<Ticket | undefined>;
   saveTicket(ticket: Ticket, options?: { notificationText?: string }): Promise<Ticket>;
   submitTicket(input: SubmitTicketInput): Promise<SubmitTicketResult>;
   processWechatMessage(input: IntakeMessageInput): Promise<WatchtowerResult>;
@@ -332,13 +355,14 @@ export function createFileAppRepository(store: StateFileRepository = {
       state.booths = booths;
       return state.booths;
     }),
-    listTicketSummaries: async () => {
+    listTicketSummaries: async (actor) => {
       const state = await store.readState();
-      return state.tickets.map(toTicketSummary);
+      return visibleTickets(state.tickets, actor).map(toTicketSummary);
     },
-    getTicket: async (ticketId) => {
+    getTicket: async (ticketId, actor) => {
       const state = await store.readState();
-      return state.tickets.find((ticket) => ticket.id === ticketId);
+      const ticket = state.tickets.find((item) => item.id === ticketId);
+      return ticket && (!actor || isTicketVisibleTo(ticket, actor)) ? ticket : undefined;
     },
     saveTicket: async (ticket, options = {}) => updateState((state) => {
       const existingIndex = state.tickets.findIndex((item) => item.id === ticket.id);
@@ -643,8 +667,11 @@ export function createMariaDbAppRepository(store: AutoAcceptanceStore = new Mari
     saveConfig: (config) => store.saveConfig(config),
     saveKeywordGroups: (keywordGroups) => store.saveKeywordGroups(keywordGroups),
     importBooths: (booths) => store.importBooths(booths),
-    listTicketSummaries: () => store.listTicketSummaries(),
-    getTicket: (ticketId) => store.getTicket(ticketId),
+    listTicketSummaries: async (actor) => visibleTickets(await store.listTicketSummaries(), actor),
+    getTicket: async (ticketId, actor) => {
+      const ticket = await store.getTicket(ticketId);
+      return ticket && (!actor || isTicketVisibleTo(ticket, actor)) ? ticket : undefined;
+    },
     saveTicket: (ticket, options) => store.saveTicket(ticket, options),
     submitTicket: (input) => store.submitTicket(input),
     processWechatMessage: (input) => store.processWechatMessage(input),
