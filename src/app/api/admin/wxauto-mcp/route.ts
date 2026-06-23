@@ -11,7 +11,7 @@ function generateAccessToken() {
 
 function tokenPreview(token?: string) {
   if (!token) return undefined;
-  if (token.length <= 10) return "已设置";
+  if (token.length <= 12) return "已设置";
   return `${token.slice(0, 8)}...${token.slice(-4)}`;
 }
 
@@ -55,8 +55,16 @@ export async function GET(request: Request) {
   const unauthorized = await requireAdminAccess(request);
   if (unauthorized) return unauthorized;
 
-  const result = await saveWxautoMcpConfig({ enabled: true });
-  return NextResponse.json(result);
+  const config = await getAppRepository().getConfig();
+  const wxautoMcp = normalizeWxautoMcpConfig(config.wxautoMcp, config.messageIntegrations);
+  const preview = tokenPreview(wxautoMcp.accessToken);
+  return NextResponse.json({
+    wxautoMcp: {
+      ...wxautoMcp,
+      accessToken: preview,
+      tokenPreview: preview
+    }
+  });
 }
 
 export async function PUT(request: Request) {
@@ -80,4 +88,13 @@ export async function PUT(request: Request) {
   } catch (error) {
     return badRequest(errorMessage(error));
   }
+}
+
+export async function POST(request: Request) {
+  const unauthorized = await requireAdminAccess(request);
+  if (unauthorized) return unauthorized;
+
+  const accessToken = generateAccessToken();
+  await saveWxautoMcpConfig({ accessToken });
+  return NextResponse.json({ accessToken });
 }

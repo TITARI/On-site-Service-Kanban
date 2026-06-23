@@ -189,6 +189,7 @@ describe("admin backend route authorization", () => {
 
     await expectNotLoggedIn(await route.GET(new Request("http://localhost/api/admin/wxauto-mcp")));
     await expectNotLoggedIn(await route.PUT(jsonRequest("http://localhost/api/admin/wxauto-mcp", "PUT", { enabled: true })));
+    await expectNotLoggedIn(await route.POST(new Request("http://localhost/api/admin/wxauto-mcp", { method: "POST" })));
 
     expect(store.getConfig).not.toHaveBeenCalled();
     expect(store.saveConfig).not.toHaveBeenCalled();

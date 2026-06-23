@@ -733,16 +733,8 @@ describe("AdminConfigCenter user groups", () => {
   it("rotates the wxauto access token from the system page", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
-      if (url === "/api/admin/wxauto-mcp" && init?.method === "PUT") {
-        return new Response(JSON.stringify({
-          wxautoMcp: {
-            enabled: true,
-            endpoint: "/api/mcp",
-            accessToken: "new-token",
-            tokenPreview: "new...oken",
-            autoCreateTickets: false
-          }
-        }), { status: 200 });
+      if (url === "/api/admin/wxauto-mcp" && init?.method === "POST") {
+        return new Response(JSON.stringify({ accessToken: "new-token" }), { status: 200 });
       }
       return new Response(JSON.stringify({
         wxautoMcp: {
@@ -762,9 +754,9 @@ describe("AdminConfigCenter user groups", () => {
     await screen.findByRole("heading", { name: "wxauto 桌面服务" });
     await user.click(screen.getByRole("button", { name: "重置访问令牌" }));
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/admin/wxauto-mcp", expect.objectContaining({ method: "PUT" })));
-    const putCall = fetchMock.mock.calls.find((call) => call[0] === "/api/admin/wxauto-mcp" && call[1]?.method === "PUT");
-    expect(JSON.parse(String(putCall?.[1]?.body))).toEqual({ rotateToken: true });
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/admin/wxauto-mcp", expect.objectContaining({ method: "POST" })));
+    const tokenInput = screen.getByLabelText("wxauto访问令牌") as HTMLInputElement;
+    await waitFor(() => expect(tokenInput.value).toBe("new-token"));
   });
 
   it("edits auto acceptance settings on the system page", async () => {

@@ -40,6 +40,13 @@ function put(body: unknown) {
   });
 }
 
+function post() {
+  return new Request("http://localhost/api/admin/wxauto-mcp", {
+    method: "POST",
+    headers: { Cookie: `${SESSION_COOKIE_NAMES.admin}=${ADMIN_TOKEN}` }
+  });
+}
+
 function adminSession() {
   return {
     actor: {
@@ -76,26 +83,26 @@ beforeEach(() => {
 });
 
 describe("/api/admin/wxauto-mcp", () => {
-  it("starts the embedded MCP service and ensures it has a token when the admin page loads", async () => {
+  it("reads MCP config without saving, enabling, or exposing the full token", async () => {
+    store.config = {
+      ...defaultConfig(),
+      wxautoMcp: {
+        enabled: false,
+        endpoint: "/api/mcp",
+        accessToken: "wxauto_1234567890abcdef",
+        autoCreateTickets: false
+      }
+    };
+
     const response = await route.GET(get());
 
     expect(response.status).toBe(200);
     const body = await response.json();
     expect(body.wxautoMcp.endpoint).toBe("/api/mcp");
-    expect(body.wxautoMcp.enabled).toBe(true);
-    expect(body.wxautoMcp.accessToken).toMatch(/^wxauto_/);
-    expect(store.saveConfig).toHaveBeenCalledWith(expect.objectContaining({
-      wxautoMcp: expect.objectContaining({ enabled: true, endpoint: "/api/mcp" }),
-      messageIntegrations: expect.arrayContaining([
-        expect.objectContaining({
-          channel: "wechat",
-          label: "wxauto 桌面服务",
-          enabled: true,
-          endpoint: "/api/mcp",
-          secretEnv: "WXAUTO_MCP_TOKEN"
-        })
-      ])
-    }));
+    expect(body.wxautoMcp.enabled).toBe(false);
+    expect(body.wxautoMcp.accessToken).toBe("wxauto_1...cdef");
+    expect(store.config!.wxautoMcp?.enabled).toBe(false);
+    expect(store.saveConfig).not.toHaveBeenCalled();
   });
 
   it("saves enabled state, auto-create setting, and a manually entered token", async () => {
@@ -118,13 +125,52 @@ describe("/api/admin/wxauto-mcp", () => {
     });
   });
 
-  it("rotates the token on demand", async () => {
+  it("rotates the token with POST", async () => {
     store.config = { ...defaultConfig(), wxautoMcp: { enabled: true, endpoint: "/api/mcp", accessToken: "old-token", autoCreateTickets: false } };
 
-    const response = await route.PUT(put({ rotateToken: true }));
+    const response = await route.POST(post());
 
     expect(response.status).toBe(200);
-    expect(store.config!.wxautoMcp?.accessToken).toMatch(/^wxauto_/);
-    expect(store.config!.wxautoMcp?.accessToken).not.toBe("old-token");
+    const body = await response.json();
+    expect(body.accessToken).toMatch(/^wxauto_/);
+    expect(store.config!.wxautoMcp?.accessToken).toBe(body.accessToken);
+    expect(body.accessToken).not.toBe("old-token");
+  });
+
+  it("keeps customized wechat integration fields when wxauto config is saved", async () => {
+    store.config = {
+      ...defaultConfig(),
+      messageIntegrations: [
+        {
+          id: "wechat",
+          channel: "wechat",
+          label: "自定义微信服务",
+          enabled: false,
+          mcpServerName: "custom-server",
+          endpoint: "https://wx.example.com/mcp",
+          secretEnv: "CUSTOM_WX_TOKEN",
+          autoCreateTickets: false
+        }
+      ],
+      wxautoMcp: {
+        enabled: false,
+        endpoint: "/api/mcp",
+        accessToken: "manual-token",
+        autoCreateTickets: false
+      }
+    };
+
+    await route.GET(get());
+    const response = await route.PUT(put({ enabled: true, autoCreateTickets: true }));
+
+    expect(response.status).toBe(200);
+    expect(store.config!.messageIntegrations?.find((item) => item.channel === "wechat")).toMatchObject({
+      label: "自定义微信服务",
+      enabled: true,
+      mcpServerName: "wxauto-desktop",
+      endpoint: "https://wx.example.com/mcp",
+      secretEnv: "CUSTOM_WX_TOKEN",
+      autoCreateTickets: true
+    });
   });
 });

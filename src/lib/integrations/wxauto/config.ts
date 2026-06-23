@@ -40,11 +40,8 @@ export function syncWxautoMcpMessageIntegration(
     if (item.channel !== "wechat") return item;
     return {
       ...item,
-      label: "wxauto 桌面服务",
       enabled: wxautoMcp.enabled,
       mcpServerName: WXAUTO_MCP_SERVER_NAME,
-      endpoint: WXAUTO_MCP_ENDPOINT,
-      secretEnv: WXAUTO_MCP_SECRET_ENV,
       autoCreateTickets: wxautoMcp.autoCreateTickets
     };
   });
