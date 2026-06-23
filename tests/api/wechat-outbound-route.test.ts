@@ -114,6 +114,28 @@ describe("wechat outbound routes", () => {
     expect(store.claimOutboundMessages).not.toHaveBeenCalled();
   });
 
+  it("rejects outbound claims when the configured MCP secret env is missing", async () => {
+    delete process.env.WECHAT_MCP_SECRET;
+    queueOutboundMessage(store.state!, { channel: "wechat", targetName: "张三", text: "请补充展位号" });
+
+    const response = await outboundRoute.POST(request({ limit: 5 }, { "x-mcp-secret": "bridge-secret" }));
+
+    expect(response.status).toBe(401);
+    expect(store.claimOutboundMessages).not.toHaveBeenCalled();
+  });
+
+  it("rejects outbound completion when the configured MCP secret env is missing", async () => {
+    delete process.env.WECHAT_MCP_SECRET;
+    const message = queueOutboundMessage(store.state!, { channel: "wechat", targetName: "张三", text: "已创建工单" });
+
+    const response = await outboundResultRoute.PATCH(request({ status: "sent" }, { "x-mcp-secret": "bridge-secret" }), {
+      params: Promise.resolve({ messageId: message.id })
+    });
+
+    expect(response.status).toBe(401);
+    expect(store.markOutboundMessage).not.toHaveBeenCalled();
+  });
+
   it("uses the configured WeChat integration secret env", async () => {
     store.state!.config.messageIntegrations = [
       { id: "wechat", channel: "wechat", label: "微信 MCP", enabled: true, mcpServerName: "wechat-mcp", endpoint: "/api/integrations/wechat/messages", secretEnv: "CUSTOM_WECHAT_SECRET", autoCreateTickets: false }

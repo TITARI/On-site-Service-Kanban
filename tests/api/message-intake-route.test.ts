@@ -10,6 +10,11 @@ const store = vi.hoisted(() => ({
   processWechatMessage: vi.fn()
 }));
 
+const MCP_SECRETS = {
+  wechat: "wechat-secret",
+  wecom: "wecom-secret"
+} as const;
+
 vi.mock("@/lib/repositories/app-repository", () => ({
   getAppRepository: (): AppRepository => ({
     kind: "mariadb",
@@ -21,9 +26,11 @@ vi.mock("@/lib/repositories/app-repository", () => ({
 const { POST } = await import("@/app/api/integrations/wechat/messages/route");
 
 function request(body: unknown, headers: Record<string, string> = {}) {
+  const channel = typeof body === "object" && body !== null && "channel" in body ? body.channel : undefined;
+  const secret = channel === "wechat" || channel === "wecom" ? MCP_SECRETS[channel] : undefined;
   return new Request("http://localhost/api/integrations/wechat/messages", {
     method: "POST",
-    headers: { "Content-Type": "application/json", ...headers },
+    headers: { "Content-Type": "application/json", ...(secret ? { "x-mcp-secret": secret } : {}), ...headers },
     body: JSON.stringify(body)
   });
 }
@@ -35,8 +42,8 @@ function enableWechat() {
 }
 
 beforeEach(() => {
-  delete process.env.WECOM_MCP_SECRET;
-  delete process.env.WECHAT_MCP_SECRET;
+  process.env.WECOM_MCP_SECRET = MCP_SECRETS.wecom;
+  process.env.WECHAT_MCP_SECRET = MCP_SECRETS.wechat;
   store.state = {
     booths: [
       { boothNumber: "A01", companyName: "上海星河科技有限公司", companyShortName: "星河科技", salesOwner: "王宁", builder: "青木搭建" }
@@ -99,13 +106,24 @@ describe("message intake route", () => {
   });
 
   it("rejects messages when the configured MCP secret is wrong", async () => {
-    process.env.WECOM_MCP_SECRET = "secret-value";
-
     const response = await POST(request({
       channel: "wecom",
       senderName: "业务王宁",
       text: "A01 网络断了"
     }, { "x-mcp-secret": "bad-secret" }));
+
+    expect(response.status).toBe(401);
+    expect(store.processWechatMessage).not.toHaveBeenCalled();
+  });
+
+  it("rejects messages when the configured MCP secret env is missing", async () => {
+    delete process.env.WECOM_MCP_SECRET;
+
+    const response = await POST(request({
+      channel: "wecom",
+      senderName: "业务王宁",
+      text: "A01 网络断了"
+    }));
 
     expect(response.status).toBe(401);
     expect(store.processWechatMessage).not.toHaveBeenCalled();
