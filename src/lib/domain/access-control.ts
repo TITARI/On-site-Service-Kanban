@@ -78,6 +78,7 @@ export type MobileAccountInput = {
   name: string;
   phone: string;
   groupId: string;
+  ip?: string;
 };
 
 export type UserMutation = {

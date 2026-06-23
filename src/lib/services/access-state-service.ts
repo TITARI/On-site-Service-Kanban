@@ -575,8 +575,13 @@ export function upsertMobileAccountInState(
   const at = nowIso();
   let account = state.accounts.find((item) => item.loginName === phone);
   let person = account ? personForAccount(state, account) : undefined;
+  let created = false;
+  let groupChanged = false;
+  let previousGroupId: string | undefined;
+  let previousGroupName: string | undefined;
 
   if (!account) {
+    created = true;
     ({ account, person } = createPersonAndAccount(state, {
       name,
       phone,
@@ -595,14 +600,16 @@ export function upsertMobileAccountInState(
       : input.groupId;
     if (!nextGroupId) throw new Error("Mobile account has no user group");
     const group = enabledGroup(state, nextGroupId);
-    const groupChanged = person.groupId !== group.id;
+    groupChanged = person.groupId !== group.id;
+    previousGroupId = person.groupId;
+    previousGroupName = person.groupName;
 
-    person.name = name;
-    person.phone = phone;
-    person.groupId = group.id;
-    person.groupName = group.name;
-    person.role = roleForGroup(group);
-    person.updatedAt = at;
+    if (groupChanged) {
+      person.groupId = group.id;
+      person.groupName = group.name;
+      person.role = roleForGroup(group);
+      person.updatedAt = at;
+    }
     account.loginName = phone;
     account.updatedAt = at;
     ensureSingleAccountRole(state, account, group.id, at);
@@ -613,18 +620,31 @@ export function upsertMobileAccountInState(
   account.updatedAt = at;
   const actor = actorForAccount(state, account, "mobile");
   if (!actor) throw new Error("Mobile account access chain is disabled");
-  audit(
-    state,
-    "mobile.account.upsert",
-    "user",
-    person.id,
-    {
-      accountId: account.id,
-      groupId: actor.groupId,
-      created: person.createdAt === at
-    },
-    actor
-  );
+  if (created) {
+    audit(
+      state,
+      "mobile_account_created",
+      "user",
+      person.id,
+      { phone, name, groupId: actor.groupId, ip: input.ip },
+      actor
+    );
+  } else if (groupChanged) {
+    audit(
+      state,
+      "mobile_login_group_change",
+      "user",
+      person.id,
+      {
+        fromGroupId: previousGroupId,
+        toGroupId: actor.groupId,
+        fromGroupName: previousGroupName,
+        toGroupName: actor.groupName,
+        ip: input.ip
+      },
+      actor
+    );
+  }
   return { actor };
 }
 
