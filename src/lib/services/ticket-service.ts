@@ -6,6 +6,12 @@ import type { BoothRecord, Ticket } from "../domain/types";
 import { createTicketTitle, elapsedSinceAccepted } from "../domain/workflow";
 import type { AppState } from "../domain/app-state";
 
+const FALLBACK_ISSUE_TYPE = "综合服务";
+
+type TicketAiRouter = ReturnType<typeof createAiRouter>;
+type ClassifyDecision = Awaited<ReturnType<TicketAiRouter["classifyIssue"]>>;
+type DedupeDecision = Awaited<ReturnType<TicketAiRouter["dedupeIssue"]>>;
+
 export type SubmitTicketInput = {
   boothNumber: string;
   description: string;
@@ -54,6 +60,51 @@ function issueAssignmentGroup(state: AppState, issueType: string) {
   return state.config.issueTypes.find((item) => item.name === issueType)?.assignmentGroup;
 }
 
+async function safeClassify(ai: TicketAiRouter, boothNumber: string, description: string): Promise<ClassifyDecision | undefined> {
+  try {
+    return await ai.classifyIssue(boothNumber, description);
+  } catch (error) {
+    console.warn("[ticket-service] classifyIssue 失败，使用降级值", {
+      modelId: "fast",
+      scenario: "classify",
+      boothNumber,
+      descriptionLength: description.length,
+      error: error instanceof Error ? error.message : String(error),
+      timestamp: new Date().toISOString()
+    });
+    return undefined;
+  }
+}
+
+async function safeDedupe(
+  ai: TicketAiRouter,
+  boothNumber: string,
+  description: string,
+  candidates: Ticket[]
+): Promise<DedupeDecision> {
+  try {
+    return await ai.dedupeIssue(boothNumber, description, candidates);
+  } catch (error) {
+    console.warn("[ticket-service] dedupeIssue 失败，降级为创建新工单", {
+      modelId: "smart",
+      scenario: "dedupe",
+      boothNumber,
+      descriptionLength: description.length,
+      candidateCount: candidates.length,
+      error: error instanceof Error ? error.message : String(error),
+      timestamp: new Date().toISOString()
+    });
+    return {
+      modelId: "smart",
+      scenario: "dedupe",
+      confidence: 0,
+      action: "create",
+      suggestion: "AI dedupe 不可用，默认创建新工单",
+      latencyMs: 0
+    };
+  }
+}
+
 export function createTicketService({ state }: { state: AppState }) {
   const ai = createAiRouter({ models: state.config.aiModels, provider: createConfiguredAiProvider(), promptConfig: state.config });
 
@@ -64,11 +115,11 @@ export function createTicketService({ state }: { state: AppState }) {
       const description = input.description.trim();
       const booth = findBooth(state.booths, boothNumber);
       const classification = input.issueType === "自动"
-        ? await ai.classifyIssue(boothNumber, description)
+        ? await safeClassify(ai, boothNumber, description)
         : undefined;
-      const issueType = classification?.issueType ?? input.issueType;
+      const issueType = input.issueType === "自动" ? classification?.issueType ?? FALLBACK_ISSUE_TYPE : input.issueType;
       const candidates = state.tickets.filter((ticket) => ticket.boothNumber === boothNumber && ticket.status !== "已关闭");
-      const dedupe = await ai.dedupeIssue(boothNumber, description, candidates);
+      const dedupe = await safeDedupe(ai, boothNumber, description, candidates);
       const dedupeAction = decideDeduplication(dedupe.confidence);
       const matched = candidates.find((ticket) => ticket.id === dedupe.matchedTicketId);
 
