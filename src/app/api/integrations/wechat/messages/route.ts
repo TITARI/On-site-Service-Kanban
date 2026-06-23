@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { badRequest, errorMessage, parseJson } from "@/lib/api/errors";
+import { isWechatRequestAuthorized } from "@/lib/integrations/wechat/auth";
 import { getAppRepository } from "@/lib/repositories/app-repository";
 import type { IntakeMessageInput } from "@/lib/services/message-intake-service";
 
@@ -45,23 +46,6 @@ function normalizePayload(raw: z.infer<typeof messageSchema>): IntakeMessageInpu
   };
 }
 
-function configuredSecret(headerSecret: string | null, authorization: string | null) {
-  if (headerSecret) return headerSecret;
-  if (authorization?.toLowerCase().startsWith("bearer ")) return authorization.slice(7).trim();
-  return null;
-}
-
-function isAuthorized(request: Request, secretEnv?: string) {
-  if (!secretEnv) return true;
-  const expected = process.env[secretEnv];
-  if (!expected) return true;
-  const actual = configuredSecret(
-    request.headers.get("x-mcp-secret") ?? request.headers.get("x-wechat-mcp-secret"),
-    request.headers.get("authorization")
-  );
-  return actual === expected;
-}
-
 export async function POST(request: Request) {
   const repository = getAppRepository();
   let body: IntakeMessageInput;
@@ -75,7 +59,7 @@ export async function POST(request: Request) {
   const config = await repository.getConfig();
   const integration = config.messageIntegrations?.find((item) => item.channel === body.channel);
   if (!integration?.enabled) return badRequest("微信/企微 MCP 接入未启用");
-  if (!isAuthorized(request, integration.secretEnv)) return NextResponse.json({ message: "MCP 密钥校验失败" }, { status: 401 });
+  if (!isWechatRequestAuthorized(request, integration.secretEnv)) return NextResponse.json({ message: "MCP 密钥校验失败" }, { status: 401 });
 
   const result = await repository.processWechatMessage(body);
   return NextResponse.json(result);
