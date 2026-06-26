@@ -12,7 +12,7 @@ type ExhibitorImportWizardProps = {
 };
 
 type ImportStep = "upload" | "mapping" | "preview" | "complete";
-type InspectionStatus = "idle" | "inspecting" | "ready" | "previewing" | "error";
+type InspectionStatus = "idle" | "loading" | "inspecting" | "ready" | "previewing" | "error";
 
 type InspectResponse = {
   records?: BoothRecord[];
@@ -139,8 +139,19 @@ export function ExhibitorImportWizard({ isImporting, onClose, onImportFile }: Ex
   }
 
   async function applyImport() {
-    if (pendingFile) await onImportFile(pendingFile, chosenSheetNames);
-    setStep("complete");
+    if (!pendingFile) {
+      setStep("complete");
+      return;
+    }
+    try {
+      setStatus("loading");
+      setStatusMessage(null);
+      await onImportFile(pendingFile, chosenSheetNames);
+      setStep("complete");
+    } catch (error) {
+      setStatus("error");
+      setStatusMessage(error instanceof Error ? error.message : "导入失败，请重试或联系管理员");
+    }
   }
 
   return (
@@ -190,15 +201,19 @@ export function ExhibitorImportWizard({ isImporting, onClose, onImportFile }: Ex
         )}
 
         {step === "preview" && (
-          <ExhibitorImportPreviewStep
-            decisions={decisions}
-            recordCount={previewRecords.length}
-            unmatchedBuilderCount={unmatchedBuilderCount}
-            candidate={previewRecords[0]}
-            onDecisionChange={updateDecision}
-            onBack={() => setStep("mapping")}
-            onApply={() => void applyImport()}
-          />
+          <>
+            {status === "loading" && <div className="exhibitor-import-status loading-message" role="status">导入中...</div>}
+            {status === "error" && statusMessage && <div className="exhibitor-import-status error error-message" role="alert">{statusMessage}</div>}
+            <ExhibitorImportPreviewStep
+              decisions={decisions}
+              recordCount={previewRecords.length}
+              unmatchedBuilderCount={unmatchedBuilderCount}
+              candidate={previewRecords[0]}
+              onDecisionChange={updateDecision}
+              onBack={() => setStep("mapping")}
+              onApply={() => void applyImport()}
+            />
+          </>
         )}
 
         {step === "complete" && (
