@@ -45,6 +45,8 @@ const HANDLER_COMPLETION_KEYWORDS = [
   "测试正常",
   "恢复正常"
 ];
+const NEGATION_PREFIXES = ["未", "没", "不", "非", "无"];
+const FAILURE_CONTEXT_KEYWORDS = ["失败", "不行", "未果", "不够", "没有", "不能"];
 const HANDLER_PROGRESS_KEYWORDS = [
   "处理",
   "维修",
@@ -510,8 +512,31 @@ function handlerTextIncludes(text: string, keywords: string[]) {
   return keywords.some((keyword) => normalized.includes(keyword));
 }
 
-function isHandlerCompletionText(text: string) {
-  return handlerTextIncludes(text, HANDLER_COMPLETION_KEYWORDS);
+function hasNegationBefore(text: string, matchIndex: number): boolean {
+  const start = Math.max(0, matchIndex - 3);
+  const prefix = text.slice(start, matchIndex);
+  return NEGATION_PREFIXES.some((negation) => prefix.includes(negation));
+}
+
+function hasFailureContextAfter(text: string, matchIndex: number, keyword: string): boolean {
+  const after = text.slice(matchIndex + keyword.length, matchIndex + keyword.length + 4);
+  return FAILURE_CONTEXT_KEYWORDS.some((keyword) => after.includes(keyword));
+}
+
+export function isHandlerCompletionText(text: string): boolean {
+  const normalized = normalizeText(text);
+  for (const keyword of HANDLER_COMPLETION_KEYWORDS) {
+    let searchFrom = 0;
+    while (true) {
+      const matchIndex = normalized.indexOf(keyword, searchFrom);
+      if (matchIndex === -1) break;
+      if (!hasNegationBefore(normalized, matchIndex) && !hasFailureContextAfter(normalized, matchIndex, keyword)) {
+        return true;
+      }
+      searchFrom = matchIndex + keyword.length;
+    }
+  }
+  return false;
 }
 
 function hasHandlerProgressSignal(text: string, imageUrls: string[]) {
