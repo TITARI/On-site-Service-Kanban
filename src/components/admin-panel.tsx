@@ -143,6 +143,10 @@ function wxautoMcpStateFromConfig(config: AppConfig): WxautoMcpAdminState {
   return normalized;
 }
 
+function wxautoMcpStateFromRead(payload: WxautoMcpAdminState): WxautoMcpAdminState {
+  return { ...payload, accessToken: undefined, tokenPreview: payload.tokenPreview ?? payload.accessToken };
+}
+
 type AiModelListState = {
   models: string[];
   loading: boolean;
@@ -661,7 +665,7 @@ export function AdminConfigCenter({
         const response = await fetch("/api/admin/wxauto-mcp", { cache: "no-store" });
         if (!response.ok) throw new Error("wxauto 服务启动失败");
         const payload = await response.json() as { wxautoMcp?: WxautoMcpAdminState };
-        if (!cancelled && payload.wxautoMcp) setWxautoMcpState(payload.wxautoMcp);
+        if (!cancelled && payload.wxautoMcp) setWxautoMcpState(wxautoMcpStateFromRead(payload.wxautoMcp));
       } catch (error) {
         if (!cancelled) setStatus(error instanceof Error ? error.message : "wxauto 服务启动失败");
       }
@@ -783,13 +787,11 @@ export function AdminConfigCenter({
     setSavingConfigId("wxauto-mcp");
     try {
       const response = await fetch("/api/admin/wxauto-mcp", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ rotateToken: true })
+        method: "POST"
       });
       if (!response.ok) throw new Error("访问令牌重置失败");
-      const payload = await response.json() as { wxautoMcp: WxautoMcpAdminState };
-      setWxautoMcpState(payload.wxautoMcp);
+      const payload = await response.json() as { accessToken: string };
+      setWxautoMcpState((current) => ({ ...current, accessToken: payload.accessToken, tokenPreview: undefined }));
       setStatus("访问令牌已重置");
       onRefresh();
     } catch (error) {
