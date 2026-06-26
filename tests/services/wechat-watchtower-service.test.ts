@@ -40,6 +40,75 @@ function state(): AppState {
   };
 }
 
+function addHandlerTicket(appState: AppState, status: AppState["tickets"][number]["status"]) {
+  const timestamp = "2026-05-21T08:00:00.000Z";
+  appState.people = [{
+    id: "person-builder",
+    name: "李工",
+    phone: "13900139014",
+    role: "handler",
+    groupName: "搭建组",
+    enabled: true,
+    createdAt: timestamp,
+    updatedAt: timestamp
+  }];
+  appState.chatIdentities = [{
+    id: "identity-builder",
+    platform: "wechat",
+    externalUserId: "wxid-builder",
+    displayName: "李工微信",
+    personId: "person-builder",
+    verifiedBy: "phone",
+    verifiedAt: timestamp,
+    firstSeenAt: timestamp,
+    lastSeenAt: timestamp
+  }];
+  const ticket: AppState["tickets"][number] = {
+    id: `ticket-${status}`,
+    title: "A01 星河科技 搭建",
+    boothNumber: "A01",
+    companyName: "上海星河科技有限公司",
+    companyShortName: "星河科技",
+    description: "A01 门头松动",
+    imageUrls: [],
+    issueType: "搭建",
+    submitterId: "person-reporter",
+    submitterName: "王宁",
+    submitterPhone: "13700137000",
+    reporterChatIdentityId: "identity-reporter",
+    sourceConversationId: "客户群",
+    feedbackUsers: [],
+    status,
+    acceptedAt: timestamp,
+    handlerId: "person-builder",
+    handlerName: "李工",
+    handlerPhone: "13900139014",
+    assignmentGroup: "搭建组",
+    urgeCount: 0,
+    urgeLevel: 0,
+    priorityScore: 20,
+    aiDecisions: [],
+    replies: [],
+    timeline: [{ id: "timeline-builder", ticketId: `ticket-${status}`, type: "submitted", body: "A01 门头松动", createdAt: timestamp, actorName: "王宁" }],
+    createdAt: timestamp,
+    updatedAt: timestamp
+  };
+  appState.tickets = [ticket];
+  return ticket;
+}
+
+async function sendHandlerReply(appState: AppState, text: string, externalMessageId: string) {
+  return processWechatWatchtowerMessage(appState, {
+    channel: "wechat",
+    externalMessageId,
+    senderId: "wxid-builder",
+    senderName: "李工微信",
+    senderGroup: "搭建组",
+    sourceConversationId: "搭建组",
+    text
+  });
+}
+
 describe("wechat watchtower service", () => {
   it("silently records ordinary chat from an unknown user", async () => {
     const appState = state();
@@ -755,6 +824,68 @@ describe("wechat watchtower service", () => {
       matchedTicketId: "ticket-builder",
       reason: expect.stringContaining("完成反馈")
     });
+  });
+
+  it.each([
+    {
+      name: "moves rework completion back to processing",
+      initialStatus: "待再次处理",
+      text: "A01 已处理完成",
+      expectedStatus: "处理中",
+      timelineType: "status-changed",
+      toStatus: "处理中",
+      sendsResolvedNotice: false
+    },
+    {
+      name: "resolves an in-progress completion",
+      initialStatus: "处理中",
+      text: "A01 已处理完成",
+      expectedStatus: "已解决",
+      timelineType: "status-changed",
+      toStatus: "已解决",
+      sendsResolvedNotice: true
+    },
+    {
+      name: "keeps closed ticket closed",
+      initialStatus: "已关闭",
+      text: "A01 已处理完成",
+      expectedStatus: "已关闭",
+      timelineType: "reply",
+      toStatus: undefined,
+      sendsResolvedNotice: false
+    },
+    {
+      name: "moves pending completion to processing",
+      initialStatus: "待受理",
+      text: "A01 已处理完成",
+      expectedStatus: "处理中",
+      timelineType: "status-changed",
+      toStatus: "处理中",
+      sendsResolvedNotice: false
+    },
+    {
+      name: "keeps progress text in processing",
+      initialStatus: "处理中",
+      text: "A01 正在加固门头",
+      expectedStatus: "处理中",
+      timelineType: "reply",
+      toStatus: undefined,
+      sendsResolvedNotice: false
+    }
+  ] as const)("$name", async ({ initialStatus, text, expectedStatus, timelineType, toStatus, sendsResolvedNotice }) => {
+    const appState = state();
+    const ticket = addHandlerTicket(appState, initialStatus);
+
+    const result = await sendHandlerReply(appState, text, `msg-${initialStatus}-${timelineType}`);
+    const latestTimeline = ticket.timeline.at(-1) as (typeof ticket.timeline)[number] & { toStatus?: string };
+
+    expect(result.action).toBe("processed");
+    expect(ticket.status).toBe(expectedStatus);
+    expect(ticket.replies).toHaveLength(1);
+    expect(ticket.replies.at(-1)).toMatchObject({ authorName: "李工", role: "handler", body: text });
+    expect(latestTimeline).toMatchObject({ type: timelineType });
+    expect(latestTimeline.toStatus).toBe(toStatus);
+    expect(appState.outboundMessages?.some((message) => message.text.includes("工单已解决：A01 星河科技 搭建"))).toBe(sendsResolvedNotice);
   });
 
   it("does not process duplicate external messages twice", async () => {
