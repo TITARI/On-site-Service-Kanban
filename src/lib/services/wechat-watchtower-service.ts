@@ -5,9 +5,9 @@ import { join } from "node:path";
 import { createConfiguredAiProvider } from "../ai/provider";
 import { createAiRouter } from "../ai/router";
 import { ticketDetailUrl } from "../domain/ticket-links";
-import type { CustomerServiceDecision, Ticket } from "../domain/types";
+import type { CustomerServiceDecision, Ticket, TicketStatus } from "../domain/types";
 import { calculatePriorityScore, detectRiskWeight } from "../domain/priority";
-import { elapsedSinceAccepted } from "../domain/workflow";
+import { canTransition, elapsedSinceAccepted } from "../domain/workflow";
 import { analyzeIntakeMessage, createMessageIntakeService, type IntakeMessageInput } from "./message-intake-service";
 import { hasKeywordOperationalIntent, keywordGroupsForConfig } from "./keyword-service";
 import { queueAdminMessage, queueOutboundMessage, queueProcessingGroupMessage, queueTicketFeedbackMessage } from "./outbound-message-service";
@@ -559,11 +559,12 @@ function handlerCandidateTickets(
   person: NonNullable<AppState["people"]>[number],
   analysis: { boothNumber?: string }
 ) {
-  return state.tickets
-    .filter((ticket) => ticket.status !== "已关闭")
+  const matches = state.tickets
     .filter((ticket) => ticketAssignedToHandler(ticket, person))
     .filter((ticket) => !analysis.boothNumber || ticket.boothNumber === analysis.boothNumber)
     .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+  const openTickets = matches.filter((ticket) => ticket.status !== "已关闭");
+  return openTickets.length > 0 ? openTickets : matches;
 }
 
 function handlerPromptText() {
@@ -583,7 +584,7 @@ function applyHandlerReplyToTicket(
   const timestamp = now();
   const body = handlerReplyBody(input);
   const imageUrls = imageUrlsOf(input);
-  const resolved = isHandlerCompletionText(body);
+  const wantsResolve = isHandlerCompletionText(body);
   const previousStatus = ticket.status;
 
   ticket.handlerId = ticket.handlerId ?? person.id;
@@ -603,23 +604,42 @@ function applyHandlerReplyToTicket(
     createdAt: timestamp
   });
 
-  if (resolved) {
-    ticket.status = "已解决";
+  let nextStatus: TicketStatus | undefined;
+  let timelineBody: string;
+
+  if (wantsResolve) {
+    if (previousStatus === "待受理" || previousStatus === "待再次处理") {
+      nextStatus = canTransition(previousStatus, "处理中") ? "处理中" : undefined;
+      timelineBody = `处理人员反馈：${body}（工单已转入处理中）`;
+    } else if (canTransition(previousStatus, "已解决")) {
+      nextStatus = "已解决";
+      timelineBody = `状态变更为已解决：${body}`;
+    } else {
+      timelineBody = `处理人员反馈：${body}`;
+    }
   } else if (ticket.status === "待受理" || ticket.status === "挂起") {
-    ticket.status = "处理中";
+    nextStatus = canTransition(previousStatus, "处理中") ? "处理中" : undefined;
+    timelineBody = `处理进度：${body}`;
+  } else {
+    timelineBody = `处理进度：${body}`;
+  }
+
+  if (nextStatus && nextStatus !== previousStatus) {
+    ticket.status = nextStatus;
   }
 
   ticket.timeline.push({
     id: id("timeline"),
     ticketId: ticket.id,
-    type: "status-changed",
-    body: resolved ? `状态变更为已解决：${body}` : `处理进度：${body}`,
+    type: nextStatus && nextStatus !== previousStatus ? "status-changed" : "reply",
+    body: timelineBody,
     createdAt: timestamp,
-    actorName: person.name
+    actorName: person.name,
+    toStatus: nextStatus
   });
   ticket.updatedAt = timestamp;
 
-  if (resolved && previousStatus !== "已解决") {
+  if (nextStatus === "已解决" && previousStatus !== "已解决") {
     queueTicketFeedbackMessage(state, ticket, `工单已解决：${ticket.title}\n处理说明：${body}`);
   }
 }
@@ -665,7 +685,7 @@ async function tryProcessHandlerReply(
     confidence: Math.max(0.8, analysis.confidence),
     suggestedAction: "needs-review",
     matchedTicketId: ticket.id,
-    reason: isHandlerCompletionText(text) ? "识别到处理人员完成反馈，已更新工单为已解决" : "识别到处理人员进度反馈，已追加到工单"
+    reason: isHandlerCompletionText(text) ? "识别到处理人员完成反馈，已追加到工单" : "识别到处理人员进度反馈，已追加到工单"
   };
   if (session) removeSession(state, session.id);
   applyHandlerReplyToTicket(state, ticket, mergedInput, person);
