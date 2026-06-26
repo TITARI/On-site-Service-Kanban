@@ -1,4 +1,4 @@
-import type {
+﻿import type {
   AuthenticatedActor,
   BootstrapAdminInput,
   MobileAccountInput,
@@ -11,7 +11,7 @@ import {
   requestSessionToken,
   sessionTokenHash
 } from "@/lib/services/session-service";
-import { verifyPassword } from "@/lib/services/password-service";
+import { hashPassword, verifyPassword } from "@/lib/services/password-service";
 
 const MOBILE_SESSION_DAYS = 7;
 const ADMIN_SESSION_DAYS = 1;
@@ -19,6 +19,14 @@ const ADMIN_FAILURE_LOCK_THRESHOLD = 5;
 const ADMIN_LOCKOUT_MINUTES = 15;
 const DEFAULT_ADMIN_BOOTSTRAP_PASSWORD = "admin123";
 const GENERIC_ADMIN_PASSWORD_ERROR = "手机号或密码不正确";
+
+let dummyHashPromise: Promise<string> | undefined;
+function getDummyHash(): Promise<string> {
+  if (!dummyHashPromise) {
+    dummyHashPromise = hashPassword("dummy-timing-equalization-password");
+  }
+  return dummyHashPromise;
+}
 
 export class AuthError extends Error {
   constructor(
@@ -177,14 +185,23 @@ export async function adminLogin(
   const phone = normalizePhone(input.phone);
   const password = normalizePassword(input.password);
   const record = await repository.adminLoginRecord(phone);
+
+  // 账号不存在 → dummy verify 均衡时间，然后失败
   if (!record) {
+    await verifyPassword(password, await getDummyHash());
     throw new AuthError(401, GENERIC_ADMIN_PASSWORD_ERROR);
   }
 
   const lockedUntilMs = record.credential.lockedUntil
     ? Date.parse(record.credential.lockedUntil)
     : Number.NaN;
-  if (Number.isFinite(lockedUntilMs) && lockedUntilMs > Date.now()) {
+
+  // 锁定窗口到期：重置计数器后再继续
+  if (Number.isFinite(lockedUntilMs) && lockedUntilMs <= Date.now()) {
+    await repository.resetExpiredAdminLock(record.actor.accountId);
+    record.credential.failedAttempts = 0;
+    record.credential.lockedUntil = undefined;
+  } else if (Number.isFinite(lockedUntilMs) && lockedUntilMs > Date.now()) {
     throw new AuthError(401, GENERIC_ADMIN_PASSWORD_ERROR);
   }
 

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+﻿import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppRepository } from "@/lib/repositories/app-repository";
 import type {
   AccountCredential,
@@ -20,10 +20,21 @@ const store = vi.hoisted(() => ({
   adminLoginRecord: vi.fn(),
   recordAdminLoginFailure: vi.fn(),
   recordAdminLoginSuccess: vi.fn(),
+  resetExpiredAdminLock: vi.fn(),
   createAccountSession: vi.fn(),
   resolveAccountSession: vi.fn(),
   revokeAccountSession: vi.fn()
 }));
+
+const passwordMocks = vi.hoisted(() => ({
+  verifyPassword: vi.fn()
+}));
+
+vi.mock("@/lib/services/password-service", async (importActual) => {
+  const actual = await importActual();
+  passwordMocks.verifyPassword.mockImplementation(actual.verifyPassword);
+  return { ...actual, verifyPassword: passwordMocks.verifyPassword };
+});
 
 vi.mock("@/lib/repositories/app-repository", () => ({
   getAppRepository: (): AppRepository => ({
@@ -34,6 +45,7 @@ vi.mock("@/lib/repositories/app-repository", () => ({
     adminLoginRecord: store.adminLoginRecord,
     recordAdminLoginFailure: store.recordAdminLoginFailure,
     recordAdminLoginSuccess: store.recordAdminLoginSuccess,
+    resetExpiredAdminLock: store.resetExpiredAdminLock,
     createAccountSession: store.createAccountSession,
     resolveAccountSession: store.resolveAccountSession,
     revokeAccountSession: store.revokeAccountSession
@@ -114,12 +126,14 @@ describe("admin auth routes", () => {
     vi.useRealTimers();
     vi.unstubAllEnvs();
     vi.resetModules();
+    passwordMocks.verifyPassword.mockClear();
     store.bootstrapStatus.mockReset();
     store.bootstrapAdmin.mockReset();
     store.bootstrapAdminWithSession.mockReset();
     store.adminLoginRecord.mockReset();
     store.recordAdminLoginFailure.mockReset();
     store.recordAdminLoginSuccess.mockReset();
+    store.resetExpiredAdminLock.mockReset();
     store.createAccountSession.mockReset();
     store.resolveAccountSession.mockReset();
     store.revokeAccountSession.mockReset();
@@ -135,6 +149,7 @@ describe("admin auth routes", () => {
     store.resolveAccountSession.mockResolvedValue(undefined);
     store.recordAdminLoginFailure.mockResolvedValue(undefined);
     store.recordAdminLoginSuccess.mockResolvedValue(undefined);
+    store.resetExpiredAdminLock.mockResolvedValue(undefined);
     store.revokeAccountSession.mockResolvedValue(undefined);
   });
 
@@ -413,5 +428,46 @@ describe("admin auth routes", () => {
     expect(cookie).toContain(`${SESSION_COOKIE_NAMES.admin}=`);
     expect(cookie).toContain("Max-Age=0");
     expect(cookie).toContain("HttpOnly");
+  });
+
+  it("resets the failure counter when a lockout window has expired before re-locking", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-15T09:00:00.000Z"));
+    const passwordHash = await hashPassword("correct-password");
+    store.bootstrapStatus.mockResolvedValue({ required: false });
+    store.adminLoginRecord.mockResolvedValue({
+      actor: actor(),
+      credential: credential({
+        passwordHash,
+        failedAttempts: 5,
+        lockedUntil: "2026-06-15T08:15:00.000Z"
+      })
+    });
+    const route = await import("@/app/api/admin/auth/login/route");
+
+    const response = await route.POST(jsonRequest(
+      "https://board.example/api/admin/auth/login",
+      { phone: "13800138000", password: "wrong-password" }
+    ));
+
+    expect(response.status).toBe(401);
+    expect(store.resetExpiredAdminLock).toHaveBeenCalledWith("account-admin");
+    expect(store.recordAdminLoginFailure).toHaveBeenCalledWith("account-admin", undefined);
+  });
+
+  it("runs a dummy password verification for a non-existent account to equalize timing", async () => {
+    vi.useRealTimers();
+    store.bootstrapStatus.mockResolvedValue({ required: false });
+    store.adminLoginRecord.mockResolvedValue(undefined);
+    const route = await import("@/app/api/admin/auth/login/route");
+
+    const response = await route.POST(jsonRequest(
+      "https://board.example/api/admin/auth/login",
+      { phone: "13800138000", password: "wrong-password" }
+    ));
+
+    expect(response.status).toBe(401);
+    expect(passwordMocks.verifyPassword).toHaveBeenCalledTimes(1);
+    expect(store.recordAdminLoginFailure).not.toHaveBeenCalled();
   });
 });

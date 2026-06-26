@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+﻿import { createHash, randomUUID } from "node:crypto";
 import type { AppState } from "../domain/app-state";
 import {
   PERMISSION_CODES,
@@ -844,6 +844,20 @@ export function recordAdminLoginSuccessInState(
     {},
     actorForAccount(state, account, "admin")
   );
+}
+
+export function resetExpiredAdminLockInState(
+  stateInput: AppState,
+  accountId: string
+) {
+  const state = normalizeAccessState(stateInput);
+  const credential = state.accountCredentials.find(
+    (item) => item.accountId === accountId
+  );
+  if (!credential) throw new Error("Admin credential was not found");
+  credential.failedAttempts = 0;
+  credential.lockedUntil = undefined;
+  audit(state, "admin.login.lock_reset", "account", accountId, {});
 }
 
 export function bootstrapStatusFromState(stateInput: AppState) {
