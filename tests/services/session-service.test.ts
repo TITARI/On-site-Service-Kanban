@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+﻿import { describe, expect, it } from "vitest";
 import {
   createSessionToken,
   expiredSessionCookie,
@@ -111,16 +111,26 @@ describe("session service", () => {
     expect(requestSessionToken(request, "mobile")).toBeUndefined();
   });
 
-  it("expires the requested session cookie", () => {
-    const mobileCookie = expiredSessionCookie("mobile");
-    const adminCookie = expiredSessionCookie("admin");
+  it("expires the session cookie with Secure in production", () => {
+    const mobileCookie = expiredSessionCookie("mobile", true);
+    const adminCookie = expiredSessionCookie("admin", true);
 
     expect(mobileCookie).toContain("board_mobile_session=");
     expect(mobileCookie).toContain("Path=/");
     expect(mobileCookie).toContain("HttpOnly");
     expect(mobileCookie).toContain("SameSite=Lax");
     expect(mobileCookie).toContain("Max-Age=0");
+    expect(mobileCookie).toContain("Secure");
     expect(adminCookie).toContain("board_admin_session=");
     expect(adminCookie).toContain("Max-Age=0");
+    expect(adminCookie).toContain("Secure");
+  });
+
+  it("expires the session cookie without Secure in development", () => {
+    const mobileCookie = expiredSessionCookie("mobile", false);
+
+    expect(mobileCookie).toContain("board_mobile_session=");
+    expect(mobileCookie).toContain("Max-Age=0");
+    expect(mobileCookie).not.toContain("Secure");
   });
 });

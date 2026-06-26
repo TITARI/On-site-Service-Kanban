@@ -1,4 +1,4 @@
-import { createHash, randomBytes } from "node:crypto";
+﻿import { createHash, randomBytes } from "node:crypto";
 import type { SessionType } from "../domain/access-control";
 
 export const SESSION_COOKIE_NAMES = {
@@ -70,12 +70,17 @@ export function sessionCookie(
   return attributes.join("; ");
 }
 
-export function expiredSessionCookie(type: SessionType): string {
-  return [
+export function expiredSessionCookie(
+  type: SessionType,
+  secure = process.env.NODE_ENV === "production"
+): string {
+  const parts = [
     `${SESSION_COOKIE_NAMES[type]}=`,
     "Path=/",
     "HttpOnly",
     "SameSite=Lax",
     "Max-Age=0"
-  ].join("; ");
+  ];
+  if (secure) parts.push("Secure");
+  return parts.join("; ");
 }
