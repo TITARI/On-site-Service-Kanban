@@ -302,6 +302,7 @@ export type TicketTimelineItem = {
   body: string;
   createdAt: string;
   actorName: string;
+  toStatus?: TicketStatus;
 };
 
 export type Ticket = {
