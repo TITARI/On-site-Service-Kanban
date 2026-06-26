@@ -20,6 +20,13 @@ export async function POST(request: Request, { params }: { params: Promise<{ tic
     return NextResponse.json({ message: response.message }, { status: response.status });
   }
 
+  const ticket = await repository.getTicket(ticketId, {
+    personId: actor.personId,
+    groupName: actor.groupName,
+    permissions: actor.permissions
+  });
+  if (!ticket) return NextResponse.json({ message: "工单不存在" }, { status: 404 });
+
   let input: z.infer<typeof replySchema>;
   try {
     const parsed = replySchema.safeParse(await parseJson(request));
@@ -28,9 +35,6 @@ export async function POST(request: Request, { params }: { params: Promise<{ tic
   } catch (error) {
     return badRequest(errorMessage(error));
   }
-
-  const ticket = await repository.getTicket(ticketId);
-  if (!ticket) return NextResponse.json({ message: "工单不存在" }, { status: 404 });
 
   const now = new Date().toISOString();
   const reply = {

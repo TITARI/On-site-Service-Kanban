@@ -73,7 +73,11 @@ describe("ticket detail route", () => {
     expect(response.status).toBe(200);
     expect(payload.ticket).toEqual(ticket);
     expect(store.runAutoAcceptance).toHaveBeenCalledOnce();
-    expect(store.getTicket).toHaveBeenCalledWith("ticket-1");
+    expect(store.getTicket).toHaveBeenCalledWith("ticket-1", {
+      personId: "person-mobile",
+      groupName: "Mobile Group",
+      permissions: []
+    });
     expect(store.runAutoAcceptance.mock.invocationCallOrder[0]).toBeLessThan(store.getTicket.mock.invocationCallOrder[0]);
     expect(store.adminBootstrap).not.toHaveBeenCalled();
   });
