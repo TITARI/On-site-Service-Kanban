@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+﻿import { createHash, randomUUID } from "node:crypto";
 import type { ResultSetHeader, RowDataPacket } from "mysql2/promise";
 import {
   PERMISSION_CODES,
@@ -1128,6 +1128,32 @@ export async function recordAdminLoginSuccess(
     accountId,
     {},
     await readActor(connection, accountId, "admin"),
+    now
+  );
+}
+
+export async function resetExpiredAdminLock(
+  connection: DatabaseConnection,
+  accountId: string,
+  now = new Date()
+): Promise<void> {
+  const result = await execute(
+    connection,
+    `UPDATE account_credentials
+     SET failed_attempts = 0, locked_until = NULL
+     WHERE account_id = ?`,
+    [accountId]
+  );
+  if (result.affectedRows < 1) {
+    throw new Error("Admin credential was not found");
+  }
+  await writeAudit(
+    connection,
+    "admin.login.lock_reset",
+    "account",
+    accountId,
+    {},
+    undefined,
     now
   );
 }

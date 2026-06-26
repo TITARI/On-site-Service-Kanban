@@ -71,6 +71,7 @@ import {
   recordAccessRolesSync,
   recordAdminLoginFailure as writeAdminLoginFailure,
   recordAdminLoginSuccess as writeAdminLoginSuccess,
+  resetExpiredAdminLock as writeResetExpiredAdminLock,
   resolveAccountSession as resolveAccessAccountSession,
   revokeAccountSession as revokeAccessAccountSession,
   revokeAccountSessions as revokeAccessAccountSessions,
@@ -2332,6 +2333,12 @@ export class MariaDbStateStore {
   async recordAdminLoginSuccess(accountId: string) {
     await withDatabaseTransaction(async (connection) => {
       await writeAdminLoginSuccess(connection, accountId);
+    });
+  }
+
+  async resetExpiredAdminLock(accountId: string) {
+    await withDatabaseTransaction(async (connection) => {
+      await writeResetExpiredAdminLock(connection, accountId);
     });
   }
 

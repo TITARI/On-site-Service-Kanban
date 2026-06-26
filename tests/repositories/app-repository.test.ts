@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+﻿import { describe, expect, it, vi } from "vitest";
 import { defaultConfig } from "@/lib/seed";
 import { createAppRepository, createFileAppRepository, createMariaDbAppRepository } from "@/lib/repositories/app-repository";
 import type { MariaDbStateStore } from "@/lib/db/mariadb-state-store";
@@ -127,6 +127,7 @@ describe("app repository", () => {
       adminLoginRecord: vi.fn(async () => undefined),
       recordAdminLoginFailure: vi.fn(async () => undefined),
       recordAdminLoginSuccess: vi.fn(async () => undefined),
+      resetExpiredAdminLock: vi.fn(async () => undefined),
       bootstrapStatus: vi.fn(async () => ({ required: true })),
       bootstrapAdmin: vi.fn(async () => actor),
       bootstrapAdminWithSession: vi.fn(async () => ({ actor, session: { id: "session-admin" } })),
@@ -149,6 +150,7 @@ describe("app repository", () => {
     await repository.adminLoginRecord("13700137000");
     await repository.recordAdminLoginFailure("account-admin", "2099-01-01T00:00:00.000Z");
     await repository.recordAdminLoginSuccess("account-admin");
+    await repository.resetExpiredAdminLock("account-admin");
     await repository.bootstrapStatus();
     await repository.bootstrapAdmin(bootstrapInput);
     await repository.bootstrapAdminWithSession(
@@ -181,6 +183,7 @@ describe("app repository", () => {
       "2099-01-01T00:00:00.000Z"
     );
     expect(store.recordAdminLoginSuccess).toHaveBeenCalledWith("account-admin");
+    expect(store.resetExpiredAdminLock).toHaveBeenCalledWith("account-admin");
     expect(store.bootstrapStatus).toHaveBeenCalledOnce();
     expect(store.bootstrapAdmin).toHaveBeenCalledWith(bootstrapInput);
     expect(store.bootstrapAdminWithSession).toHaveBeenCalledWith(

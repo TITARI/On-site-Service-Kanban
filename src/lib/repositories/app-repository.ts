@@ -1,4 +1,4 @@
-import type { AppState } from "../domain/app-state";
+﻿import type { AppState } from "../domain/app-state";
 import type { ChatIdentity, ChatIdentityRebindExpectation, KeywordGroup, MessageChannel, Ticket, UserGroup } from "../domain/types";
 import type {
   UserImportCommitInput,
@@ -61,6 +61,7 @@ import {
   normalizeAccessState,
   recordAdminLoginFailureInState,
   recordAdminLoginSuccessInState,
+  resetExpiredAdminLockInState,
   resolveAccountSessionInState,
   revokeAccountSessionInState,
   revokeAccountSessionsInState,
@@ -139,6 +140,7 @@ export type AppRepository = {
   adminLoginRecord(phone: string): Promise<{ actor: AuthenticatedActor; credential: AccountCredential } | undefined>;
   recordAdminLoginFailure(accountId: string, lockedUntil?: string): Promise<void>;
   recordAdminLoginSuccess(accountId: string): Promise<void>;
+  resetExpiredAdminLock(accountId: string): Promise<void>;
   bootstrapStatus(): Promise<{ required: boolean }>;
   bootstrapAdmin(input: BootstrapAdminInput): Promise<AuthenticatedActor>;
   bootstrapAdminWithSession(input: BootstrapAdminInput, tokenHash: string, expiresAt: string): Promise<{ actor: AuthenticatedActor; session: AccountSession }>;
@@ -429,6 +431,9 @@ export function createFileAppRepository(store: StateFileRepository = {
     recordAdminLoginSuccess: (accountId) => updateState((state) => {
       recordAdminLoginSuccessInState(state, accountId);
     }),
+    resetExpiredAdminLock: (accountId) => updateState((state) => {
+      resetExpiredAdminLockInState(state, accountId);
+    }),
     bootstrapStatus: async () => (
       bootstrapStatusFromState(await store.readState())
     ),
@@ -697,6 +702,9 @@ export function createMariaDbAppRepository(store: AutoAcceptanceStore = new Mari
     ),
     recordAdminLoginSuccess: (accountId) => (
       store.recordAdminLoginSuccess(accountId)
+    ),
+    resetExpiredAdminLock: (accountId) => (
+      store.resetExpiredAdminLock(accountId)
     ),
     bootstrapStatus: () => store.bootstrapStatus(),
     bootstrapAdmin: (input) => store.bootstrapAdmin(input),
