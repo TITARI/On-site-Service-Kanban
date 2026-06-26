@@ -1,4 +1,4 @@
-﻿import type { ResultSetHeader, RowDataPacket } from "mysql2/promise";
+import type { ResultSetHeader, RowDataPacket } from "mysql2/promise";
 import { createHash } from "node:crypto";
 import type {
   AiDecision,
@@ -39,7 +39,9 @@ import type {
   UserImportPreviewInput
 } from "../domain/user-import";
 import { previewUserImport } from "../domain/user-import";
-import { createTicketService, type SubmitTicketInput } from "../services/ticket-service";
+import { createTicketService, type SubmitTicketInput, type AiPrecomputedContext } from "../services/ticket-service";
+import { createConfiguredAiProvider } from "../ai/provider";
+import { createAiRouter } from "../ai/router";
 import { processWechatWatchtowerMessage, type WatchtowerResult } from "../services/wechat-watchtower-service";
 import {
   autoAcceptanceFeedbackText,
@@ -509,7 +511,7 @@ async function readResolvedTicketByIdForUpdate(connection: DatabaseConnection, t
 async function readOpenTicketsForBooth(connection: DatabaseConnection, boothNumber: string): Promise<Ticket[]> {
   const ticketRows = await rows<Row>(
     connection,
-    "SELECT id FROM tickets WHERE booth_number = ? AND status <> ? ORDER BY created_at",
+    "SELECT id FROM tickets WHERE booth_number = ? AND status <> ? ORDER BY created_at FOR UPDATE",
     [boothNumber, "已关闭"]
   );
   const tickets: Ticket[] = [];
@@ -2094,19 +2096,59 @@ export class MariaDbStateStore {
   }
 
   async submitTicket(input: SubmitTicketInput) {
+    const boothNumber = input.boothNumber.trim();
+    const description = input.description.trim();
+    const config = await latestConfig(getDatabasePool());
+    const ai = createAiRouter({ models: config.aiModels, provider: createConfiguredAiProvider(), promptConfig: config });
+
+    // classifyIssue 在事务外执行（5-30s HTTP 调用不应占用 DB 连接）
+    let precomputedIssueType: string | undefined;
+    if (input.issueType === "自动") {
+      try {
+        const classification = await ai.classifyIssue(boothNumber, description);
+        precomputedIssueType = classification?.issueType ?? "综合服务";
+      } catch (error) {
+        console.warn("[mariadb-state-store] 预算 classifyIssue 失败", {
+          boothNumber, error: error instanceof Error ? error.message : String(error)
+        });
+        precomputedIssueType = "综合服务";
+      }
+    }
+
+    // 短事务：SELECT FOR UPDATE 候选 + dedupe + INSERT
     return await withDatabaseTransaction(async (connection) => {
+      const openTickets = await readOpenTicketsForBooth(connection, boothNumber);
+      let dedupe: AiPrecomputedContext["dedupe"];
+      try {
+        dedupe = await ai.dedupeIssue(boothNumber, description, openTickets);
+      } catch (error) {
+        console.warn("[mariadb-state-store] dedupeIssue 失败，降级为创建", {
+          boothNumber, error: error instanceof Error ? error.message : String(error)
+        });
+        dedupe = {
+          modelId: "smart",
+          scenario: "dedupe",
+          confidence: 0,
+          action: "create",
+          suggestion: "AI dedupe 不可用，默认创建新工单",
+          latencyMs: 0
+        };
+      }
+
       const state: AppState = {
         booths: await readBooths(connection),
-        tickets: await readOpenTicketsForBooth(connection, input.boothNumber.trim()),
+        tickets: openTickets,
         messageRecords: [],
         people: [],
         chatIdentities: [],
         conversations: [],
         pendingWorkOrderSessions: [],
         outboundMessages: [],
-        config: await latestConfig(connection)
+        config
       };
-      const result = await createTicketService({ state }).submitTicket(input);
+      const result = await createTicketService({
+        state, aiContext: { issueType: precomputedIssueType, dedupe }
+      }).submitTicket(input);
       await upsertTicketGraph(connection, result.ticket);
       return result;
     });

@@ -1,4 +1,4 @@
-﻿import { createConfiguredAiProvider } from "../ai/provider";
+import { createConfiguredAiProvider } from "../ai/provider";
 import { createAiRouter } from "../ai/router";
 import { decideDeduplication } from "../domain/deduplication";
 import { calculatePriorityScore, detectRiskWeight } from "../domain/priority";
@@ -105,7 +105,15 @@ async function safeDedupe(
   }
 }
 
-export function createTicketService({ state }: { state: AppState }) {
+export type AiPrecomputedContext = {
+  issueType?: string;
+  dedupe?: DedupeDecision;
+};
+
+export function createTicketService({
+  state,
+  aiContext
+}: { state: AppState; aiContext?: AiPrecomputedContext }) {
   const ai = createAiRouter({ models: state.config.aiModels, provider: createConfiguredAiProvider(), promptConfig: state.config });
 
   return {
@@ -114,12 +122,18 @@ export function createTicketService({ state }: { state: AppState }) {
       const boothNumber = input.boothNumber.trim();
       const description = input.description.trim();
       const booth = findBooth(state.booths, boothNumber);
-      const classification = input.issueType === "自动"
-        ? await safeClassify(ai, boothNumber, description)
-        : undefined;
-      const issueType = input.issueType === "自动" ? classification?.issueType ?? FALLBACK_ISSUE_TYPE : input.issueType;
+      let issueType = input.issueType;
+      let classification: ClassifyDecision | undefined;
+      if (issueType === "自动") {
+        if (aiContext?.issueType) {
+          issueType = aiContext.issueType;
+        } else {
+          classification = await safeClassify(ai, boothNumber, description);
+          issueType = classification?.issueType ?? FALLBACK_ISSUE_TYPE;
+        }
+      }
       const candidates = state.tickets.filter((ticket) => ticket.boothNumber === boothNumber && ticket.status !== "已关闭");
-      const dedupe = await safeDedupe(ai, boothNumber, description, candidates);
+      const dedupe = aiContext?.dedupe ?? await safeDedupe(ai, boothNumber, description, candidates);
       const dedupeAction = decideDeduplication(dedupe.confidence);
       const matched = candidates.find((ticket) => ticket.id === dedupe.matchedTicketId);
 
