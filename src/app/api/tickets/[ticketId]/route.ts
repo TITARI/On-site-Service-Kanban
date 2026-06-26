@@ -76,12 +76,21 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ ti
   } catch (error) {
     return badRequest(errorMessage(error));
   }
-  if (input.status === "挂起" && !input.reason?.trim() && input.action === "status") return badRequest("挂起必须填写原因");
+  if (input.action === "accept" && input.status !== "已关闭") {
+    return badRequest("验收通过必须将状态置为已关闭");
+  }
   if (input.action === "reject" && (!input.reason?.trim() || input.status !== "待再次处理")) {
     return badRequest("验收未通过必须填写原因并打回到待再次处理");
   }
   if (input.action === "progress" && (!input.processBody?.trim() || input.imageUrls.length === 0)) {
     return badRequest("处理进度必须填写处理内容并上传处理照片");
+  }
+  if (input.action === "status") {
+    if (input.status === "已解决") {
+      if (!input.processBody?.trim()) return badRequest("标记已解决必须填写处理内容");
+      if (input.imageUrls.length === 0) return badRequest("标记已解决必须上传处理照片");
+    }
+    if (input.status === "挂起" && !input.reason?.trim()) return badRequest("挂起必须填写原因");
   }
   if (!hasPermission(actor, input.action)) return NextResponse.json({ message: "Forbidden" }, { status: 403 });
 
