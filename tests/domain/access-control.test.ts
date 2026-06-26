@@ -119,7 +119,7 @@ describe("access control", () => {
       "AuthenticatedActor",
       "{accountId:string;personId:string;name:string;phone:string;groupId:string;groupName:string;permissions:PermissionCode[];sessionType:SessionType;}"
     ],
-    ["MobileAccountInput", "{name:string;phone:string;groupId:string;}"],
+    ["MobileAccountInput", "{name:string;phone:string;groupId:string;ip?:string;}"],
     ["UserMutation", "{name:string;phone:string;groupId:string;groupLocked:boolean;enabled:boolean;}"],
     [
       "BootstrapAdminInput",

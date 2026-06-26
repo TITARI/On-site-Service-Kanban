@@ -74,6 +74,14 @@ function normalizePassword(password: string) {
   return normalized;
 }
 
+function requestIp(request?: Request) {
+  if (!request) return undefined;
+  return request.headers.get("x-forwarded-for")?.split(",")[0]?.trim()
+    || request.headers.get("x-real-ip")?.trim()
+    || request.headers.get("cf-connecting-ip")?.trim()
+    || undefined;
+}
+
 function adminBootstrapPassword(env: NodeJS.ProcessEnv = process.env) {
   const configured = env.ADMIN_BOOTSTRAP_PASSWORD?.trim();
   if (configured) return configured;
@@ -106,11 +114,13 @@ async function createAccountSession(
 
 export async function mobileLogin(
   repository: AppRepository,
-  input: MobileAccountInput
+  input: MobileAccountInput,
+  request?: Request
 ): Promise<{ actor: AuthenticatedActor; token: string; expiresAt: Date }> {
   const name = normalizeName(input.name);
   const phone = normalizePhone(input.phone);
   const groupId = String(input.groupId ?? "").trim();
+  const ip = requestIp(request);
   const config = await repository.getConfig();
   const group = (config.userGroups ?? []).find((item) => item.id === groupId);
   if (!group?.enabled) {
@@ -122,7 +132,8 @@ export async function mobileLogin(
     ({ actor } = await repository.upsertMobileAccount({
       name,
       phone,
-      groupId
+      groupId,
+      ...(ip ? { ip } : {})
     }));
   } catch (error) {
     throw domainAuthError(error) ?? error;

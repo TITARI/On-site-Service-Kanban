@@ -652,6 +652,7 @@ async function findAccountPersonByPhone(
        p.name AS person_name,
        p.phone,
        p.group_id,
+       p.group_name_snapshot,
        p.group_locked,
        p.enabled AS person_enabled,
        a.id AS account_id,
@@ -681,6 +682,9 @@ export async function upsertMobileAccount(
   const existing = await findAccountPersonByPhone(connection, phone);
   const existingGroupId = existing?.group_id
     ? String(existing.group_id)
+    : undefined;
+  const existingGroupName = existing?.group_name_snapshot
+    ? String(existing.group_name_snapshot)
     : undefined;
   const selectedGroupId = existing && bool(existing.group_locked)
     ? existingGroupId
@@ -756,22 +760,21 @@ export async function upsertMobileAccount(
 
     const groupChanged = existingGroupId !== selectedGroup.id;
 
-    await execute(
-      connection,
-      `UPDATE people
-       SET name = ?, phone = ?, role = ?, group_id = ?,
-           group_name_snapshot = ?, updated_at = ?
-       WHERE id = ?`,
-      [
-        name,
-        phone,
-        roleForGroup(selectedGroup),
-        selectedGroup.id,
-        selectedGroup.name,
-        now,
-        personId
-      ]
-    );
+    if (groupChanged) {
+      await execute(
+        connection,
+        `UPDATE people
+         SET role = ?, group_id = ?, group_name_snapshot = ?, updated_at = ?
+         WHERE id = ?`,
+        [
+          roleForGroup(selectedGroup),
+          selectedGroup.id,
+          selectedGroup.name,
+          now,
+          personId
+        ]
+      );
+    }
     await execute(
       connection,
       `UPDATE accounts
@@ -792,19 +795,33 @@ export async function upsertMobileAccount(
 
   const actor = await readActor(connection, accountId, "mobile");
   if (!actor) throw new Error("Mobile account access chain is disabled");
-  await writeAudit(
-    connection,
-    "mobile.account.upsert",
-    "user",
-    personId,
-    {
-      accountId,
-      groupId: actor.groupId,
-      created
-    },
-    actor,
-    now
-  );
+  if (created) {
+    await writeAudit(
+      connection,
+      "mobile_account_created",
+      "user",
+      personId,
+      { phone, name, groupId: actor.groupId, ip: input.ip },
+      actor,
+      now
+    );
+  } else if (existingGroupId !== selectedGroup.id) {
+    await writeAudit(
+      connection,
+      "mobile_login_group_change",
+      "user",
+      personId,
+      {
+        fromGroupId: existingGroupId,
+        toGroupId: actor.groupId,
+        fromGroupName: existingGroupName,
+        toGroupName: actor.groupName,
+        ip: input.ip
+      },
+      actor,
+      now
+    );
+  }
   return { actor };
 }
 

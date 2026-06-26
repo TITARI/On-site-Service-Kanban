@@ -18,7 +18,8 @@ export async function POST(request: Request) {
         name: String(payload?.name ?? ""),
         phone: String(payload?.phone ?? ""),
         groupId: String(payload?.groupId ?? "")
-      }
+      },
+      request
     );
     return NextResponse.json(
       { user: currentUserFromActor(actor) },

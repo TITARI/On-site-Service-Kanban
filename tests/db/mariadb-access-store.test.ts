@@ -490,8 +490,8 @@ describe("MariaDB access store", () => {
       call.sql.includes("UPDATE people")
     );
     expect(existingRead).toBeGreaterThanOrEqual(0);
-    expect(peopleUpdate?.params).toContain("builder");
-    expect(peopleUpdate?.params).not.toContain("missing-or-disabled");
+    expect(peopleUpdate).toBeUndefined();
+    expect(calls.flatMap((call) => call.params)).not.toContain("missing-or-disabled");
   });
 
   it("rejects an invalid submitted group for an unlocked mobile account after reading it", async () => {
