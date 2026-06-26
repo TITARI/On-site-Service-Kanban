@@ -326,6 +326,82 @@ describe("ticket action route", () => {
     expect(updated.replies.at(-1)).toMatchObject({ body: "已加固门头并复核稳定性", imageUrls: ["data:image/jpeg;base64,abc"] });
   });
 
+  it("rejects accept actions that do not close the resolved ticket", async () => {
+    store.state!.tickets[0] = { ...ticket, status: "已解决" };
+    store.resolveAccountSession.mockResolvedValueOnce(businessActor());
+
+    const response = await patch({
+      action: "accept",
+      status: "待再次处理"
+    });
+
+    expect(response.status).toBe(400);
+  });
+
+  it("requires processing content when action=status resolves a ticket", async () => {
+    store.state!.tickets[0] = { ...ticket, status: "处理中", handlerId: "member-13700137000", handlerName: "搭建王工" };
+
+    const response = await patch({
+      action: "status",
+      status: "已解决",
+      imageUrls: ["data:image/jpeg;base64,abc"]
+    });
+
+    expect(response.status).toBe(400);
+  });
+
+  it("requires processing photos when action=status resolves a ticket", async () => {
+    store.state!.tickets[0] = { ...ticket, status: "处理中", handlerId: "member-13700137000", handlerName: "搭建王工" };
+
+    const response = await patch({
+      action: "status",
+      status: "已解决",
+      processBody: "已加固门头"
+    });
+
+    expect(response.status).toBe(400);
+  });
+
+  it("allows action=status to resolve a ticket with content and photos", async () => {
+    store.state!.tickets[0] = { ...ticket, status: "处理中", handlerId: "member-13700137000", handlerName: "搭建王工" };
+
+    const response = await patch({
+      action: "status",
+      status: "已解决",
+      processBody: "已加固门头",
+      imageUrls: ["data:image/jpeg;base64,abc"]
+    });
+
+    expect(response.status).toBe(200);
+    const { ticket: updated } = await response.json();
+    expect(updated.status).toBe("已解决");
+  });
+
+  it("requires a reason when action=status suspends a ticket", async () => {
+    store.state!.tickets[0] = { ...ticket, status: "处理中", handlerId: "member-13700137000", handlerName: "搭建王工" };
+
+    const response = await patch({
+      action: "status",
+      status: "挂起"
+    });
+
+    expect(response.status).toBe(400);
+  });
+
+  it("allows action=status to suspend a ticket with a reason", async () => {
+    store.state!.tickets[0] = { ...ticket, status: "处理中", handlerId: "member-13700137000", handlerName: "搭建王工" };
+
+    const response = await patch({
+      action: "status",
+      status: "挂起",
+      reason: "等待物料"
+    });
+
+    expect(response.status).toBe(200);
+    const { ticket: updated } = await response.json();
+    expect(updated.status).toBe("挂起");
+  });
+
   it("accepts a resolved ticket and closes it", async () => {
     store.state!.tickets[0] = { ...ticket, status: "已解决" };
     store.resolveAccountSession.mockResolvedValueOnce(businessActor());
