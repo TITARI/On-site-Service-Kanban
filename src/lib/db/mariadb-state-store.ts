@@ -283,6 +283,7 @@ async function readTickets(connection: DatabaseConnection): Promise<Ticket[]> {
     const ticketId = String(row.id);
     return {
       id: ticketId,
+      version: Number(row.version ?? 0),
       title: String(row.title),
       boothNumber: String(row.booth_number),
       companyName: String(row.company_name),
@@ -324,7 +325,8 @@ async function readTickets(connection: DatabaseConnection): Promise<Ticket[]> {
           issueType: decision.issue_type ? String(decision.issue_type) : undefined,
           matchedTicketId: decision.matched_ticket_id ? String(decision.matched_ticket_id) : undefined,
           suggestion: decision.suggestion ? String(decision.suggestion) : undefined,
-          latencyMs: Number(decision.latency_ms ?? 0)
+          latencyMs: Number(decision.latency_ms ?? 0),
+          provider: decision.provider ? decision.provider as AiDecision["provider"] : undefined
         })),
       replies: replyRows
         .filter((reply) => reply.ticket_id === ticketId)
@@ -347,7 +349,8 @@ async function readTickets(connection: DatabaseConnection): Promise<Ticket[]> {
           type: item.type as TicketTimelineItem["type"],
           body: String(item.body),
           createdAt: requiredIso(item.created_at),
-          actorName: String(item.actor_name)
+          actorName: String(item.actor_name),
+          toStatus: item.to_status ? item.to_status as TicketTimelineItem["toStatus"] : undefined
         })),
       createdAt: requiredIso(row.created_at),
       updatedAt: requiredIso(row.updated_at)
@@ -465,7 +468,8 @@ async function ticketFromRow(connection: DatabaseConnection, ticketId: string, r
       issueType: decision.issue_type ? String(decision.issue_type) : undefined,
       matchedTicketId: decision.matched_ticket_id ? String(decision.matched_ticket_id) : undefined,
       suggestion: decision.suggestion ? String(decision.suggestion) : undefined,
-      latencyMs: Number(decision.latency_ms ?? 0)
+      latencyMs: Number(decision.latency_ms ?? 0),
+      provider: decision.provider ? decision.provider as AiDecision["provider"] : undefined
     })),
     replies: replyRows.map((reply) => ({
       id: String(reply.id),
@@ -484,7 +488,8 @@ async function ticketFromRow(connection: DatabaseConnection, ticketId: string, r
       type: item.type as TicketTimelineItem["type"],
       body: String(item.body),
       createdAt: requiredIso(item.created_at),
-      actorName: String(item.actor_name)
+      actorName: String(item.actor_name),
+      toStatus: item.to_status ? item.to_status as TicketTimelineItem["toStatus"] : undefined
     })),
     createdAt: requiredIso(row.created_at),
     updatedAt: requiredIso(row.updated_at)
@@ -521,22 +526,17 @@ async function readOpenTicketsForBooth(connection: DatabaseConnection, boothNumb
   return tickets;
 }
 
-async function clearTicketChildren(connection: DatabaseConnection, ticketId: string) {
-  await execute(connection, "DELETE FROM ticket_feedback_users WHERE ticket_id = ?", [ticketId]);
-  await execute(connection, "DELETE FROM ticket_replies WHERE ticket_id = ?", [ticketId]);
-  await execute(connection, "DELETE FROM ticket_timeline WHERE ticket_id = ?", [ticketId]);
-  await execute(connection, "DELETE FROM ai_decisions WHERE ticket_id = ?", [ticketId]);
-}
-
 async function upsertTicketGraph(connection: DatabaseConnection, ticket: Ticket, now = new Date()) {
+  const currentVersion = ticket.version ?? 0;
+  const newVersion = currentVersion + 1;
   await execute(
     connection,
     `INSERT INTO tickets (
       id, title, booth_number, company_name, company_short_name, description, image_urls, issue_type,
       submitter_id, submitter_name, submitter_phone, reporter_person_id, reporter_chat_identity_id,
       source_conversation_id, status, accepted_at, handler_id, handler_name, handler_phone,
-      assignment_group, urge_count, last_urged_at, urge_level, priority_score, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      assignment_group, urge_count, last_urged_at, urge_level, priority_score, version, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON DUPLICATE KEY UPDATE
       title = VALUES(title),
       booth_number = VALUES(booth_number),
@@ -561,6 +561,7 @@ async function upsertTicketGraph(connection: DatabaseConnection, ticket: Ticket,
       last_urged_at = VALUES(last_urged_at),
       urge_level = VALUES(urge_level),
       priority_score = VALUES(priority_score),
+      version = ?,
       updated_at = VALUES(updated_at)`,
     [
       ticket.id,
@@ -587,17 +588,17 @@ async function upsertTicketGraph(connection: DatabaseConnection, ticket: Ticket,
       dateOrNull(ticket.lastUrgedAt),
       ticket.urgeLevel,
       ticket.priorityScore,
+      currentVersion,
       dateOrNull(ticket.createdAt) ?? now,
-      dateOrNull(ticket.updatedAt) ?? now
+      dateOrNull(ticket.updatedAt) ?? now,
+      newVersion
     ]
   );
-
-  await clearTicketChildren(connection, ticket.id);
 
   for (const feedback of ticket.feedbackUsers) {
     await execute(
       connection,
-      `INSERT INTO ticket_feedback_users (
+      `INSERT IGNORE INTO ticket_feedback_users (
         id, ticket_id, user_id, user_name, phone, feedback_at
       ) VALUES (?, ?, ?, ?, ?, ?)`,
       [
@@ -614,7 +615,7 @@ async function upsertTicketGraph(connection: DatabaseConnection, ticket: Ticket,
   for (const reply of ticket.replies) {
     await execute(
       connection,
-      `INSERT INTO ticket_replies (
+      `INSERT IGNORE INTO ticket_replies (
         id, ticket_id, author_id, author_name, author_phone, role, body, image_urls, created_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
@@ -634,18 +635,18 @@ async function upsertTicketGraph(connection: DatabaseConnection, ticket: Ticket,
   for (const item of ticket.timeline) {
     await execute(
       connection,
-      "INSERT INTO ticket_timeline (id, ticket_id, type, body, actor_name, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-      [item.id, ticket.id, item.type, item.body, item.actorName, dateOrNull(item.createdAt) ?? now]
+      "INSERT IGNORE INTO ticket_timeline (id, ticket_id, type, body, actor_name, created_at, to_status) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      [item.id, ticket.id, item.type, item.body, item.actorName, dateOrNull(item.createdAt) ?? now, item.toStatus ?? null]
     );
   }
 
   for (const [index, decision] of ticket.aiDecisions.entries()) {
     await execute(
       connection,
-      `INSERT INTO ai_decisions (
+      `INSERT IGNORE INTO ai_decisions (
         id, ticket_id, model_id, scenario, confidence, action, issue_type, matched_ticket_id,
-        suggestion, latency_ms, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        suggestion, latency_ms, created_at, provider
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         stableId("decision", `${ticket.id}:${index}:${decision.scenario}:${decision.action}`),
         ticket.id,
@@ -657,7 +658,8 @@ async function upsertTicketGraph(connection: DatabaseConnection, ticket: Ticket,
         decision.matchedTicketId ?? null,
         decision.suggestion ?? null,
         decision.latencyMs,
-        dateOrNull(ticket.updatedAt) ?? now
+        dateOrNull(ticket.updatedAt) ?? now,
+        decision.provider ?? "mock"
       ]
     );
   }
@@ -1342,8 +1344,8 @@ async function writeTickets(
         id, title, booth_number, company_name, company_short_name, description, image_urls, issue_type,
         submitter_id, submitter_name, submitter_phone, reporter_person_id, reporter_chat_identity_id,
         source_conversation_id, status, accepted_at, handler_id, handler_name, handler_phone,
-        assignment_group, urge_count, last_urged_at, urge_level, priority_score, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)${
+        assignment_group, urge_count, last_urged_at, urge_level, priority_score, version, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)${
         options.upsert
           ? `
       ON DUPLICATE KEY UPDATE
@@ -1370,6 +1372,7 @@ async function writeTickets(
         last_urged_at = VALUES(last_urged_at),
         urge_level = VALUES(urge_level),
         priority_score = VALUES(priority_score),
+        version = VALUES(version),
         updated_at = VALUES(updated_at)`
           : ""
       }`,
@@ -1398,6 +1401,7 @@ async function writeTickets(
         dateOrNull(ticket.lastUrgedAt),
         ticket.urgeLevel,
         ticket.priorityScore,
+        ticket.version ?? 0,
         dateOrNull(ticket.createdAt) ?? now,
         dateOrNull(ticket.updatedAt) ?? now
       ]
@@ -1461,17 +1465,18 @@ async function writeTickets(
     for (const item of ticket.timeline) {
       await execute(
         connection,
-        `INSERT INTO ticket_timeline (id, ticket_id, type, body, actor_name, created_at)
-         VALUES (?, ?, ?, ?, ?, ?)${
+        `INSERT INTO ticket_timeline (id, ticket_id, type, body, actor_name, created_at, to_status)
+         VALUES (?, ?, ?, ?, ?, ?, ?)${
            options.upsert
              ? `
          ON DUPLICATE KEY UPDATE
            type = VALUES(type),
            body = VALUES(body),
-           actor_name = VALUES(actor_name)`
+           actor_name = VALUES(actor_name),
+           to_status = VALUES(to_status)`
              : ""
          }`,
-        [item.id, ticket.id, item.type, item.body, item.actorName, dateOrNull(item.createdAt) ?? now]
+        [item.id, ticket.id, item.type, item.body, item.actorName, dateOrNull(item.createdAt) ?? now, item.toStatus ?? null]
       );
     }
 
@@ -1480,8 +1485,8 @@ async function writeTickets(
         connection,
         `INSERT INTO ai_decisions (
           id, ticket_id, model_id, scenario, confidence, action, issue_type, matched_ticket_id,
-          suggestion, latency_ms, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)${
+          suggestion, latency_ms, created_at, provider
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)${
           options.upsert
             ? `
         ON DUPLICATE KEY UPDATE
@@ -1492,7 +1497,8 @@ async function writeTickets(
           issue_type = VALUES(issue_type),
           matched_ticket_id = VALUES(matched_ticket_id),
           suggestion = VALUES(suggestion),
-          latency_ms = VALUES(latency_ms)`
+          latency_ms = VALUES(latency_ms),
+          provider = VALUES(provider)`
             : ""
         }`,
         [
@@ -1506,7 +1512,8 @@ async function writeTickets(
           decision.matchedTicketId ?? null,
           decision.suggestion ?? null,
           decision.latencyMs,
-          dateOrNull(ticket.updatedAt) ?? now
+          dateOrNull(ticket.updatedAt) ?? now,
+          decision.provider ?? "mock"
         ]
       );
     }
@@ -1813,15 +1820,16 @@ async function appendTicketTimelineItem(connection: DatabaseConnection, item: Ti
   await execute(
     connection,
     `INSERT INTO ticket_timeline (
-      id, ticket_id, type, body, actor_name, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?)`,
+      id, ticket_id, type, body, actor_name, created_at, to_status
+    ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
     [
       item.id,
       item.ticketId,
       item.type,
       item.body,
       item.actorName,
-      dateOrNull(item.createdAt) ?? now
+      dateOrNull(item.createdAt) ?? now,
+      item.toStatus ?? null
     ]
   );
 }

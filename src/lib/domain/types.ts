@@ -269,6 +269,7 @@ export type AiDecision = {
   matchedTicketId?: string;
   suggestion?: string;
   latencyMs: number;
+  provider?: "mock" | "http";
 };
 
 export type CustomerServiceDecision = {
@@ -307,6 +308,7 @@ export type TicketTimelineItem = {
 
 export type Ticket = {
   id: string;
+  version?: number;
   title: string;
   boothNumber: string;
   companyName: string;
