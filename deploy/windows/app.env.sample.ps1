@@ -7,6 +7,9 @@ $env:ADMIN_BOOTSTRAP_PASSWORD = "replace-with-long-random-bootstrap-password"
 # Optional fixed public site URL. When set, WeChat ticket receipts use this instead of the temporary tunnel URL.
 # $env:APP_PUBLIC_BASE_URL = "https://your-domain.example"
 
+# Optional AI provider keys. Fill these if the admin page config uses the same env names.
+# $env:ARK_API_KEY = "replace-with-ark-api-key"
+
 # Optional MCP secrets. Fill these if the admin page config uses the same env names.
 # $env:WECHAT_MCP_SECRET = "replace-with-wechat-secret"
 # $env:WECOM_MCP_SECRET = "replace-with-wecom-secret"
