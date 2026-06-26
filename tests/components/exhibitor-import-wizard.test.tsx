@@ -3,6 +3,42 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { ExhibitorImportWizard } from "@/components/exhibitor-import-wizard";
 
+async function renderWizardAtPreview(onImportFile: (file: File, sheetNames?: string[]) => void | Promise<void>) {
+  const user = userEvent.setup();
+  const inspectPayload = {
+    sheets: [{ sheetName: "普通绿色搭建汇总", selected: true, rows: 1, importable: true }],
+    mappings: [],
+    records: [{
+      boothNumber: "1ET06",
+      companyName: "汕头市昌隆机械科技有限公司",
+      companyShortName: "汕头市昌隆机械科技有限公司",
+      salesOwner: "孙晓景",
+      builder: "",
+      location: "一楼 1E",
+      area: "36",
+      boothType: "普通绿搭"
+    }]
+  };
+  vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify(inspectPayload), { status: 200 })));
+
+  render(<ExhibitorImportWizard isImporting={false} onClose={vi.fn()} onImportFile={onImportFile} />);
+
+  const file = new File(["demo"], "后勤表.xlsx", {
+    type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+  });
+  await user.upload(screen.getByLabelText("导入展位数据文件"), file);
+
+  const wizard = screen.getByRole("dialog", { name: "展商数据导入向导" });
+  await within(wizard).findByLabelText("选择工作表 普通绿色搭建汇总");
+  await user.click(within(wizard).getByRole("button", { name: "确认字段映射" }));
+  await within(wizard).findByText("预览导入结果，确认后才写入");
+  await user.click(within(wizard).getByLabelText("我已确认候选展商会写入看板"));
+  await user.click(within(wizard).getByLabelText("我已确认字段取值的处理方式"));
+  await user.click(within(wizard).getByLabelText("我已了解未匹配成员会进入待分配"));
+
+  return { user, wizard, file };
+}
+
 describe("ExhibitorImportWizard", () => {
   it("walks from upload to mapping confirmation and import preview", async () => {
     const user = userEvent.setup();
@@ -108,5 +144,19 @@ describe("ExhibitorImportWizard", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(onImportFile).toHaveBeenCalledWith(file, ["普通绿色搭建汇总", "标展楣牌"]);
     expect(within(wizard).getByText("导入确认已提交")).not.toBeNull();
+  });
+
+  it("stays on preview and shows an error when import submit fails", async () => {
+    const onImportFile = vi.fn(async () => {
+      throw new Error("导入写入失败");
+    });
+    const { user, wizard } = await renderWizardAtPreview(onImportFile);
+
+    await user.click(within(wizard).getByRole("button", { name: "确认并写入看板" }));
+
+    const alert = await within(wizard).findByRole("alert");
+    expect(alert.textContent).toContain("导入写入失败");
+    expect(within(wizard).getByText("预览导入结果，确认后才写入")).not.toBeNull();
+    expect(within(wizard).queryByText("导入确认已提交")).toBeNull();
   });
 });
