@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+﻿import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as XLSX from "xlsx";
 import { defaultConfig } from "@/lib/seed";
 import type { AppRepository } from "@/lib/repositories/app-repository";
@@ -491,5 +491,46 @@ describe("master data route AI assisted import", () => {
         builder: "李娜：15237810685"
       })
     ]);
+  });
+
+  it("rejects unsupported MIME types with 415", async () => {
+    const formData = new FormData();
+    formData.append(
+      "file",
+      new File([new Uint8Array([0x50, 0x4b])], "data.xlsx", { type: "text/plain" })
+    );
+
+    const route = await import("@/app/api/admin/master-data/route");
+    const response = await route.POST(multipartRequest(formData));
+
+    expect(response.status).toBe(415);
+  });
+
+  it("rejects unsupported file extensions with 400", async () => {
+    const formData = new FormData();
+    formData.append(
+      "file",
+      new File([new Uint8Array([0x50, 0x4b])], "data.txt", { type: "application/octet-stream" })
+    );
+
+    const route = await import("@/app/api/admin/master-data/route");
+    const response = await route.POST(multipartRequest(formData));
+
+    expect(response.status).toBe(400);
+  });
+
+  it("returns a friendly 400 for corrupted xlsx bytes instead of 500", async () => {
+    const formData = new FormData();
+    formData.append(
+      "file",
+      new File([new Uint8Array([0x50, 0x4b, 0x03, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00])], "corrupt.xlsx", { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" })
+    );
+
+    const route = await import("@/app/api/admin/master-data/route");
+    const response = await route.POST(multipartRequest(formData));
+    const payload = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(payload.message).toBe("工作簿解析失败，请检查文件格式。");
   });
 });

@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useState } from "react";
 import { Check, Download, FileSpreadsheet, Upload, X } from "lucide-react";
@@ -23,6 +23,8 @@ type CompletedImport = {
   skip: number;
   blocked: number;
 };
+
+const MAX_PREVIEW_SIZE = 5 * 1024 * 1024;
 
 const ACTION_LABELS: Record<UserImportAction, string> = {
   add: "新增",
@@ -157,6 +159,10 @@ export function AdminUserImport({ onClose, onCompleted }: Props) {
 
   async function previewFile() {
     if (!file) return;
+    if (file.size > MAX_PREVIEW_SIZE) {
+      setError(`文件超过 ${MAX_PREVIEW_SIZE / 1024 / 1024}MB 限制`);
+      return;
+    }
     setBusy(true);
     setError(null);
     setCompleted(null);

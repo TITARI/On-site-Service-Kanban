@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+﻿import { NextResponse } from "next/server";
 import * as XLSX from "xlsx";
 import { requireAdminAccess } from "@/lib/api/admin-guard";
 import { badRequest, errorMessage, parseJson } from "@/lib/api/errors";
@@ -19,6 +19,13 @@ const MAX_FILE_SIZE = 10 * 1024 * 1024;
 const MAX_SHEETS = 10;
 const MAX_ROWS_PER_SHEET = 20_000;
 const MAX_CELL_LENGTH = 500;
+const ALLOWED_MIME_TYPES = new Set([
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "application/vnd.ms-excel",
+  "text/csv",
+  "application/octet-stream"
+]);
+const ALLOWED_EXTENSIONS = [".xlsx", ".xls", ".csv"];
 
 class ImportPayloadError extends Error {
   constructor(
@@ -194,8 +201,25 @@ async function sheetsFromUploadedWorkbook(file: File): Promise<WorkbookSheetRows
   if (file.size > MAX_FILE_SIZE) {
     importPayloadError("文件过大，请控制在 10MB 以内。", 413);
   }
+  if (file.type && !ALLOWED_MIME_TYPES.has(file.type)) {
+    importPayloadError("仅支持 .xlsx / .xls / .csv 文件。", 415);
+  }
+  const filename = file.name.toLowerCase();
+  if (!ALLOWED_EXTENSIONS.some((ext) => filename.endsWith(ext))) {
+    importPayloadError("仅支持 .xlsx / .xls / .csv 文件。", 400);
+  }
   const buffer = await file.arrayBuffer();
-  const workbook = XLSX.read(buffer, { type: "array" });
+  let workbook;
+  try {
+    workbook = XLSX.read(buffer, { type: "array" });
+  } catch (error) {
+    console.warn("[master-data] xlsx 解析失败", {
+      filename: file.name,
+      size: file.size,
+      error: error instanceof Error ? error.message : String(error)
+    });
+    importPayloadError("工作簿解析失败，请检查文件格式。", 400);
+  }
   if (workbook.SheetNames.length > MAX_SHEETS) {
     importPayloadError(`工作表数量过多，请控制在 ${MAX_SHEETS} 个以内。`);
   }
