@@ -262,6 +262,7 @@ export type InboundMessageRecord = {
 
 export type AiDecision = {
   modelId: "fast" | "smart";
+  provider: "mock" | "http";
   scenario: AiPromptScenario;
   confidence: number;
   action: "create" | "urge" | "manual-review" | "classify" | "expedite";
@@ -269,11 +270,11 @@ export type AiDecision = {
   matchedTicketId?: string;
   suggestion?: string;
   latencyMs: number;
-  provider?: "mock" | "http";
 };
 
 export type CustomerServiceDecision = {
   modelId: "smart";
+  provider: "mock" | "http";
   scenario: "customer-service";
   confidence: number;
   pressureLevel: 1 | 2 | 3 | 4 | 5;

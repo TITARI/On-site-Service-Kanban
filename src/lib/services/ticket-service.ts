@@ -96,6 +96,7 @@ async function safeDedupe(
     });
     return {
       modelId: "smart",
+      provider: "mock",
       scenario: "dedupe",
       confidence: 0,
       action: "create",

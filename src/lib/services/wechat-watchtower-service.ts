@@ -431,6 +431,7 @@ function applyCustomerServiceExpedite(
   });
   ticket.aiDecisions.push({
     modelId: "smart",
+    provider: decision.provider,
     scenario: "customer-service",
     confidence: decision.confidence,
     action: "expedite",

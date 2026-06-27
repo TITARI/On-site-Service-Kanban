@@ -327,7 +327,7 @@ async function readTickets(connection: DatabaseConnection): Promise<Ticket[]> {
           matchedTicketId: decision.matched_ticket_id ? String(decision.matched_ticket_id) : undefined,
           suggestion: decision.suggestion ? String(decision.suggestion) : undefined,
           latencyMs: Number(decision.latency_ms ?? 0),
-          provider: decision.provider ? decision.provider as AiDecision["provider"] : undefined
+          provider: decision.provider === "http" ? "http" : "mock"
         })),
       replies: replyRows
         .filter((reply) => reply.ticket_id === ticketId)
@@ -470,7 +470,7 @@ async function ticketFromRow(connection: DatabaseConnection, ticketId: string, r
       matchedTicketId: decision.matched_ticket_id ? String(decision.matched_ticket_id) : undefined,
       suggestion: decision.suggestion ? String(decision.suggestion) : undefined,
       latencyMs: Number(decision.latency_ms ?? 0),
-      provider: decision.provider ? decision.provider as AiDecision["provider"] : undefined
+      provider: decision.provider === "http" ? "http" : "mock"
     })),
     replies: replyRows.map((reply) => ({
       id: String(reply.id),
@@ -2135,6 +2135,7 @@ export class MariaDbStateStore {
         });
         dedupe = {
           modelId: "smart",
+          provider: "mock",
           scenario: "dedupe",
           confidence: 0,
           action: "create",

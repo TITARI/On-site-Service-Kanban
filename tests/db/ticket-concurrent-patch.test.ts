@@ -182,6 +182,7 @@ describe("MariaDB ticket graph concurrent patch persistence", () => {
 
     const decisionInsert = calls.find((call) => call.sql.includes("INSERT IGNORE INTO ai_decisions"));
     expect(decisionInsert?.sql).toContain("provider");
+    expect(decisionInsert?.params).toContain("mock");
 
     const ticketUpserts = calls.filter((call) => call.sql.includes("INSERT INTO tickets"));
     expect(ticketUpserts.at(-1)?.sql).toContain("version");

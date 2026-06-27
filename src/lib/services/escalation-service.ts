@@ -33,6 +33,7 @@ export function escalateTimedOutTicket(ticket: Ticket, suggestion: string, nowIs
       ...ticket.aiDecisions,
       {
         modelId: "smart",
+        provider: "mock",
         scenario: "escalation",
         confidence: 0.8,
         action: "manual-review",
