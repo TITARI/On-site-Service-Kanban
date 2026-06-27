@@ -1,6 +1,6 @@
 import { normalizeKeywordGroups } from "./domain/keyword-config";
 import { defaultAiPromptDefaults, defaultAiPromptTemplates } from "./domain/ai-config";
-import type { AiModelConfig, AiPromptDefaults, AiPromptTemplate, AutoAcceptanceConfig, IssueType, KeywordGroup, MessageIntegrationConfig, UserGroup, WxautoMcpConfig } from "./domain/types";
+import type { AiModelConfig, AiPromptDefaults, AiPromptTemplate, AutoAcceptanceConfig, IssueType, KeywordGroup, MessageIntegrationConfig, ProcessingGroupConversation, UserGroup, WxautoMcpConfig } from "./domain/types";
 import { defaultWxautoMcpConfig, WXAUTO_MCP_ENDPOINT, WXAUTO_MCP_SECRET_ENV, WXAUTO_MCP_SERVER_NAME } from "./integrations/wxauto/config";
 
 export type AppConfig = {
@@ -13,6 +13,7 @@ export type AppConfig = {
   aiPromptTemplates?: AiPromptTemplate[];
   aiPromptDefaults?: Partial<AiPromptDefaults>;
   autoAcceptance?: AutoAcceptanceConfig;
+  processingGroupConversations?: ProcessingGroupConversation[];
   assignmentRules: Array<{ id: string; boothPattern: string; issueType: string; handlerId: string; handlerName: string; groupName: string }>;
 };
 
@@ -203,6 +204,7 @@ export function defaultConfig(): AppConfig {
     aiPromptTemplates: defaultAiPromptTemplates(),
     aiPromptDefaults: defaultAiPromptDefaults(),
     autoAcceptance: { enabled: true, timeoutMinutes: 30 },
+    processingGroupConversations: [],
     assignmentRules: [
       { id: "network-a", boothPattern: "A", issueType: "网络", handlerId: "h-network", handlerName: "网络值班", groupName: "网络组" },
       { id: "power-a", boothPattern: "A", issueType: "电力", handlerId: "h-power", handlerName: "工程值班", groupName: "工程组" }

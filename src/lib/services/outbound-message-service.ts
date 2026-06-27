@@ -109,9 +109,13 @@ export function queueTicketFeedbackMessage(state: AppState, ticket: Ticket, text
 }
 
 export function queueProcessingGroupMessage(state: AppState, ticket: Ticket, text: string) {
-  const targetName = ticket.assignmentGroup ?? ticket.handlerName ?? "刘基鑫";
+  const groupConversation = (state.config.processingGroupConversations ?? []).find(
+    (conversation) => conversation.groupId === ticket.assignmentGroup
+  );
+  const targetName = ticket.assignmentGroup ?? ticket.handlerName ?? "处理组";
   return queueOutboundMessage(state, {
     channel: "wechat",
+    targetConversationId: groupConversation?.wechatConversationId,
     targetName,
     text,
     relatedTicketId: ticket.id

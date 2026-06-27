@@ -105,7 +105,34 @@ describe("outbound message service", () => {
     expect(fresh.claimedAt).toBe("2026-05-27T11:59:30.000Z");
   });
 
-  it("uses Liu Jixin as the fallback admin WeChat target", () => {
+  it("targets the configured WeChat conversation for the processing group", () => {
+    const appState = state();
+    appState.config.processingGroupConversations = [
+      { groupId: "搭建组", wechatConversationId: "wechat-group-builder" }
+    ];
+
+    const message = queueProcessingGroupMessage(appState, {
+      id: "ticket-builder",
+      assignmentGroup: "搭建组"
+    } as Ticket, "新工单：A01 星河科技 搭建");
+
+    expect(message.targetConversationId).toBe("wechat-group-builder");
+    expect(message.targetName).toBe("搭建组");
+  });
+
+  it("leaves the conversation target undefined when the processing group has no mapping", () => {
+    const appState = state();
+
+    const message = queueProcessingGroupMessage(appState, {
+      id: "ticket-unmapped",
+      assignmentGroup: "未配置组"
+    } as Ticket, "新工单：A01 星河科技 网络");
+
+    expect(message.targetConversationId).toBeUndefined();
+    expect(message.targetName).toBe("未配置组");
+  });
+
+  it("uses the generic processing group fallback target name", () => {
     const appState = state();
 
     const message = queueProcessingGroupMessage(appState, {
@@ -114,6 +141,6 @@ describe("outbound message service", () => {
       description: "018特装电路有问题，处理一下",
     } as Ticket, "新工单：T01 测试科技 电力");
 
-    expect(message.targetName).toBe("刘基鑫");
+    expect(message.targetName).toBe("处理组");
   });
 });

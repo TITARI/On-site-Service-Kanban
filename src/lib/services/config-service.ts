@@ -21,6 +21,7 @@ export function stripConfigSecrets(config: AppConfig): AppConfig {
       accessToken: wxautoMcp.accessToken ? "已设置" : undefined
     },
     autoAcceptance: normalizeAutoAcceptanceConfig(config.autoAcceptance),
+    processingGroupConversations: config.processingGroupConversations ?? [],
     aiModels: config.aiModels.map(({ apiKey, apiKeyConfigured, ...model }) => {
       if (!apiKey && !model.apiKeyEnv) return model;
       return { ...model, apiKeyConfigured: true };
@@ -35,6 +36,7 @@ export function mergeConfigSecrets(incoming: AppConfig, existing: AppConfig): Ap
   return {
     ...incoming,
     autoAcceptance: incoming.autoAcceptance ?? existing.autoAcceptance,
+    processingGroupConversations: incoming.processingGroupConversations ?? existing.processingGroupConversations ?? [],
     wxautoMcp: {
       ...incomingWxautoMcp,
       accessToken: incomingWxautoMcp.accessToken ?? existingWxautoMcp.accessToken
@@ -56,7 +58,8 @@ export function validateConfig(config: AppConfig) {
     ...normalizeAiPromptConfig(config),
     keywordGroups: normalizeKeywordGroups(config.keywordGroups),
     userGroups: normalizeUserGroups(config.userGroups),
-    autoAcceptance: validateAutoAcceptanceConfig(config.autoAcceptance)
+    autoAcceptance: validateAutoAcceptanceConfig(config.autoAcceptance),
+    processingGroupConversations: config.processingGroupConversations ?? []
   };
   const wxautoMcp = normalizeWxautoMcpConfig(baseConfig.wxautoMcp, baseConfig.messageIntegrations);
   const normalizedConfig = {

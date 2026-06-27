@@ -3,6 +3,33 @@ import { mergeConfigSecrets, stripConfigSecrets, validateConfig } from "@/lib/se
 import { defaultConfig } from "@/lib/seed";
 
 describe("config service", () => {
+  it("defaults processing group conversations to an empty list", () => {
+    const config = defaultConfig();
+
+    expect(config.processingGroupConversations).toEqual([]);
+    expect(validateConfig(config).processingGroupConversations).toEqual([]);
+  });
+
+  it("normalizes legacy config without processing group conversations", () => {
+    const config = defaultConfig();
+    delete config.processingGroupConversations;
+
+    expect(validateConfig(config).processingGroupConversations).toEqual([]);
+  });
+
+  it("preserves processing group conversations when a legacy client omits them", () => {
+    const existing = defaultConfig();
+    existing.processingGroupConversations = [
+      { groupId: "搭建组", wechatConversationId: "wechat-group-builder" }
+    ];
+    const incoming = { ...existing };
+    delete incoming.processingGroupConversations;
+
+    expect(mergeConfigSecrets(incoming, existing).processingGroupConversations).toEqual(
+      existing.processingGroupConversations
+    );
+  });
+
   it("normalizes the default auto acceptance settings", () => {
     const config = defaultConfig();
 
