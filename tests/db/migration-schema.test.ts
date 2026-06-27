@@ -12,7 +12,12 @@ describe("initial MariaDB schema", () => {
   const keywordRuleSetSchema = readFileSync(path.join(process.cwd(), "db", "migrations", "002_keyword_rule_sets.sql"), "utf-8");
   const rbacSchemaPath = path.join(process.cwd(), "db", "migrations", "003_user_rbac_management.sql");
   const rbacSchema = existsSync(rbacSchemaPath) ? readFileSync(rbacSchemaPath, "utf-8") : "";
+  const ticketOptimisticLockSchemaPath = path.join(process.cwd(), "db", "migrations", "005_ticket_optimistic_lock.sql");
+  const ticketOptimisticLockSchema = existsSync(ticketOptimisticLockSchemaPath)
+    ? readFileSync(ticketOptimisticLockSchemaPath, "utf-8")
+    : "";
   const normalizedRbacSchema = normalizeSql(rbacSchema);
+  const normalizedTicketOptimisticLockSchema = normalizeSql(ticketOptimisticLockSchema);
 
   function tableDefinition(table: string) {
     const match = rbacSchema.match(new RegExp(`CREATE TABLE IF NOT EXISTS ${table} \\(([\\s\\S]*?)\\) ENGINE=`));
@@ -322,6 +327,21 @@ describe("initial MariaDB schema", () => {
         ('ticket.process', '处理工单'),
         ('ticket.accept', '验收工单'),
         ('admin.access', '后台管理');
+    `));
+  });
+
+  it("adds ticket graph columns needed for incremental patch persistence", () => {
+    expect(normalizedTicketOptimisticLockSchema).toContain(normalizeSql(`
+      ALTER TABLE tickets
+        ADD COLUMN IF NOT EXISTS version INT NOT NULL DEFAULT 0
+    `));
+    expect(normalizedTicketOptimisticLockSchema).toContain(normalizeSql(`
+      ALTER TABLE ticket_timeline
+        ADD COLUMN IF NOT EXISTS to_status VARCHAR(20) NULL
+    `));
+    expect(normalizedTicketOptimisticLockSchema).toContain(normalizeSql(`
+      ALTER TABLE ai_decisions
+        ADD COLUMN IF NOT EXISTS provider VARCHAR(8) NOT NULL DEFAULT 'mock'
     `));
   });
 });
