@@ -1077,7 +1077,7 @@ describe("wechat watchtower service", () => {
     {
       name: "keeps progress text in processing",
       initialStatus: "处理中",
-      text: "A01 正在加固门头",
+      text: "展位 A01 正在加固门头",
       expectedStatus: "处理中",
       timelineType: "reply",
       toStatus: undefined,
