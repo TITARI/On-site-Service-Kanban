@@ -44,6 +44,7 @@ const candidate: Ticket = {
 };
 
 afterEach(() => {
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
   delete process.env.OPENAI_API_KEY;
 });
@@ -65,7 +66,7 @@ describe("configured http ai provider", () => {
     }));
     const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
     expect(body.model).toBe("gpt-fast");
-    expect(decision).toMatchObject({ modelId: "fast", action: "classify", issueType: "网络", confidence: 0.93 });
+    expect(decision).toMatchObject({ modelId: "fast", provider: "http", action: "classify", issueType: "网络", confidence: 0.93 });
   });
 
   it("uses a configured system prompt when calling an OpenAI-compatible endpoint", async () => {
@@ -98,6 +99,7 @@ describe("configured http ai provider", () => {
   });
 
   it("parses smart-ai dedupe responses and falls back to mock when http fails", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({
@@ -110,7 +112,14 @@ describe("configured http ai provider", () => {
     const dedupe = await provider.dedupe(httpSmartModel, "A01", "网络完全断开，扫码失败", [candidate]);
     const fallback = await provider.classify(httpFastModel, "A01", "网络断开，扫码失败");
 
-    expect(dedupe).toMatchObject({ modelId: "smart", action: "urge", matchedTicketId: "ticket-1", confidence: 0.92 });
-    expect(fallback).toMatchObject({ modelId: "fast", action: "classify", issueType: "网络" });
+    expect(dedupe).toMatchObject({ modelId: "smart", provider: "http", action: "urge", matchedTicketId: "ticket-1", confidence: 0.92 });
+    expect(fallback).toMatchObject({ modelId: "fast", provider: "mock", action: "classify", issueType: "网络" });
+    expect(warn).toHaveBeenCalledWith("[ai] http 降级到 mock", {
+      modelId: "fast",
+      scenario: "classify",
+      endpoint: httpFastModel.endpoint,
+      error: "network down",
+      timestamp: expect.any(String)
+    });
   });
 });

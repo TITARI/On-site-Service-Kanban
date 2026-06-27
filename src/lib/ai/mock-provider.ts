@@ -37,6 +37,7 @@ export const mockAiProvider: AiProvider = {
   async classify(model, boothNumber, description) {
     return {
       modelId: model.id,
+      provider: "mock",
       scenario: "classify",
       confidence: 0.86,
       action: "classify",
@@ -51,6 +52,7 @@ export const mockAiProvider: AiProvider = {
 
     return {
       modelId: model.id,
+      provider: "mock",
       scenario: "dedupe",
       confidence,
       action: decideDeduplication(confidence),
@@ -61,6 +63,7 @@ export const mockAiProvider: AiProvider = {
   async escalate(model, boothNumber, description, similarTickets) {
     return {
       modelId: model.id,
+      provider: "mock",
       scenario: "escalation",
       confidence: 0.81,
       action: "manual-review",
@@ -75,6 +78,7 @@ export const mockAiProvider: AiProvider = {
     const highPressure = /催|加急|尽快|投诉|着急|急/i.test(text);
     return {
       modelId: "smart",
+      provider: "mock",
       scenario: "customer-service",
       confidence: highPressure && ticket ? 0.9 : 0.45,
       pressureLevel: highPressure ? 4 : 2,

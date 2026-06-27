@@ -90,6 +90,7 @@ export const httpAiProvider: AiProvider = {
     );
     return {
       modelId: model.id,
+      provider: "http",
       scenario: "classify",
       confidence: clampConfidence(result.json.confidence),
       action: "classify",
@@ -118,6 +119,7 @@ export const httpAiProvider: AiProvider = {
     const matchedTicketId = typeof result.json.matchedTicketId === "string" ? result.json.matchedTicketId : undefined;
     return {
       modelId: model.id,
+      provider: "http",
       scenario: "dedupe",
       confidence,
       action: decideDeduplication(confidence),
@@ -144,6 +146,7 @@ export const httpAiProvider: AiProvider = {
     );
     return {
       modelId: model.id,
+      provider: "http",
       scenario: "escalation",
       confidence: clampConfidence(result.json.confidence),
       action: "manual-review",
@@ -181,6 +184,7 @@ export const httpAiProvider: AiProvider = {
       : "manual-review";
     return {
       modelId: "smart" as const,
+      provider: "http" as const,
       scenario: "customer-service" as const,
       confidence: clampConfidence(result.json.confidence, 0),
       pressureLevel: pressureLevel(result.json.pressureLevel),

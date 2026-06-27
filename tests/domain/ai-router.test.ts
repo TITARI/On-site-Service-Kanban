@@ -15,6 +15,7 @@ describe("ai router", () => {
     const decision = await router.classifyIssue("A01", "网络断了，展台不能扫码");
 
     expect(decision.modelId).toBe("fast");
+    expect(decision.provider).toBe("mock");
     expect(decision.action).toBe("classify");
     expect(decision.issueType).toBe("网络");
   });
@@ -24,6 +25,7 @@ describe("ai router", () => {
     const decision = await router.escalate("A01", "网络断了", []);
 
     expect(decision.modelId).toBe("smart");
+    expect(decision.provider).toBe("mock");
     expect(decision.suggestion).toContain("优先核查");
   });
 
@@ -31,17 +33,17 @@ describe("ai router", () => {
     let modelUsed: AiModelConfig | undefined;
     const provider: AiProvider = {
       async classify(model): Promise<AiDecision> {
-        return { modelId: model.id, scenario: "classify", confidence: 0.8, action: "classify", issueType: "网络", latencyMs: 1 };
+        return { modelId: model.id, provider: "mock", scenario: "classify", confidence: 0.8, action: "classify", issueType: "网络", latencyMs: 1 };
       },
       async dedupe(model): Promise<AiDecision> {
         modelUsed = model;
-        return { modelId: model.id, scenario: "dedupe", confidence: 0.91, action: "urge", latencyMs: 1 };
+        return { modelId: model.id, provider: "mock", scenario: "dedupe", confidence: 0.91, action: "urge", latencyMs: 1 };
       },
       async escalate(model): Promise<AiDecision> {
-        return { modelId: model.id, scenario: "escalation", confidence: 0.8, action: "manual-review", suggestion: "优先核查", latencyMs: 1 };
+        return { modelId: model.id, provider: "mock", scenario: "escalation", confidence: 0.8, action: "manual-review", suggestion: "优先核查", latencyMs: 1 };
       },
       async customerService() {
-        return { modelId: "smart", scenario: "customer-service", confidence: 0.9, pressureLevel: 4, action: "expedite", replyText: "已加急", reason: "客户催办", latencyMs: 1 };
+        return { modelId: "smart", provider: "mock", scenario: "customer-service", confidence: 0.9, pressureLevel: 4, action: "expedite", replyText: "已加急", reason: "客户催办", latencyMs: 1 };
       }
     };
 
@@ -84,6 +86,7 @@ describe("ai router", () => {
     });
 
     expect(decision.modelId).toBe("smart");
+    expect(decision.provider).toBe("mock");
     expect(decision.action).toBe("expedite");
     expect(decision.pressureLevel).toBeGreaterThanOrEqual(4);
   });
