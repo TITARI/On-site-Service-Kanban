@@ -13,7 +13,10 @@ SET group_id = (
   ORDER BY fallback_group.created_at, fallback_group.id
   LIMIT 1
 )
-WHERE group_id IS NULL;
+WHERE group_id IS NULL
+  AND NOT EXISTS (
+    SELECT 1 FROM user_groups g WHERE g.id = people.group_id
+  );
 
 CREATE TABLE IF NOT EXISTS accounts (
   id varchar(128) NOT NULL PRIMARY KEY,
@@ -176,7 +179,8 @@ JOIN chat_identities keeper
 SET duplicate_identity.person_id = NULL,
     duplicate_identity.verified_by = NULL,
     duplicate_identity.verified_at = NULL
-WHERE duplicate_identity.person_id IS NOT NULL;
+WHERE duplicate_identity.person_id IS NOT NULL
+  AND keeper.person_id IS NOT NULL;
 
 ALTER TABLE chat_identities
   ADD UNIQUE KEY IF NOT EXISTS uniq_chat_identity_person_platform (person_id, platform);
