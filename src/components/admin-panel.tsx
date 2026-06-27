@@ -964,6 +964,7 @@ export function AdminConfigCenter({
     const timeoutMs = Number(formData.get("timeoutMs") ?? 0);
     const modelName = String(formData.get("modelName") ?? "").trim();
     const apiKey = apiKeyValue(formData);
+    const preset = providerPresetFor(String(formData.get("providerPreset") ?? "custom"));
     if (!modelName || !Number.isFinite(timeoutMs) || timeoutMs <= 0) {
       setStatus("请检查智能模型名称和超时时间");
       return;
@@ -972,12 +973,12 @@ export function AdminConfigCenter({
       const { apiKeyConfigured, ...persistedModel } = model;
       return model.id === modelId ? {
         ...persistedModel,
-        providerPreset: providerPresetFor(String(formData.get("providerPreset") ?? "custom")).id as AiProviderPresetId,
+        providerPreset: preset.id as AiProviderPresetId,
         provider: String(formData.get("provider") ?? "mock") === "http" ? "http" as const : "mock" as const,
         endpoint: String(formData.get("endpoint") ?? "").trim() || undefined,
         modelName,
         apiKey: apiKey || undefined,
-        apiKeyEnv: undefined,
+        apiKeyEnv: apiKey ? undefined : preset.apiKeyEnv,
         timeoutMs,
         enabled: formData.get("enabled") === "on"
       } : persistedModel;

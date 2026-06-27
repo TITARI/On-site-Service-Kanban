@@ -62,6 +62,15 @@ export const AI_PROVIDER_PRESETS: AiProviderPreset[] = [
     helper: "智谱开放平台 OpenAI 兼容接口。"
   },
   {
+    id: "ark",
+    label: "火山方舟",
+    endpoint: "https://ark.cn-beijing.volces.com/api/v3/chat/completions",
+    modelName: "glm-5.2",
+    apiKeyEnv: "ARK_API_KEY",
+    timeoutMs: 10000,
+    helper: "火山方舟 OpenAI 兼容接口，默认使用 GLM 5.2。"
+  },
+  {
     id: "custom",
     label: "自定义",
     helper: "手动填写 OpenAI 兼容的聊天补全地址、模型名和接口密钥。"

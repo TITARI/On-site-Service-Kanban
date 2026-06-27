@@ -47,7 +47,7 @@ export type AiModelConfig = {
   enabled: boolean;
 };
 
-export type AiProviderPresetId = "deepseek" | "openai" | "qwen" | "kimi" | "zhipu" | "custom";
+export type AiProviderPresetId = "deepseek" | "openai" | "qwen" | "kimi" | "zhipu" | "ark" | "custom";
 
 export type ImportSystemField =
   | "boothNumber"

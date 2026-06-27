@@ -24,6 +24,14 @@ describe("ai config helpers", () => {
       modelName: "gpt-4o-mini",
       apiKeyEnv: "OPENAI_API_KEY"
     });
+    expect(providerPresetFor("ark")).toMatchObject({
+      id: "ark",
+      label: "火山方舟",
+      endpoint: "https://ark.cn-beijing.volces.com/api/v3/chat/completions",
+      modelName: "glm-5.2",
+      apiKeyEnv: "ARK_API_KEY",
+      timeoutMs: 10000
+    });
   });
 
   it("normalizes missing prompt templates to built-in defaults", () => {
