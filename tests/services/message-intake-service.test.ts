@@ -1,8 +1,16 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Ticket } from "@/lib/domain/types";
 import { createMessageIntakeService } from "@/lib/services/message-intake-service";
 import { defaultConfig } from "@/lib/seed";
 import type { AppState } from "@/lib/storage/file-store";
+
+const ticketServiceMock = vi.hoisted(() => ({
+  submitTicket: vi.fn()
+}));
+
+vi.mock("@/lib/services/ticket-service", () => ({
+  createTicketService: () => ({ submitTicket: ticketServiceMock.submitTicket })
+}));
 
 function state(): AppState {
   return {
@@ -46,6 +54,14 @@ const existingTicket: Ticket = {
 };
 
 describe("message intake service", () => {
+  beforeEach(() => {
+    ticketServiceMock.submitTicket.mockReset();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it("records a WeCom message and understands it can create a ticket", async () => {
     const appState = state();
     const service = createMessageIntakeService({ state: appState });
@@ -170,5 +186,37 @@ describe("message intake service", () => {
     expect(second).toBe(first);
     expect(appState.messageRecords).toHaveLength(1);
     expect(first.raw).toEqual({ source: "wxauto" });
+  });
+
+  it("persists the inbound message when automatic ticket creation fails", async () => {
+    const appState = state();
+    appState.config.messageIntegrations[0].autoCreateTickets = true;
+    ticketServiceMock.submitTicket.mockImplementationOnce(async () => {
+      expect(appState.messageRecords).toHaveLength(1);
+      throw new Error("AI unavailable");
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const service = createMessageIntakeService({ state: appState });
+
+    const record = await service.recordMessage({
+      channel: "wecom",
+      externalMessageId: "msg-ai-failure",
+      senderName: "业务王宁",
+      senderPhone: "13700137000",
+      text: "A01 展位网络断了"
+    });
+
+    expect(appState.messageRecords).toContain(record);
+    expect(record.analysis.suggestedAction).toBe("needs-review");
+    expect(record.analysis.reason).toContain("AI 处理失败");
+    expect(warn).toHaveBeenCalledWith(
+      "[message-intake] optionallyCreateTicket 失败",
+      expect.objectContaining({
+        messageId: record.id,
+        externalMessageId: "msg-ai-failure",
+        error: "AI unavailable",
+        timestamp: expect.any(String)
+      })
+    );
   });
 });

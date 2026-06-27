@@ -250,10 +250,26 @@ export function createMessageIntakeService({ state }: { state: AppState }) {
         analysis
       };
 
-      if (!input.skipAutoCreate) {
-        record.analysis = await optionallyCreateTicket(state, record);
-      }
       state.messageRecords.push(record);
+
+      if (!input.skipAutoCreate) {
+        try {
+          record.analysis = await optionallyCreateTicket(state, record);
+        } catch (error) {
+          console.warn("[message-intake] optionallyCreateTicket 失败", {
+            messageId: record.id,
+            externalMessageId: record.externalMessageId,
+            error: error instanceof Error ? error.message : String(error),
+            timestamp: new Date().toISOString()
+          });
+          record.analysis = {
+            confidence: 0,
+            suggestedAction: "needs-review",
+            reason: "AI 处理失败，待人工审核"
+          };
+        }
+      }
+
       return record;
     }
   };
