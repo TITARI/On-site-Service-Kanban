@@ -2166,39 +2166,38 @@ export class MariaDbStateStore {
   async claimOutboundMessages(limit = 10) {
     return await withDatabaseTransaction(async (connection) => {
       const now = new Date();
-      const candidates = await rows<Row>(
+      const staleCutoff = new Date(now.getTime() - 120000);
+      const candidateRows = await rows<Row>(
         connection,
-        `SELECT * FROM outbound_messages
+        `SELECT id FROM outbound_messages
          WHERE status = 'pending'
             OR (status = 'failed' AND retry_count < 3)
             OR (status = 'sending' AND claimed_at IS NOT NULL AND claimed_at <= ?)
          ORDER BY created_at
-         LIMIT ?`,
-        [new Date(now.getTime() - 120000), limit]
+         LIMIT ?
+         FOR UPDATE SKIP LOCKED`,
+        [staleCutoff, limit]
       );
-      const messages = candidates.map((row) => ({
-        id: String(row.id),
-        channel: row.channel as OutboundMessage["channel"],
-        targetConversationId: row.target_conversation_id ? String(row.target_conversation_id) : undefined,
-        targetChatIdentityId: row.target_chat_identity_id ? String(row.target_chat_identity_id) : undefined,
-        targetName: String(row.target_name),
-        text: String(row.text),
-        relatedTicketId: row.related_ticket_id ? String(row.related_ticket_id) : undefined,
-        relatedSessionId: row.related_session_id ? String(row.related_session_id) : undefined,
-        status: "sending" as const,
-        retryCount: Number(row.retry_count ?? 0),
-        lastError: row.last_error ? String(row.last_error) : undefined,
-        claimedAt: now.toISOString(),
-        sentAt: iso(row.sent_at),
-        createdAt: requiredIso(row.created_at),
-        updatedAt: now.toISOString()
-      }));
-      for (const message of messages) {
-        await execute(
+      const messages: OutboundMessage[] = [];
+      for (const row of candidateRows) {
+        const result = await execute(
           connection,
-          "UPDATE outbound_messages SET status = 'sending', claimed_at = ?, updated_at = ? WHERE id = ?",
-          [now, now, message.id]
+          `UPDATE outbound_messages
+           SET status = 'sending', claimed_at = ?, updated_at = ?
+           WHERE id = ?
+             AND (status = 'pending'
+                  OR (status = 'failed' AND retry_count < 3)
+                  OR (status = 'sending' AND claimed_at <= ?))`,
+          [now, now, String(row.id), staleCutoff]
         );
+        if (result.affectedRows < 1) continue;
+
+        const [updated] = await rows<Row>(
+          connection,
+          "SELECT * FROM outbound_messages WHERE id = ? LIMIT 1",
+          [String(row.id)]
+        );
+        if (updated) messages.push(outboundMessageFromRow(updated));
       }
       return messages;
     });
