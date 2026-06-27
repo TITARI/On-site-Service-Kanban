@@ -20,11 +20,12 @@ import {
   parseRegistrationCommand
 } from "./wechat-identity-service";
 
-export type WatchtowerAction = "ignored" | "prompted" | "registered" | "processed" | "duplicate";
+export type WatchtowerAction = "ignored" | "prompted" | "registered" | "processed" | "duplicate" | "error";
 
 export type WatchtowerResult = {
   action: WatchtowerAction;
   record?: InboundMessageRecord;
+  replyText?: string;
 };
 
 const MEDIA_FOLLOWUP_WINDOW_MS = 2 * 60 * 1000;
@@ -906,9 +907,23 @@ async function continueSessionAfterRegistration(
     return { action: "prompted", record };
   }
 
-  removeSession(state, session.id);
-  const record = await processCompleteRequest(state, originalInput, personId, chatIdentityId, conversationExternalId);
-  return { action: "processed", record };
+  try {
+    const record = await processCompleteRequest(state, originalInput, personId, chatIdentityId, conversationExternalId);
+    removeSession(state, session.id);
+    return { action: "processed", record };
+  } catch (error) {
+    console.warn("[watchtower] processCompleteRequest 失败，session 保留", {
+      sessionId: session.id,
+      chatIdentityId: session.chatIdentityId,
+      conversationId: session.conversationId,
+      error: error instanceof Error ? error.message : String(error),
+      timestamp: new Date().toISOString()
+    });
+    return {
+      action: "error",
+      replyText: "您的诉求处理遇到问题，已记录待人工跟进，请稍后再试或联系现场管理员。"
+    };
+  }
 }
 
 export async function processWechatWatchtowerMessage(state: AppState, input: IntakeMessageInput): Promise<WatchtowerResult> {

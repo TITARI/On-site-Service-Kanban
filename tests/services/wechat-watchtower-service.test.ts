@@ -4,9 +4,34 @@ import { ticketShortCode } from "@/lib/domain/ticket-links";
 import { defaultConfig } from "@/lib/seed";
 import { processWechatWatchtowerMessage } from "@/lib/services/wechat-watchtower-service";
 
+const messageIntakeControl = vi.hoisted(() => ({
+  failNextAutoCreate: false
+}));
+
+vi.mock("@/lib/services/message-intake-service", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/services/message-intake-service")>();
+  return {
+    ...actual,
+    createMessageIntakeService(options: Parameters<typeof actual.createMessageIntakeService>[0]) {
+      const service = actual.createMessageIntakeService(options);
+      return {
+        ...service,
+        async recordMessage(input: Parameters<typeof service.recordMessage>[0]) {
+          if (messageIntakeControl.failNextAutoCreate && !input.skipAutoCreate) {
+            messageIntakeControl.failNextAutoCreate = false;
+            throw new Error("ticket service unavailable");
+          }
+          return service.recordMessage(input);
+        }
+      };
+    }
+  };
+});
+
 const originalPublicBaseUrl = process.env.APP_PUBLIC_BASE_URL;
 
 afterEach(() => {
+  messageIntakeControl.failNextAutoCreate = false;
   vi.restoreAllMocks();
   if (originalPublicBaseUrl === undefined) {
     delete process.env.APP_PUBLIC_BASE_URL;
@@ -319,6 +344,47 @@ describe("wechat watchtower service", () => {
     expect(appState.tickets).toHaveLength(1);
     expect(appState.tickets[0]).toMatchObject({ boothNumber: "A01", issueType: "网络", submitterName: "张三" });
     expect(appState.outboundMessages?.some((message) => message.text.includes("现场工单已创建成功"))).toBe(true);
+  });
+
+  it("preserves the registration session when processing the original request fails", async () => {
+    const appState = state();
+    await processWechatWatchtowerMessage(appState, {
+      channel: "wechat",
+      externalMessageId: "msg-session-failure-request",
+      senderId: "wxid-session-failure",
+      senderName: "失败重试微信",
+      senderGroup: "现场群",
+      sourceConversationId: "conv-session-failure",
+      text: "A01 网络断了，扫码收款失败"
+    });
+    const session = appState.pendingWorkOrderSessions?.[0];
+    expect(session).toBeDefined();
+
+    messageIntakeControl.failNextAutoCreate = true;
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const result = await processWechatWatchtowerMessage(appState, {
+      channel: "wechat",
+      externalMessageId: "msg-session-failure-register",
+      senderId: "wxid-session-failure",
+      senderName: "失败重试微信",
+      senderGroup: "现场群",
+      sourceConversationId: "conv-session-failure",
+      text: "注册 搭建组 张三 13800138000"
+    });
+
+    expect(result.action).toBe("error");
+    expect(result.replyText).toContain("已记录待人工跟进");
+    expect(appState.pendingWorkOrderSessions).toContain(session);
+    expect(warn).toHaveBeenCalledWith(
+      "[watchtower] processCompleteRequest 失败，session 保留",
+      expect.objectContaining({
+        sessionId: session!.id,
+        chatIdentityId: session!.chatIdentityId,
+        conversationId: session!.conversationId,
+        error: "ticket service unavailable",
+        timestamp: expect.any(String)
+      })
+    );
   });
 
   it("prompts instead of throwing when a wxauto group sender has no stable sender id", async () => {
