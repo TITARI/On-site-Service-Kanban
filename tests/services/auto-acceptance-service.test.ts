@@ -36,7 +36,8 @@ function ticket(overrides: Partial<Ticket> = {}): Ticket {
         type: "status-changed",
         body: "状态变更为已解决：已恢复网络",
         createdAt: "2026-06-05T08:00:00.000Z",
-        actorName: "网络值班"
+        actorName: "网络值班",
+        toStatus: "已解决"
       }
     ],
     createdAt: "2026-06-05T07:30:00.000Z",
@@ -113,7 +114,8 @@ describe("auto acceptance service", () => {
               type: "status-changed",
               body: "状态变更为已解决：第一次处理完成",
               createdAt: "2026-06-05T07:00:00.000Z",
-              actorName: "网络值班"
+              actorName: "网络值班",
+              toStatus: "已解决"
             },
             {
               id: "timeline-rework",
@@ -129,7 +131,8 @@ describe("auto acceptance service", () => {
               type: "status-changed",
               body: "状态变更为已解决：第二次处理完成",
               createdAt: "2026-06-05T08:10:00.000Z",
-              actorName: "网络值班"
+              actorName: "网络值班",
+              toStatus: "已解决"
             }
           ]
         })
@@ -140,6 +143,75 @@ describe("auto acceptance service", () => {
 
     expect(result.acceptedTicketIds).toEqual([]);
     expect(appState.tickets[0].status).toBe("已解决");
+  });
+
+  it("uses toStatus when the resolved timeline body changes", () => {
+    const appState = state({
+      tickets: [
+        ticket({
+          updatedAt: "2026-06-05T07:00:00.000Z",
+          timeline: [{
+            id: "timeline-resolved-with-new-copy",
+            ticketId: "ticket-1",
+            type: "status-changed",
+            body: "处理工作已完成",
+            createdAt: "2026-06-05T08:10:00.000Z",
+            actorName: "网络值班",
+            toStatus: "已解决"
+          }]
+        })
+      ]
+    });
+
+    const result = runAutoAcceptanceForState(appState, { now: "2026-06-05T08:39:59.000Z" });
+
+    expect(result.acceptedTicketIds).toEqual([]);
+    expect(appState.tickets[0].status).toBe("已解决");
+  });
+
+  it("ignores resolved wording when toStatus is not resolved", () => {
+    const appState = state({
+      tickets: [
+        ticket({
+          updatedAt: "2026-06-05T08:20:00.000Z",
+          timeline: [{
+            id: "timeline-processing-with-resolved-copy",
+            ticketId: "ticket-1",
+            type: "status-changed",
+            body: "状态变更为已解决：文案与字段冲突",
+            createdAt: "2026-06-05T07:00:00.000Z",
+            actorName: "网络值班",
+            toStatus: "处理中"
+          }]
+        })
+      ]
+    });
+
+    const result = runAutoAcceptanceForState(appState, { now: "2026-06-05T08:49:59.000Z" });
+
+    expect(result.acceptedTicketIds).toEqual([]);
+  });
+
+  it("falls back to updatedAt for legacy timeline entries without toStatus", () => {
+    const appState = state({
+      tickets: [
+        ticket({
+          updatedAt: "2026-06-05T08:20:00.000Z",
+          timeline: [{
+            id: "timeline-legacy-resolved",
+            ticketId: "ticket-1",
+            type: "status-changed",
+            body: "状态变更为已解决：旧数据",
+            createdAt: "2026-06-05T07:00:00.000Z",
+            actorName: "网络值班"
+          }]
+        })
+      ]
+    });
+
+    const result = runAutoAcceptanceForState(appState, { now: "2026-06-05T08:49:59.000Z" });
+
+    expect(result.acceptedTicketIds).toEqual([]);
   });
 
   it("is idempotent after the ticket has already been auto accepted", () => {

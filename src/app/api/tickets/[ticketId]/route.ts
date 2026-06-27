@@ -122,7 +122,8 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ ti
       type: "status-changed",
       body: `${actor.name}认领工单`,
       createdAt: now,
-      actorName: actor.name
+      actorName: actor.name,
+      toStatus: input.status
     });
   } else if (input.action === "progress") {
     ticket.replies.push({
@@ -142,7 +143,8 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ ti
       type: "status-changed",
       body: `状态变更为${input.status}：${input.processBody}`,
       createdAt: now,
-      actorName: actor.name
+      actorName: actor.name,
+      toStatus: input.status
     });
     if (input.status === "已解决") {
       notificationText = `工单已解决：${ticket.title}\n处理说明：${input.processBody?.trim()}`;
@@ -176,7 +178,8 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ ti
       type: "status-changed",
       body: input.status === "挂起" ? `状态变更为挂起：${input.reason}` : `状态变更为${input.status}`,
       createdAt: now,
-      actorName: actor.name
+      actorName: actor.name,
+      toStatus: input.status
     });
   }
 
