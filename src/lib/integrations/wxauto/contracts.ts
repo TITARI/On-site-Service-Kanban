@@ -52,7 +52,7 @@ export const submitEventsInputSchema = z.object({
 
 export const eventReceiptSchema = z.object({
   messageId: z.string(),
-  action: z.enum(["ignored", "prompted", "registered", "processed", "duplicate"]),
+  action: z.enum(["ignored", "prompted", "registered", "processed", "duplicate", "error"]),
   inboundMessageId: z.string().optional()
 });
 
