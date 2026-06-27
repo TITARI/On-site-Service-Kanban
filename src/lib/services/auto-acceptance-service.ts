@@ -44,7 +44,7 @@ export function autoAcceptanceProcessingText(ticket: Ticket) {
 
 function resolvedAt(ticket: Ticket) {
   const timelineResolvedAt = ticket.timeline
-    .filter((item) => item.body.includes("状态变更为已解决"))
+    .filter((item) => item.type === "status-changed" && item.toStatus === "已解决")
     .at(-1)?.createdAt;
   return timelineResolvedAt ?? ticket.updatedAt;
 }

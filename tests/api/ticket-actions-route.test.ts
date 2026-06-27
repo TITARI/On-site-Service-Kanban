@@ -244,7 +244,10 @@ describe("ticket action route", () => {
     expect(updated.status).toBe("处理中");
     expect(updated.handlerId).toBe("member-13700137000");
     expect(updated.handlerPhone).toBe("13700137000");
-    expect(updated.timeline.at(-1).body).toContain("认领工单");
+    expect(updated.timeline.at(-1)).toMatchObject({
+      body: expect.stringContaining("认领工单"),
+      toStatus: "处理中"
+    });
   });
 
   it("rejects direct claim of an already assigned ticket outside the actor group", async () => {
@@ -324,6 +327,7 @@ describe("ticket action route", () => {
     const { ticket: updated } = await response.json();
     expect(updated.status).toBe("已解决");
     expect(updated.replies.at(-1)).toMatchObject({ body: "已加固门头并复核稳定性", imageUrls: ["data:image/jpeg;base64,abc"] });
+    expect(updated.timeline.at(-1)).toMatchObject({ type: "status-changed", toStatus: "已解决" });
   });
 
   it("rejects accept actions that do not close the resolved ticket", async () => {
@@ -375,6 +379,7 @@ describe("ticket action route", () => {
     expect(response.status).toBe(200);
     const { ticket: updated } = await response.json();
     expect(updated.status).toBe("已解决");
+    expect(updated.timeline.at(-1)).toMatchObject({ type: "status-changed", toStatus: "已解决" });
   });
 
   it("requires a reason when action=status suspends a ticket", async () => {
@@ -400,6 +405,7 @@ describe("ticket action route", () => {
     expect(response.status).toBe(200);
     const { ticket: updated } = await response.json();
     expect(updated.status).toBe("挂起");
+    expect(updated.timeline.at(-1)).toMatchObject({ type: "status-changed", toStatus: "挂起" });
   });
 
   it("accepts a resolved ticket and closes it", async () => {
