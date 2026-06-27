@@ -13,6 +13,11 @@ export type UserGroup = {
   enabled: boolean;
 };
 
+export type ProcessingGroupConversation = {
+  groupId: string;
+  wechatConversationId: string;
+};
+
 export type BoothRecord = {
   boothNumber: string;
   companyName: string;
