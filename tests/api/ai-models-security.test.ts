@@ -132,6 +132,25 @@ describe("admin ai models security", () => {
     }));
   });
 
+  it("allows the ARK_API_KEY preset env name", async () => {
+    process.env.ARK_API_KEY = "ark-key";
+    const fetchMock = stubModelsFetch();
+
+    const response = await POST(request({
+      endpoint: "https://ark.cn-beijing.volces.com/api/v3/models",
+      modelId: "fast",
+      apiKeyEnv: "ARK_API_KEY"
+    }));
+
+    expect(response.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://ark.cn-beijing.volces.com/api/v3/models",
+      expect.objectContaining({
+        headers: expect.objectContaining({ Authorization: "Bearer ark-key" })
+      })
+    );
+  });
+
   it("returns 504 when the model endpoint times out", async () => {
     const controller = new AbortController();
     const timeoutSpy = vi.spyOn(AbortSignal, "timeout").mockReturnValue(controller.signal);

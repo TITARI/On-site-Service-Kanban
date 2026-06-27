@@ -605,6 +605,7 @@ describe("AdminConfigCenter user groups", () => {
       provider: "http",
       endpoint: "https://api.deepseek.com/v1/chat/completions",
       modelName: "deepseek-chat",
+      apiKeyEnv: "DEEPSEEK_API_KEY",
       timeoutMs: 8000
     }));
   });

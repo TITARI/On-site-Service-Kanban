@@ -136,6 +136,7 @@ data/app-state.json
 | `DASHSCOPE_API_KEY` | 通义千问 |
 | `MOONSHOT_API_KEY` | Kimi |
 | `ZHIPU_API_KEY` | 智谱 GLM |
+| `ARK_API_KEY` | 火山方舟 |
 
 ### wxauto / 微信桥接
 
