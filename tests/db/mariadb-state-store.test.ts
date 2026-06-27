@@ -280,7 +280,7 @@ function wechatProcessingConnection() {
           missing_fields: JSON.stringify(["identityGroup", "name", "phone"]),
           created_at: rowDate(),
           updated_at: rowDate(),
-          last_prompt_at: rowDate()
+          last_prompt_at: new Date()
         }]];
       }
       if (sql.trimStart().startsWith("SELECT")) return [[]];

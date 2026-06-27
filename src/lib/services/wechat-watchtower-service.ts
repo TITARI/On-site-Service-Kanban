@@ -29,6 +29,7 @@ export type WatchtowerResult = {
 };
 
 const MEDIA_FOLLOWUP_WINDOW_MS = 2 * 60 * 1000;
+const SESSION_TIMEOUT_MS = 30 * 60 * 1000;
 const HANDLER_COMPLETION_KEYWORDS = [
   "已处理",
   "处理好了",
@@ -261,6 +262,26 @@ function createPromptSession(
 
 function removeSession(state: AppState, sessionId: string) {
   state.pendingWorkOrderSessions = (state.pendingWorkOrderSessions ?? []).filter((session) => session.id !== sessionId);
+}
+
+function cleanupExpiredSessions(state: AppState, currentTime = Date.now()): number {
+  const expired = (state.pendingWorkOrderSessions ?? []).filter((session) => {
+    if (!session.lastPromptAt) return false;
+    return currentTime - new Date(session.lastPromptAt).getTime() > SESSION_TIMEOUT_MS;
+  });
+
+  for (const session of expired) {
+    const age = currentTime - new Date(session.lastPromptAt!).getTime();
+    console.info("[watchtower] session 过期，移除", {
+      sessionId: session.id,
+      chatIdentityId: session.chatIdentityId,
+      conversationId: session.conversationId,
+      lastPromptAt: session.lastPromptAt,
+      age
+    });
+    removeSession(state, session.id);
+  }
+  return expired.length;
 }
 
 function boothPromptText() {
@@ -906,6 +927,11 @@ async function continueSessionAfterRegistration(
 }
 
 export async function processWechatWatchtowerMessage(state: AppState, input: IntakeMessageInput): Promise<WatchtowerResult> {
+  const expiredCount = cleanupExpiredSessions(state);
+  if (expiredCount > 0) {
+    console.info("[watchtower] 清理过期 session", { count: expiredCount });
+  }
+
   state.messageRecords ??= [];
   if (input.externalMessageId && state.messageRecords.some((record) => record.channel === input.channel && record.externalMessageId === input.externalMessageId)) {
     return { action: "duplicate" };
