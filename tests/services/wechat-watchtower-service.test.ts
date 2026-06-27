@@ -636,6 +636,7 @@ describe("wechat watchtower service", () => {
       missingFields: ["boothNumber"],
       draftImages: ["data:image/jpeg;base64,first"]
     });
+    expect(appState.outboundMessages?.at(-1)?.text).toContain("已收到图片，请补充展位号");
 
     const textResult = await processWechatWatchtowerMessage(appState, {
       channel: "wechat",
@@ -695,6 +696,70 @@ describe("wechat watchtower service", () => {
       matchedTicketId: ticket.id,
       reason: expect.stringContaining("补充图片")
     });
+    expect(appState.pendingWorkOrderSessions).toEqual([]);
+  });
+
+  it("prompts with ticket choices when image-only follow-ups match multiple recent tickets", async () => {
+    const appState = state();
+    await processWechatWatchtowerMessage(appState, {
+      channel: "wechat",
+      externalMessageId: "msg-register-multiple-image",
+      senderId: "wxid-multiple-image",
+      senderName: "多工单用户",
+      senderGroup: "现场群",
+      sourceConversationId: "conv-multiple-image",
+      text: "注册 业务组 多工单用户 13900139021"
+    });
+    await processWechatWatchtowerMessage(appState, {
+      channel: "wechat",
+      externalMessageId: "msg-first-ticket-before-image",
+      senderId: "wxid-multiple-image",
+      senderName: "多工单用户",
+      senderGroup: "现场群",
+      sourceConversationId: "conv-multiple-image",
+      text: "A01 网络断了，扫码收款失败"
+    });
+
+    const firstTicket = appState.tickets.at(-1)!;
+    const imageReceivedAt = new Date().toISOString();
+    firstTicket.createdAt = imageReceivedAt;
+    firstTicket.updatedAt = imageReceivedAt;
+    const secondTicket = {
+      ...firstTicket,
+      id: "ticket-second-recent-image",
+      title: "B02 测试展商 电力",
+      boothNumber: "B02",
+      issueType: "电力",
+      imageUrls: [],
+      replies: [],
+      timeline: [],
+      createdAt: imageReceivedAt,
+      updatedAt: new Date(new Date(imageReceivedAt).getTime() - 1000).toISOString()
+    };
+    appState.tickets.push(secondTicket);
+
+    const result = await processWechatWatchtowerMessage(appState, {
+      channel: "wechat",
+      externalMessageId: "msg-multiple-ticket-image",
+      senderId: "wxid-multiple-image",
+      senderName: "多工单用户",
+      senderGroup: "现场群",
+      sourceConversationId: "conv-multiple-image",
+      imageUrls: ["data:image/jpeg;base64,multiple"],
+      receivedAt: imageReceivedAt
+    });
+
+    expect(result.action).toBe("prompted");
+    expect(firstTicket.imageUrls).toEqual([]);
+    expect(secondTicket.imageUrls).toEqual([]);
+    expect(appState.pendingWorkOrderSessions?.[0]).toMatchObject({
+      missingFields: ["boothNumber"],
+      draftImages: ["data:image/jpeg;base64,multiple"]
+    });
+    const promptText = appState.outboundMessages?.at(-1)?.text ?? "";
+    expect(promptText).toContain("您近期有多张工单");
+    expect(promptText).toContain(`${ticketShortCode(firstTicket.id)} - A01 - 网络`);
+    expect(promptText).toContain(`${ticketShortCode(secondTicket.id)} - B02 - 电力`);
   });
 
   it("keeps unknown user image drafts through registration and later ticket creation", async () => {
