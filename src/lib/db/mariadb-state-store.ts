@@ -2213,24 +2213,29 @@ export class MariaDbStateStore {
 
   async markOutboundMessage(messageId: string, status: "sent" | "failed", error?: string) {
     const now = new Date();
-    const [existing] = await rows<Row>(getDatabasePool(), "SELECT * FROM outbound_messages WHERE id = ? LIMIT 1", [messageId]);
-    if (!existing) return undefined;
+    const pool = getDatabasePool();
 
+    let result: ResultSetHeader;
     if (status === "sent") {
-      await execute(
-        getDatabasePool(),
-        "UPDATE outbound_messages SET status = 'sent', sent_at = ?, last_error = NULL, updated_at = ? WHERE id = ?",
+      result = await execute(
+        pool,
+        `UPDATE outbound_messages
+         SET status = 'sent', sent_at = ?, last_error = NULL, updated_at = ?
+         WHERE id = ? AND status = 'sending'`,
         [now, now, messageId]
       );
     } else {
-      await execute(
-        getDatabasePool(),
-        "UPDATE outbound_messages SET status = 'failed', retry_count = retry_count + 1, last_error = ?, updated_at = ? WHERE id = ?",
-        [error?.trim() || "发送失败", now, messageId]
+      result = await execute(
+        pool,
+        `UPDATE outbound_messages
+         SET status = 'failed', retry_count = retry_count + 1, last_error = ?, updated_at = ?
+         WHERE id = ? AND status = 'sending'`,
+        [error ?? null, now, messageId]
       );
     }
+    if (result.affectedRows < 1) return undefined;
 
-    const [updated] = await rows<Row>(getDatabasePool(), "SELECT * FROM outbound_messages WHERE id = ? LIMIT 1", [messageId]);
+    const [updated] = await rows<Row>(pool, "SELECT * FROM outbound_messages WHERE id = ? LIMIT 1", [messageId]);
     return updated ? outboundMessageFromRow(updated) : undefined;
   }
 
