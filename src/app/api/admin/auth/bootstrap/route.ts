@@ -7,13 +7,13 @@ import {
   bootstrapFirstAdmin
 } from "@/lib/services/auth-service";
 import { sessionCookie } from "@/lib/services/session-service";
+import type { RateLimiter } from "@/lib/services/rate-limiter";
 import type { BootstrapAdminInput } from "@/lib/domain/access-control";
 
 export const dynamic = "force-dynamic";
 
 const BOOTSTRAP_RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000;
 const BOOTSTRAP_RATE_LIMIT_MAX_ATTEMPTS = 5;
-const bootstrapRateLimits = new Map<string, { attempts: number; resetAt: number }>();
 
 function bootstrapInput(payload: Record<string, unknown>): BootstrapAdminInput {
   const groupPayload = payload.group as
@@ -51,36 +51,40 @@ function bootstrapRateLimitKey(request: Request) {
   return "unknown";
 }
 
-function assertBootstrapRateLimit(request: Request) {
+async function assertBootstrapRateLimit(request: Request, rateLimiter: RateLimiter) {
   const key = bootstrapRateLimitKey(request);
-  const now = Date.now();
-  const current = bootstrapRateLimits.get(key);
-  if (!current || current.resetAt <= now) {
-    bootstrapRateLimits.set(key, {
-      attempts: 1,
-      resetAt: now + BOOTSTRAP_RATE_LIMIT_WINDOW_MS
-    });
-    return key;
-  }
-
-  if (current.attempts >= BOOTSTRAP_RATE_LIMIT_MAX_ATTEMPTS) {
+  const result = await rateLimiter.checkAndIncrement(
+    key,
+    BOOTSTRAP_RATE_LIMIT_MAX_ATTEMPTS,
+    BOOTSTRAP_RATE_LIMIT_WINDOW_MS
+  );
+  if (!result.allowed) {
     throw new AuthError(429, "初始化尝试过于频繁，请稍后再试");
   }
-  current.attempts += 1;
   return key;
 }
 
 export async function POST(request: Request) {
   let rateLimitKey: string | undefined;
   try {
-    rateLimitKey = assertBootstrapRateLimit(request);
+    const repository = getAppRepository();
+    const rateLimiter = repository.getRateLimiter();
+    rateLimitKey = await assertBootstrapRateLimit(request, rateLimiter);
     const payload = await request.json() as Record<string, unknown>;
     const { actor, token, expiresAt } = await bootstrapFirstAdmin(
-      getAppRepository(),
+      repository,
       bootstrapInput(payload),
       process.env
     );
-    bootstrapRateLimits.delete(rateLimitKey);
+    try {
+      await rateLimiter.reset(rateLimitKey);
+    } catch (error) {
+      console.warn("[bootstrap] 限流计数重置失败", {
+        key: rateLimitKey,
+        error: error instanceof Error ? error.message : String(error),
+        timestamp: new Date().toISOString()
+      });
+    }
     return NextResponse.json(
       { user: sessionUserFromActor(actor) },
       {

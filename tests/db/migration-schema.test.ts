@@ -16,8 +16,13 @@ describe("initial MariaDB schema", () => {
   const ticketOptimisticLockSchema = existsSync(ticketOptimisticLockSchemaPath)
     ? readFileSync(ticketOptimisticLockSchemaPath, "utf-8")
     : "";
+  const bootstrapRateLimitSchemaPath = path.join(process.cwd(), "db", "migrations", "006_bootstrap_rate_limits.sql");
+  const bootstrapRateLimitSchema = existsSync(bootstrapRateLimitSchemaPath)
+    ? readFileSync(bootstrapRateLimitSchemaPath, "utf-8")
+    : "";
   const normalizedRbacSchema = normalizeSql(rbacSchema);
   const normalizedTicketOptimisticLockSchema = normalizeSql(ticketOptimisticLockSchema);
+  const normalizedBootstrapRateLimitSchema = normalizeSql(bootstrapRateLimitSchema);
 
   function tableDefinition(table: string) {
     const match = rbacSchema.match(new RegExp(`CREATE TABLE IF NOT EXISTS ${table} \\(([\\s\\S]*?)\\) ENGINE=`));
@@ -61,6 +66,17 @@ describe("initial MariaDB schema", () => {
     ].forEach((table) => {
       expect(schema).toContain(`CREATE TABLE IF NOT EXISTS ${table}`);
     });
+  });
+
+  it("creates persistent bootstrap rate limits keyed by client IP", () => {
+    expect(normalizedBootstrapRateLimitSchema).toContain(normalizeSql(`
+      CREATE TABLE IF NOT EXISTS bootstrap_rate_limits (
+        ip_key varchar(255) NOT NULL,
+        attempts int unsigned NOT NULL,
+        reset_at datetime(3) NOT NULL,
+        PRIMARY KEY (ip_key)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `));
   });
 
   it("keeps the indexes needed for current query paths", () => {

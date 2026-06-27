@@ -39,6 +39,11 @@ import type { WatchtowerResult } from "../services/wechat-watchtower-service";
 import { processWechatWatchtowerMessage } from "../services/wechat-watchtower-service";
 import { claimPendingOutboundMessages, markOutboundMessageFailed, markOutboundMessageSent, queueTicketFeedbackMessage } from "../services/outbound-message-service";
 import { runAutoAcceptanceForState } from "../services/auto-acceptance-service";
+import {
+  createFileRateLimiter,
+  createMariaDbRateLimiter,
+  type RateLimiter
+} from "../services/rate-limiter";
 import { normalizeKeywordGroups } from "../domain/keyword-config";
 import {
   readState as readJsonState,
@@ -117,6 +122,7 @@ function visibleTickets<T extends { submitterId: string; handlerId?: string; ass
 
 export type AppRepository = {
   kind: StorageMode;
+  getRateLimiter(): RateLimiter;
   runAutoAcceptance(now?: Date): Promise<void>;
   mobileBootstrap(): Promise<MobileBootstrapData>;
   adminBootstrap(): Promise<AdminBootstrapData>;
@@ -309,13 +315,17 @@ function createStateUpdater(store: StateFileRepository) {
   );
 }
 
-export function createFileAppRepository(store: StateFileRepository = {
-  readState: readJsonState,
-  updateState: updateJsonState
-}): AppRepository {
+export function createFileAppRepository(
+  store: StateFileRepository = {
+    readState: readJsonState,
+    updateState: updateJsonState
+  },
+  rateLimiter: RateLimiter = createFileRateLimiter()
+): AppRepository {
   const updateState = createStateUpdater(store);
   return {
     kind: "file",
+    getRateLimiter: () => rateLimiter,
     runAutoAcceptance: (now = new Date()) => updateState((state) => {
       runAutoAcceptanceForState(state, { now: now.toISOString() });
     }),
@@ -662,9 +672,13 @@ export function createFileAppRepository(store: StateFileRepository = {
   };
 }
 
-export function createMariaDbAppRepository(store: AutoAcceptanceStore = new MariaDbStateStore()): AppRepository {
+export function createMariaDbAppRepository(
+  store: AutoAcceptanceStore = new MariaDbStateStore(),
+  rateLimiter: RateLimiter = createMariaDbRateLimiter()
+): AppRepository {
   return {
     kind: "mariadb",
+    getRateLimiter: () => rateLimiter,
     runAutoAcceptance: (now) => store.runAutoAcceptance?.(now) ?? Promise.resolve(),
     mobileBootstrap: () => store.mobileBootstrap(),
     adminBootstrap: () => store.adminBootstrap(),
