@@ -4,7 +4,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { createConfiguredAiProvider } from "../ai/provider";
 import { createAiRouter } from "../ai/router";
-import { ticketDetailUrl } from "../domain/ticket-links";
+import { ticketDetailUrl, ticketShortCode } from "../domain/ticket-links";
 import type { CustomerServiceDecision, Ticket, TicketStatus } from "../domain/types";
 import { calculatePriorityScore, detectRiskWeight } from "../domain/priority";
 import { canTransition, elapsedSinceAccepted } from "../domain/workflow";
@@ -729,7 +729,7 @@ function reporterTicketMatches(
   );
 }
 
-function recentReporterTicketForImages(
+function recentReporterTicketsForImages(
   state: AppState,
   input: IntakeMessageInput,
   personId: string | undefined,
@@ -747,7 +747,7 @@ function recentReporterTicketForImages(
         (isWithinMediaWindow(record.receivedAt, input) || isWithinMediaWindow(record.createdAt, input))
       ))
     ))
-    .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())[0];
+    .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
 }
 
 function imageFollowupPromptText() {
@@ -779,8 +779,9 @@ async function processImageOnlyWorkOrderMessage(
 ): Promise<WatchtowerResult | undefined> {
   if (!isImageOnlyInput(input)) return undefined;
 
-  const recentTicket = recentReporterTicketForImages(state, input, personId, chatIdentityId, conversationExternalId);
-  if (recentTicket) {
+  const candidates = recentReporterTicketsForImages(state, input, personId, chatIdentityId, conversationExternalId);
+  if (candidates.length === 1) {
+    const recentTicket = candidates[0];
     const record = await recordRawMessage(state, input);
     record.analysis = {
       boothNumber: recentTicket.boothNumber,
@@ -799,9 +800,18 @@ async function processImageOnlyWorkOrderMessage(
   const missingFields: PendingWorkOrderField[] = needsIdentity ? ["identityGroup", "name", "phone"] : ["boothNumber"];
   const promptSession = createPromptSession(state, input, conversationId, chatIdentityId, missingFields, record.id);
   if (personId) promptSession.personId = personId;
-  const promptText = needsIdentity
-    ? `已收到图片。${identityPromptText(missingFields, enabledIdentityGroups(state))}`
-    : imageFollowupPromptText();
+  let promptText: string;
+  if (needsIdentity) {
+    promptText = `已收到图片。${identityPromptText(missingFields, enabledIdentityGroups(state))}`;
+  } else if (candidates.length > 1) {
+    const ticketList = candidates
+      .slice(0, 5)
+      .map((ticket, index) => `${index + 1}. ${ticketShortCode(ticket.id)} - ${ticket.boothNumber} - ${ticket.issueType}`)
+      .join("\n");
+    promptText = `已收到图片，您近期有多张工单，请回复对应工单短链或展位号：\n${ticketList}`;
+  } else {
+    promptText = imageFollowupPromptText();
+  }
   queuePrompt(state, input, conversationExternalId, chatIdentityId, promptText, promptSession.id);
   return { action: "prompted", record };
 }
