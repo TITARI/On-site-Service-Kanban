@@ -7,10 +7,65 @@ const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const defaultMigrationsDir = path.join(rootDir, "db", "migrations");
 
 export function splitSqlStatements(sql) {
-  return sql
-    .split(/;\s*(?:\r?\n|$)/)
-    .map((statement) => statement.trim())
-    .filter(Boolean);
+  const statements = [];
+  let current = "";
+  let quote;
+
+  for (let i = 0; i < sql.length;) {
+    const ch = sql[i];
+    const next = sql[i + 1];
+
+    if (quote) {
+      current += ch;
+      if (ch === "\\" && next !== undefined) {
+        current += next;
+        i += 2;
+        continue;
+      }
+      if (ch === quote) {
+        if (next === quote) {
+          current += next;
+          i += 2;
+          continue;
+        }
+        quote = undefined;
+      }
+      i++;
+      continue;
+    }
+
+    if (ch === "-" && next === "-") {
+      if (current && !/\s$/.test(current)) current += " ";
+      while (i < sql.length && sql[i] !== "\n") i++;
+      continue;
+    }
+    if (ch === "/" && next === "*") {
+      if (current && !/\s$/.test(current)) current += " ";
+      i += 2;
+      while (i < sql.length && !(sql[i] === "*" && sql[i + 1] === "/")) i++;
+      if (i < sql.length) i += 2;
+      continue;
+    }
+    if (ch === "'" || ch === '"' || ch === "`") {
+      quote = ch;
+      current += ch;
+      i++;
+      continue;
+    }
+    if (ch === ";") {
+      const statement = current.trim();
+      if (statement) statements.push(statement);
+      current = "";
+      i++;
+      continue;
+    }
+    current += ch;
+    i++;
+  }
+
+  const statement = current.trim();
+  if (statement) statements.push(statement);
+  return statements;
 }
 
 export async function loadMigrationFiles(migrationsDir = defaultMigrationsDir) {
@@ -57,10 +112,19 @@ export async function runMigrations({ databaseUrl = process.env.DATABASE_URL, mi
 
     for (const migration of migrations) {
       if (applied.has(migration.version)) continue;
-      for (const statement of splitSqlStatements(migration.sql)) {
-        await connection.query(statement);
+      // MariaDB DDL implicitly commits; those statements must also remain restart-safe.
+      await connection.beginTransaction();
+      try {
+        for (const statement of splitSqlStatements(migration.sql)) {
+          await connection.query(statement);
+        }
+        await connection.execute("INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)", [migration.version, new Date()]);
+        await connection.commit();
+      } catch (error) {
+        await connection.rollback();
+        throw error;
       }
-      await connection.execute("INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)", [migration.version, new Date()]);
+      applied.add(migration.version);
       appliedNow.push(migration.version);
     }
 

@@ -223,7 +223,10 @@ describe("initial MariaDB schema", () => {
         ORDER BY fallback_group.created_at, fallback_group.id
         LIMIT 1
       )
-      WHERE group_id IS NULL;
+      WHERE group_id IS NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM user_groups g WHERE g.id = people.group_id
+        );
     `));
     expect(normalizedRbacSchema).toContain(normalizeSql(`
       INSERT IGNORE INTO roles (
@@ -293,7 +296,8 @@ describe("initial MariaDB schema", () => {
       SET duplicate_identity.person_id = NULL,
           duplicate_identity.verified_by = NULL,
           duplicate_identity.verified_at = NULL
-      WHERE duplicate_identity.person_id IS NOT NULL;
+      WHERE duplicate_identity.person_id IS NOT NULL
+        AND keeper.person_id IS NOT NULL;
     `));
     expect(normalizedRbacSchema).not.toContain("DELETE duplicate_identity");
     expect(rbacSchema).toContain("uniq_chat_identity_person_platform");
