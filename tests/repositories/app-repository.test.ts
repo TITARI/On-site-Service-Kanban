@@ -9,6 +9,7 @@ import type {
   UserMutation,
   UserQuery
 } from "@/lib/domain/access-control";
+import type { RateLimiter } from "@/lib/services/rate-limiter";
 
 function state(): AppState {
   return {
@@ -25,6 +26,21 @@ function state(): AppState {
 }
 
 describe("app repository", () => {
+  it("exposes the storage-specific rate limiter", () => {
+    const limiter = {
+      checkAndIncrement: vi.fn(),
+      reset: vi.fn()
+    } satisfies RateLimiter;
+    const fileRepository = createFileAppRepository({
+      readState: vi.fn(async () => state()),
+      updateState: vi.fn(async <T>(operation: (state: AppState) => Promise<T> | T) => operation(state()))
+    }, limiter);
+    const mariaRepository = createMariaDbAppRepository({} as MariaDbStateStore, limiter);
+
+    expect(fileRepository.getRateLimiter()).toBe(limiter);
+    expect(mariaRepository.getRateLimiter()).toBe(limiter);
+  });
+
   it("creates a MariaDB repository when DATABASE_URL is configured", () => {
     const repository = createAppRepository({
       DATABASE_URL: "mysql://board:secret@127.0.0.1:3306/collaboration_board"

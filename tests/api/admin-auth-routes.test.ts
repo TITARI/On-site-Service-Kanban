@@ -23,7 +23,9 @@ const store = vi.hoisted(() => ({
   resetExpiredAdminLock: vi.fn(),
   createAccountSession: vi.fn(),
   resolveAccountSession: vi.fn(),
-  revokeAccountSession: vi.fn()
+  revokeAccountSession: vi.fn(),
+  checkRateLimit: vi.fn(),
+  resetRateLimit: vi.fn()
 }));
 
 const passwordMocks = vi.hoisted(() => ({
@@ -48,7 +50,11 @@ vi.mock("@/lib/repositories/app-repository", () => ({
     resetExpiredAdminLock: store.resetExpiredAdminLock,
     createAccountSession: store.createAccountSession,
     resolveAccountSession: store.resolveAccountSession,
-    revokeAccountSession: store.revokeAccountSession
+    revokeAccountSession: store.revokeAccountSession,
+    getRateLimiter: () => ({
+      checkAndIncrement: store.checkRateLimit,
+      reset: store.resetRateLimit
+    })
   } as unknown as AppRepository)
 }));
 
@@ -137,6 +143,8 @@ describe("admin auth routes", () => {
     store.createAccountSession.mockReset();
     store.resolveAccountSession.mockReset();
     store.revokeAccountSession.mockReset();
+    store.checkRateLimit.mockReset();
+    store.resetRateLimit.mockReset();
 
     store.bootstrapStatus.mockResolvedValue({ required: true });
     store.bootstrapAdmin.mockResolvedValue(actor());
@@ -151,6 +159,8 @@ describe("admin auth routes", () => {
     store.recordAdminLoginSuccess.mockResolvedValue(undefined);
     store.resetExpiredAdminLock.mockResolvedValue(undefined);
     store.revokeAccountSession.mockResolvedValue(undefined);
+    store.checkRateLimit.mockResolvedValue({ allowed: true, remaining: 4 });
+    store.resetRateLimit.mockResolvedValue(undefined);
   });
 
   it("bootstraps the first admin with the server-only legacy password and sets an admin cookie", async () => {
@@ -182,6 +192,7 @@ describe("admin auth routes", () => {
     expect(cookie).toContain(`${SESSION_COOKIE_NAMES.admin}=`);
     expect(cookie).toContain("HttpOnly");
     expect(cookie).toContain("SameSite=Lax");
+    expect(store.resetRateLimit).toHaveBeenCalledWith("unknown");
   });
 
   it("allows admin123 as the non-production compatibility bootstrap password when no env override is set", async () => {
@@ -202,6 +213,14 @@ describe("admin auth routes", () => {
 
   it("rate-limits repeated first-admin bootstrap attempts from the same client", async () => {
     vi.stubEnv("ADMIN_BOOTSTRAP_PASSWORD", "legacy-secret");
+    let attempts = 0;
+    store.checkRateLimit.mockImplementation(async () => {
+      attempts += 1;
+      return {
+        allowed: attempts <= 5,
+        remaining: Math.max(0, 5 - attempts)
+      };
+    });
     const route = await import("@/app/api/admin/auth/bootstrap/route");
     const request = () => jsonRequest(
       "https://board.example/api/admin/auth/bootstrap",
@@ -219,8 +238,40 @@ describe("admin auth routes", () => {
 
     expect(limited.status).toBe(429);
     expect(payload.message).toBe("初始化尝试过于频繁，请稍后再试");
+    expect(store.checkRateLimit).toHaveBeenCalledTimes(6);
     expect(store.bootstrapStatus).toHaveBeenCalledTimes(5);
     expect(store.bootstrapAdminWithSession).not.toHaveBeenCalled();
+  });
+
+  it("shares bootstrap rate-limit attempts across worker module instances", async () => {
+    vi.stubEnv("ADMIN_BOOTSTRAP_PASSWORD", "legacy-secret");
+    let attempts = 0;
+    store.checkRateLimit.mockImplementation(async () => {
+      attempts += 1;
+      return {
+        allowed: attempts <= 5,
+        remaining: Math.max(0, 5 - attempts)
+      };
+    });
+    const request = () => jsonRequest(
+      "https://board.example/api/admin/auth/bootstrap",
+      bootstrapBody({ legacyPassword: "wrong-secret" }),
+      undefined,
+      { "x-forwarded-for": "203.0.113.20" }
+    );
+
+    const firstWorker = await import("@/app/api/admin/auth/bootstrap/route");
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      expect((await firstWorker.POST(request())).status).toBe(401);
+    }
+
+    vi.resetModules();
+    const secondWorker = await import("@/app/api/admin/auth/bootstrap/route");
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      expect((await secondWorker.POST(request())).status).toBe(401);
+    }
+    expect((await secondWorker.POST(request())).status).toBe(429);
+    expect(store.checkRateLimit).toHaveBeenCalledTimes(6);
   });
 
   it("rejects bootstrap after completion without creating an admin", async () => {
