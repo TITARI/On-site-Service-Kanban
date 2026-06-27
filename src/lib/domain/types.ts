@@ -147,6 +147,7 @@ export type PendingWorkOrderSession = {
   personId?: string;
   boothNumber?: string;
   issueType?: string;
+  sessionKind?: "work-order" | "handler-reply";
   missingFields: PendingWorkOrderField[];
   createdAt: string;
   updatedAt: string;

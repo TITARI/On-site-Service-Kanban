@@ -955,6 +955,22 @@ describe("wechat watchtower service", () => {
     });
   });
 
+  it("marks handler prompt sessions with sessionKind without overloading issueType", async () => {
+    const appState = state();
+    addHandlerTicket(appState, "处理中");
+    appState.tickets = [];
+
+    const result = await sendHandlerReply(appState, "已处理完成", "msg-handler-session-kind");
+
+    expect(result.action).toBe("prompted");
+    expect(appState.pendingWorkOrderSessions?.[0]).toMatchObject({
+      personId: "person-builder",
+      sessionKind: "handler-reply",
+      missingFields: ["boothNumber"]
+    });
+    expect(appState.pendingWorkOrderSessions?.[0].issueType).not.toBe("__handler-reply");
+  });
+
   it("lets a builder WeChat reply resolve an assigned ticket and notify the reporter", async () => {
     const appState = state();
     const timestamp = "2026-05-22T08:00:00.000Z";
