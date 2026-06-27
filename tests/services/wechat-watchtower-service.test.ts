@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AppState } from "@/lib/storage/file-store";
 import { ticketShortCode } from "@/lib/domain/ticket-links";
 import { defaultConfig } from "@/lib/seed";
@@ -7,6 +7,7 @@ import { processWechatWatchtowerMessage } from "@/lib/services/wechat-watchtower
 const originalPublicBaseUrl = process.env.APP_PUBLIC_BASE_URL;
 
 afterEach(() => {
+  vi.restoreAllMocks();
   if (originalPublicBaseUrl === undefined) {
     delete process.env.APP_PUBLIC_BASE_URL;
   } else {
@@ -38,6 +39,25 @@ function state(): AppState {
       ]
     }
   };
+}
+
+function addPendingSession(appState: AppState, lastPromptAt?: string) {
+  const timestamp = "2026-05-21T08:00:00.000Z";
+  const session: NonNullable<AppState["pendingWorkOrderSessions"]>[number] = {
+    id: `pending-${appState.pendingWorkOrderSessions?.length ?? 0}`,
+    platform: "wechat",
+    conversationId: "old-conversation",
+    chatIdentityId: "old-identity",
+    draftText: "A01 旧诉求",
+    draftImages: [],
+    missingFields: ["boothNumber"],
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    lastPromptAt
+  };
+  appState.pendingWorkOrderSessions ??= [];
+  appState.pendingWorkOrderSessions.push(session);
+  return session;
 }
 
 function addHandlerTicket(appState: AppState, status: AppState["tickets"][number]["status"]) {
@@ -110,6 +130,66 @@ async function sendHandlerReply(appState: AppState, text: string, externalMessag
 }
 
 describe("wechat watchtower service", () => {
+  it("removes sessions that have been waiting for more than 30 minutes", async () => {
+    const appState = state();
+    const session = addPendingSession(appState, new Date(Date.now() - 31 * 60 * 1000).toISOString());
+    const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
+
+    await processWechatWatchtowerMessage(appState, {
+      channel: "wechat",
+      externalMessageId: "msg-expired-session-cleanup",
+      senderId: "wxid-unrelated",
+      senderName: "新用户",
+      sourceConversationId: "new-conversation",
+      text: "大家辛苦了"
+    });
+
+    expect(appState.pendingWorkOrderSessions).not.toContain(session);
+    expect(info).toHaveBeenCalledWith(
+      "[watchtower] session 过期，移除",
+      expect.objectContaining({
+        sessionId: session.id,
+        chatIdentityId: session.chatIdentityId,
+        conversationId: session.conversationId,
+        lastPromptAt: session.lastPromptAt,
+        age: expect.any(Number)
+      })
+    );
+    expect(info).toHaveBeenCalledWith("[watchtower] 清理过期 session", { count: 1 });
+  });
+
+  it("keeps sessions that have been waiting for less than 30 minutes", async () => {
+    const appState = state();
+    const session = addPendingSession(appState, new Date(Date.now() - 29 * 60 * 1000).toISOString());
+
+    await processWechatWatchtowerMessage(appState, {
+      channel: "wechat",
+      externalMessageId: "msg-fresh-session-cleanup",
+      senderId: "wxid-unrelated",
+      senderName: "新用户",
+      sourceConversationId: "new-conversation",
+      text: "大家辛苦了"
+    });
+
+    expect(appState.pendingWorkOrderSessions).toContain(session);
+  });
+
+  it("keeps sessions without a lastPromptAt timestamp", async () => {
+    const appState = state();
+    const session = addPendingSession(appState);
+
+    await processWechatWatchtowerMessage(appState, {
+      channel: "wechat",
+      externalMessageId: "msg-undated-session-cleanup",
+      senderId: "wxid-unrelated",
+      senderName: "新用户",
+      sourceConversationId: "new-conversation",
+      text: "大家辛苦了"
+    });
+
+    expect(appState.pendingWorkOrderSessions).toContain(session);
+  });
+
   it("silently records ordinary chat from an unknown user", async () => {
     const appState = state();
 
