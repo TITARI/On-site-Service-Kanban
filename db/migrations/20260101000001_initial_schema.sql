@@ -1,3 +1,4 @@
+-- migrate:up transaction:false
 CREATE TABLE IF NOT EXISTS schema_migrations (
   version varchar(64) NOT NULL PRIMARY KEY,
   applied_at datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
@@ -440,3 +441,6 @@ CREATE TABLE IF NOT EXISTS import_job_rows (
   KEY idx_import_job_rows_job (job_id),
   KEY idx_import_job_rows_status (status)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+-- migrate:down transaction:false
+SIGNAL SQLSTATE '45000'
+  SET MESSAGE_TEXT = 'Historical migration cannot be rolled back automatically';

@@ -3,7 +3,6 @@ import { createHash } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import mysql from "mysql2/promise";
-import { runMigrations } from "./db-migrate.mjs";
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -802,7 +801,6 @@ export async function importAppState({
   statePath = process.argv[2] ? path.resolve(process.argv[2]) : path.join(rootDir, "data", "app-state.json")
 } = {}) {
   if (!databaseUrl) throw new Error("DATABASE_URL is required");
-  await runMigrations({ databaseUrl });
   const state = JSON.parse(await readFile(statePath, "utf-8"));
   const pool = mysql.createPool({ uri: databaseUrl, connectionLimit: 1, waitForConnections: true, timezone: "Z" });
   const connection = await pool.getConnection();

@@ -1,0 +1,13 @@
+{
+  "algorithm": "sha256",
+  "files": {
+    "20260101000001_initial_schema.sql": "55ff0b117c31c24abc7f77f39751aef97e512a04c848f2cd7b750885890c4793",
+    "20260101000002_keyword_rule_sets.sql": "bae56cd72e43ee65d7d79ce76b2d63853ea237e75aff71d3e6c4ed3c8ca1afc2",
+    "20260101000003_user_rbac_management.sql": "ca75a969441d16dc9c3002825b5fe2fe679f9bf0b0ca8497451f1d8bb880d7f6",
+    "20260101000004_exhibitor_booth_identity.sql": "8095f0fc90bad2b8f49eabea3dd2c2377357a9e74515e8e1da71adef0aba1f19",
+    "20260101000005_ticket_optimistic_lock.sql": "62dea747516ce8d18a19c497bfb1816630e22d38862db1a3b80b510afb49e09d",
+    "20260101000006_bootstrap_rate_limits.sql": "ed4a8905beca7be1079a51c25d25422fef1225d5b454c5acc6cdb746a126f27f",
+    "20260101000008_session_kind.sql": "189b19bcb924cfc433c1e15de57ecc19570177c41a7a453a031877da0f05ea0c",
+    "20260101000009_user_version_column.sql": "f179e1431b6d9775d98297c13cbbdc9d76337ddb27a8cfc31934ce7cf342de2d"
+  }
+}

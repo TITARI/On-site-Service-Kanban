@@ -1,3 +1,4 @@
+-- migrate:up transaction:false
 ALTER TABLE people
   ADD COLUMN IF NOT EXISTS group_locked boolean NOT NULL DEFAULT false AFTER group_name_snapshot;
 
@@ -197,3 +198,6 @@ ALTER TABLE import_job_rows
   ADD COLUMN IF NOT EXISTS decision_json json NULL,
   ADD COLUMN IF NOT EXISTS result_action varchar(32) NULL,
   ADD COLUMN IF NOT EXISTS updated_at datetime(3) NULL;
+-- migrate:down transaction:false
+SIGNAL SQLSTATE '45000'
+  SET MESSAGE_TEXT = 'Historical migration cannot be rolled back automatically';

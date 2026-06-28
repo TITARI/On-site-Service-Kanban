@@ -1,3 +1,4 @@
+-- migrate:up transaction:false
 CREATE TABLE IF NOT EXISTS keyword_rule_sets (
   id varchar(64) NOT NULL PRIMARY KEY,
   group_id varchar(64) NOT NULL,
@@ -81,3 +82,6 @@ SELECT
   created_at,
   updated_at
 FROM keyword_rules;
+-- migrate:down transaction:false
+SIGNAL SQLSTATE '45000'
+  SET MESSAGE_TEXT = 'Historical migration cannot be rolled back automatically';

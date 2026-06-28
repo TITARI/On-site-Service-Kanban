@@ -107,7 +107,12 @@ data/app-state.json
 | `npm run restart:external` | 重启外部生产服务 |
 | `npm run test` | 运行 Vitest 监听模式 |
 | `npm run test:run` | 运行完整测试 |
-| `npm run db:migrate` | 执行 MariaDB 迁移 |
+| `npm run db:migrate` | 校验 checksum、转换旧版本记录并用 dbmate 执行 MariaDB 迁移 |
+| `npm run db:migrate:new -- <name>` | 创建带 up/down 分段的新迁移 |
+| `npm run db:migrate:seal` | 为全部迁移重新生成 SHA-256 清单 |
+| `npm run db:migrate:verify` | 校验迁移名称、dbmate 指令和 SHA-256 清单 |
+| `npm run db:migrate:status` | 查看 dbmate 迁移状态 |
+| `npm run db:migrate:rollback` | 回滚最近一个实现了 down 分段的新迁移 |
 | `npm run db:import-state` | 将 `data/app-state.json` 导入 MariaDB |
 | `npm run bridge:wxauto` | 启动 wxauto REST 桥接进程 |
 
@@ -466,18 +471,37 @@ python scripts/wxauto-local-rest.py
 
 ### MariaDB 初始化
 
+项目使用官方 npm 版 `dbmate` 管理迁移。dbmate 直接读取 `DATABASE_URL`，不使用 `.dbmate` 配置文件。首次从旧迁移器切换时，`db:migrate` 会幂等地把已存在的旧版本名转换为时间戳版本；未知的历史记录会原样保留。
+
 ```bash
+npm run db:migrate:verify
 npm run db:migrate
+npm run db:migrate:status
 ```
 
 迁移文件：
 
 ```text
-db/migrations/001_initial_schema.sql
-db/migrations/002_keyword_rule_sets.sql
-db/migrations/003_user_rbac_management.sql
-db/migrations/004_exhibitor_booth_identity.sql
+db/migrations/20260101000001_initial_schema.sql
+db/migrations/20260101000002_keyword_rule_sets.sql
+db/migrations/20260101000003_user_rbac_management.sql
+db/migrations/20260101000004_exhibitor_booth_identity.sql
+db/migrations/20260101000005_ticket_optimistic_lock.sql
+db/migrations/20260101000006_bootstrap_rate_limits.sql
+db/migrations/20260101000008_session_kind.sql
+db/migrations/20260101000009_user_version_column.sql
 ```
+
+创建新迁移后先完成 up/down SQL，再封存 checksum：
+
+```bash
+npm run db:migrate:new -- add_exhibitor_phone_column
+# 编辑生成的 db/migrations/<timestamp>_add_exhibitor_phone_column.sql
+npm run db:migrate:seal
+npm run db:migrate
+```
+
+MariaDB DDL 会隐式提交，包含 DDL 的迁移应在 up/down 指令上使用 `transaction:false`。历史迁移保留原 SQL，但 down 分段会主动报错，防止只删除版本记录却没有撤销已隐式提交的 DDL。dbmate 本身只记录版本号，因此 `db/migrations/checksums.json` 必须与迁移文件一起提交，任何已封存文件被修改都会在连接数据库前失败。
 
 从 JSON 状态导入 MariaDB：
 
@@ -491,10 +515,10 @@ npm run db:import-state
 data/app-state.json
 ```
 
-也可传入指定文件：
+也可传入指定文件；npm 命令仍会先执行迁移：
 
 ```bash
-node scripts/db-import-state.mjs data/app-state.json
+npm run db:import-state -- data/app-state.json
 ```
 
 ## 测试与构建
