@@ -20,9 +20,14 @@ describe("initial MariaDB schema", () => {
   const bootstrapRateLimitSchema = existsSync(bootstrapRateLimitSchemaPath)
     ? readFileSync(bootstrapRateLimitSchemaPath, "utf-8")
     : "";
+  const sessionKindSchemaPath = path.join(process.cwd(), "db", "migrations", "008_session_kind.sql");
+  const sessionKindSchema = existsSync(sessionKindSchemaPath)
+    ? readFileSync(sessionKindSchemaPath, "utf-8")
+    : "";
   const normalizedRbacSchema = normalizeSql(rbacSchema);
   const normalizedTicketOptimisticLockSchema = normalizeSql(ticketOptimisticLockSchema);
   const normalizedBootstrapRateLimitSchema = normalizeSql(bootstrapRateLimitSchema);
+  const normalizedSessionKindSchema = normalizeSql(sessionKindSchema);
 
   function tableDefinition(table: string) {
     const match = rbacSchema.match(new RegExp(`CREATE TABLE IF NOT EXISTS ${table} \\(([\\s\\S]*?)\\) ENGINE=`));
@@ -76,6 +81,22 @@ describe("initial MariaDB schema", () => {
         reset_at datetime(3) NOT NULL,
         PRIMARY KEY (ip_key)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `));
+  });
+
+  it("adds and backfills pending work order session kinds", () => {
+    expect(normalizedSessionKindSchema).toContain(normalizeSql(`
+      ALTER TABLE pending_work_order_sessions ADD COLUMN session_kind VARCHAR(20) NULL;
+    `));
+    expect(normalizedSessionKindSchema).toContain(normalizeSql(`
+      UPDATE pending_work_order_sessions
+      SET session_kind = 'handler-reply'
+      WHERE issue_type = '__handler-reply';
+    `));
+    expect(normalizedSessionKindSchema).toContain(normalizeSql(`
+      UPDATE pending_work_order_sessions
+      SET session_kind = 'work-order'
+      WHERE issue_type <> '__handler-reply' OR issue_type IS NULL;
     `));
   });
 

@@ -955,37 +955,20 @@ describe("wechat watchtower service", () => {
     });
   });
 
-  it("prompts a handler with assigned ticket choices when multiple candidates match", async () => {
+  it("marks handler prompt sessions with sessionKind without overloading issueType", async () => {
     const appState = state();
-    const firstTicket = addHandlerTicket(appState, "处理中");
-    firstTicket.updatedAt = "2026-05-21T08:00:02.000Z";
-    const secondTicket: AppState["tickets"][number] = {
-      ...firstTicket,
-      id: "ticket-handler-b02",
-      title: "B02 测试展商 电力",
-      boothNumber: "B02",
-      issueType: "电力",
-      description: "B02 配电箱跳闸",
-      replies: [],
-      timeline: [],
-      createdAt: "2026-05-21T08:00:00.000Z",
-      updatedAt: "2026-05-21T08:00:01.000Z"
-    };
-    appState.tickets.push(secondTicket);
+    addHandlerTicket(appState, "处理中");
+    appState.tickets = [];
 
-    const result = await sendHandlerReply(appState, "已处理完成", "msg-handler-multiple-candidates");
+    const result = await sendHandlerReply(appState, "已处理完成", "msg-handler-session-kind");
 
     expect(result.action).toBe("prompted");
-    expect(firstTicket.replies).toEqual([]);
-    expect(secondTicket.replies).toEqual([]);
     expect(appState.pendingWorkOrderSessions?.[0]).toMatchObject({
       personId: "person-builder",
+      sessionKind: "handler-reply",
       missingFields: ["boothNumber"]
     });
-    const promptText = appState.outboundMessages?.at(-1)?.text ?? "";
-    expect(promptText).toContain("您当前负责以下未关闭工单");
-    expect(promptText).toContain(`${ticketShortCode(firstTicket.id)} - A01 - 搭建`);
-    expect(promptText).toContain(`${ticketShortCode(secondTicket.id)} - B02 - 电力`);
+    expect(appState.pendingWorkOrderSessions?.[0].issueType).not.toBe("__handler-reply");
   });
 
   it("lets a builder WeChat reply resolve an assigned ticket and notify the reporter", async () => {

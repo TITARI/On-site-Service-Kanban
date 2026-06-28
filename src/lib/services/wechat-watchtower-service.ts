@@ -63,8 +63,6 @@ const HANDLER_PROGRESS_KEYWORDS = [
   "照片",
   "已补"
 ];
-const HANDLER_REPLY_SESSION_MARK = "__handler-reply";
-
 function now() {
   return new Date().toISOString();
 }
@@ -191,11 +189,11 @@ function isIdentityRegistrationSession(session: PendingWorkOrderSession) {
 }
 
 function isHandlerReplySession(session: PendingWorkOrderSession) {
-  return session.issueType === HANDLER_REPLY_SESSION_MARK;
+  return session.sessionKind === "handler-reply";
 }
 
 function markHandlerReplySession(session: PendingWorkOrderSession) {
-  session.issueType = HANDLER_REPLY_SESSION_MARK;
+  session.sessionKind = "handler-reply";
 }
 
 function isOperatorInitiatedInput(input: IntakeMessageInput) {
