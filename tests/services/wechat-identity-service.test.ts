@@ -144,7 +144,8 @@ describe("wechat identity service", () => {
       name: "张三",
       phone: "13800138000",
       groupName: "搭建组",
-      enabled: true
+      enabled: true,
+      version: 0
     });
     expect(appState.chatIdentities?.[0].personId).toBe(person.id);
   });
@@ -239,6 +240,7 @@ describe("wechat identity service", () => {
       role: "handler",
       groupName: "搭建组",
       enabled: true,
+      version: 3,
       createdAt: "2026-05-27T12:00:00.000Z",
       updatedAt: "2026-05-27T12:00:00.000Z"
     }];
@@ -257,6 +259,7 @@ describe("wechat identity service", () => {
 
     expect(person.name).toBe("原姓名");
     expect(person.nameConflict).toMatchObject({ attemptedName: "张三" });
+    expect(person.version).toBe(4);
     expect(identity.personId).toBe("person-existing");
   });
 

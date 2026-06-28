@@ -1074,6 +1074,39 @@ describe("file access repository", () => {
     });
   });
 
+  it("increments person and account versions for updates in the same millisecond", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-15T00:00:00.000Z"));
+    try {
+      const store = memoryStore();
+      const repository = createFileAppRepository(store);
+      const user = await repository.createUser({
+        name: "Versioned User",
+        phone: "13800138000",
+        groupId: "builder",
+        groupLocked: false,
+        enabled: true
+      }, adminActor());
+      const before = store.snapshot();
+
+      await repository.updateUser(user.personId, {
+        name: "Versioned User Updated"
+      }, adminActor());
+
+      const after = store.snapshot();
+      const personBefore = before.people?.find((item) => item.id === user.personId);
+      const personAfter = after.people?.find((item) => item.id === user.personId);
+      const accountBefore = before.accounts?.find((item) => item.id === user.accountId);
+      const accountAfter = after.accounts?.find((item) => item.id === user.accountId);
+      expect(personAfter?.updatedAt).toBe(personBefore?.updatedAt);
+      expect(accountAfter?.updatedAt).toBe(accountBefore?.updatedAt);
+      expect(personAfter?.version).toBe((personBefore?.version ?? 0) + 1);
+      expect(accountAfter?.version).toBe((accountBefore?.version ?? 0) + 1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("supports user CRUD, filters, pagination, auth invalidation, and secret-safe audits", async () => {
     const store = memoryStore();
     const repository = createFileAppRepository(store);

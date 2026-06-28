@@ -43,6 +43,10 @@ function nowIso() {
   return new Date().toISOString();
 }
 
+function incrementVersion(target: { version?: number }) {
+  target.version = (target.version ?? 0) + 1;
+}
+
 function stableId(prefix: string, value: string) {
   return `${prefix}-${createHash("sha256").update(value).digest("base64url")}`;
 }
@@ -119,6 +123,8 @@ export function normalizeAccessState(state: AppState): AccessState {
   state.accountSessions ??= [];
   state.auditLogs ??= [];
   state.authBootstrap ??= {};
+  for (const person of state.people) person.version ??= 0;
+  for (const account of state.accounts) account.version ??= 0;
   return state as AccessState;
 }
 
@@ -302,6 +308,7 @@ function invalidateAccount(
   at = nowIso()
 ) {
   account.authVersion += 1;
+  incrementVersion(account);
   account.updatedAt = at;
   return revokeSessions(state, account.id, at);
 }
@@ -499,6 +506,7 @@ export function synchronizePersonAccess(
       loginName: person.phone,
       enabled: person.enabled,
       authVersion: 1,
+      version: 0,
       createdAt: person.createdAt || at,
       updatedAt: person.updatedAt || at
     };
@@ -506,13 +514,19 @@ export function synchronizePersonAccess(
   } else {
     account.loginName = person.phone;
     account.enabled = person.enabled;
+    incrementVersion(account);
     account.updatedAt = person.updatedAt || at;
   }
   if (account.id !== accountId) {
     throw new Error("Person is linked to a non-deterministic account");
   }
-  person.groupName = group.name;
-  person.role = roleForGroup(group);
+  const nextRole = roleForGroup(group);
+  if (person.groupName !== group.name || person.role !== nextRole) {
+    person.groupName = group.name;
+    person.role = nextRole;
+    incrementVersion(person);
+    person.updatedAt = at;
+  }
   ensureSingleAccountRole(state, account, group.id, at);
   return account;
 }
@@ -546,6 +560,7 @@ function createPersonAndAccount(
     groupName: group.name,
     groupLocked: input.groupLocked,
     enabled: input.enabled,
+    version: 0,
     createdAt: at,
     updatedAt: at
   };
@@ -555,6 +570,7 @@ function createPersonAndAccount(
     loginName: phone,
     enabled: input.enabled,
     authVersion: 1,
+    version: 0,
     createdAt: at,
     updatedAt: at
   };
@@ -608,6 +624,7 @@ export function upsertMobileAccountInState(
       person.groupId = group.id;
       person.groupName = group.name;
       person.role = roleForGroup(group);
+      incrementVersion(person);
       person.updatedAt = at;
     }
     account.loginName = phone;
@@ -618,6 +635,7 @@ export function upsertMobileAccountInState(
 
   account.lastLoginAt = at;
   account.updatedAt = at;
+  if (!created && !groupChanged) incrementVersion(account);
   const actor = actorForAccount(state, account, "mobile");
   if (!actor) throw new Error("Mobile account access chain is disabled");
   if (created) {
@@ -835,6 +853,7 @@ export function recordAdminLoginSuccessInState(
   credential.failedAttempts = 0;
   credential.lockedUntil = undefined;
   account.lastLoginAt = nowIso();
+  incrementVersion(account);
   account.updatedAt = account.lastLoginAt;
   audit(
     state,
@@ -935,6 +954,7 @@ export function bootstrapAdminInState(
     person.groupLocked = true;
     person.role = "admin";
     person.enabled = true;
+    incrementVersion(person);
     person.updatedAt = at;
     account.loginName = phone;
     account.enabled = true;
@@ -1019,6 +1039,7 @@ function userItem(
     ),
     lastLoginAt: account.lastLoginAt,
     identities,
+    version: person.version ?? 0,
     updatedAt: person.updatedAt > account.updatedAt
       ? person.updatedAt
       : account.updatedAt
@@ -1197,9 +1218,14 @@ export function updateUserInState(
     invalidate = true;
   }
 
+  incrementVersion(person);
   person.updatedAt = at;
   account.updatedAt = at;
-  if (invalidate) invalidateAccount(state, account, at);
+  if (invalidate) {
+    invalidateAccount(state, account, at);
+  } else {
+    incrementVersion(account);
+  }
   assertUsableAdminRemains(state, hadUsableAdminAccount);
   const item = userItem(state, person, account);
   audit(

@@ -162,6 +162,7 @@ export function bindWechatIdentityFromRegistration(state: AppState, chatIdentity
       groupId: group.id,
       groupName,
       enabled: true,
+      version: 0,
       createdAt: timestamp,
       updatedAt: timestamp
     };
@@ -176,6 +177,7 @@ export function bindWechatIdentityFromRegistration(state: AppState, chatIdentity
     person.groupName = groupName;
     person.role = role;
     person.enabled = true;
+    person.version = (person.version ?? 0) + 1;
     person.updatedAt = timestamp;
   }
 

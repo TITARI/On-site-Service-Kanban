@@ -58,6 +58,7 @@ function user(overrides: Partial<UserListItem> = {}): UserListItem {
         displayName: "张三微信"
       }
     },
+    version: 0,
     updatedAt: "2026-06-15T08:00:00.000Z",
     ...overrides
   };

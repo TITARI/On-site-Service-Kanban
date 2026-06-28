@@ -481,7 +481,9 @@ async function invalidateAccount(
   await execute(
     connection,
     `UPDATE accounts
-     SET auth_version = auth_version + 1, updated_at = ?
+     SET auth_version = auth_version + 1,
+         version = version + 1,
+         updated_at = ?
      WHERE id = ?`,
     [now, accountId]
   );
@@ -764,7 +766,8 @@ export async function upsertMobileAccount(
       await execute(
         connection,
         `UPDATE people
-         SET role = ?, group_id = ?, group_name_snapshot = ?, updated_at = ?
+         SET role = ?, group_id = ?, group_name_snapshot = ?,
+             version = version + 1, updated_at = ?
          WHERE id = ?`,
         [
           roleForGroup(selectedGroup),
@@ -778,7 +781,8 @@ export async function upsertMobileAccount(
     await execute(
       connection,
       `UPDATE accounts
-       SET login_name = ?, last_login_at = ?, updated_at = ?
+       SET login_name = ?, last_login_at = ?,
+           version = version + 1, updated_at = ?
        WHERE id = ?`,
       [phone, now, now, accountId]
     );
@@ -981,7 +985,9 @@ export async function revokeAccountSessions(
   const accountUpdate = await execute(
     connection,
     `UPDATE accounts
-     SET auth_version = auth_version + 1, updated_at = ?
+     SET auth_version = auth_version + 1,
+         version = version + 1,
+         updated_at = ?
      WHERE id = ?`,
     [now, accountId]
   );
@@ -1117,7 +1123,7 @@ export async function recordAdminLoginSuccess(
   await execute(
     connection,
     `UPDATE accounts
-     SET last_login_at = ?, updated_at = ?
+     SET last_login_at = ?, version = version + 1, updated_at = ?
      WHERE id = ?`,
     [now, now, accountId]
   );
@@ -1301,7 +1307,7 @@ export async function bootstrapAdmin(
       `UPDATE people
        SET name = ?, phone = ?, role = 'admin', group_id = ?,
            group_name_snapshot = ?, group_locked = true,
-           enabled = true, updated_at = ?
+           enabled = true, version = version + 1, updated_at = ?
        WHERE id = ?`,
       [name, phone, group.id, group.name, now, personId]
     );
@@ -1309,7 +1315,8 @@ export async function bootstrapAdmin(
       await execute(
         connection,
         `UPDATE accounts
-         SET login_name = ?, enabled = true, updated_at = ?
+         SET login_name = ?, enabled = true,
+             version = version + 1, updated_at = ?
          WHERE id = ?`,
         [phone, now, accountId]
       );
@@ -1443,6 +1450,7 @@ const USER_DETAIL_SELECT = `SELECT
   p.enabled AS person_enabled,
   a.enabled AS account_enabled,
   a.last_login_at,
+  p.version AS person_version,
   p.updated_at AS person_updated_at,
   a.updated_at AS account_updated_at,
   (c.password_hash IS NOT NULL AND c.password_hash <> '') AS has_password,
@@ -1477,6 +1485,7 @@ function usersFromRows(userRows: Row[]) {
           hasPassword: bool(row.has_password),
           lastLoginAt: iso(row.last_login_at),
           identities: {},
+          version: Number(row.person_version ?? 0),
           updatedAt: personUpdatedAt > accountUpdatedAt
             ? personUpdatedAt
             : accountUpdatedAt
@@ -1946,7 +1955,8 @@ export async function updateUser(
     connection,
     `UPDATE people
      SET name = ?, phone = ?, role = ?, group_id = ?,
-         group_name_snapshot = ?, group_locked = ?, enabled = ?, updated_at = ?
+         group_name_snapshot = ?, group_locked = ?, enabled = ?,
+         version = version + 1, updated_at = ?
      WHERE id = ?`,
     [
       nextName,
@@ -1963,7 +1973,8 @@ export async function updateUser(
   await execute(
     connection,
     `UPDATE accounts
-     SET login_name = ?, enabled = ?, updated_at = ?
+     SET login_name = ?, enabled = ?,
+         version = version + 1, updated_at = ?
      WHERE id = ?`,
     [nextLoginName, nextAccountEnabled, now, accountId]
   );
@@ -2661,6 +2672,7 @@ async function lockedUserByPhone(
     connection,
     `SELECT
        p.id AS person_id,
+       p.version AS person_version,
        p.updated_at AS person_updated_at,
        a.updated_at AS account_updated_at
      FROM people p
@@ -2687,6 +2699,7 @@ async function lockedUserByPhone(
   const accountUpdatedAt = requiredIso(record.account_updated_at);
   return {
     personId: String(record.person_id),
+    version: Number(record.person_version ?? 0),
     updatedAt: personUpdatedAt > accountUpdatedAt
       ? personUpdatedAt
       : accountUpdatedAt
@@ -2777,10 +2790,14 @@ async function userImportRowIsStaleInTransaction(
     row.baseline?.person?.personId
   );
   if (row.baseline?.person) {
+    const baseline = row.baseline.person;
+    const versionChanged = baseline.version === undefined
+      ? currentUser?.updatedAt !== baseline.updatedAt
+      : currentUser?.version !== baseline.version;
     if (
       !currentUser ||
-      currentUser.personId !== row.baseline.person.personId ||
-      currentUser.updatedAt !== row.baseline.person.updatedAt
+      currentUser.personId !== baseline.personId ||
+      versionChanged
     ) {
       return true;
     }

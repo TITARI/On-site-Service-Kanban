@@ -94,6 +94,7 @@ export type UserImportPreviewRow = {
 export type UserImportRowBaseline = {
   person?: {
     personId: string;
+    version?: number;
     updatedAt: string;
   };
   group?: {
@@ -492,6 +493,7 @@ export async function previewUserImport(
         ...(existingUser ? {
           person: {
             personId: existingUser.personId,
+            version: existingUser.version,
             updatedAt: existingUser.updatedAt
           }
         } : {}),

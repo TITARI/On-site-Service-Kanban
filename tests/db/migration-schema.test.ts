@@ -20,9 +20,14 @@ describe("initial MariaDB schema", () => {
   const bootstrapRateLimitSchema = existsSync(bootstrapRateLimitSchemaPath)
     ? readFileSync(bootstrapRateLimitSchemaPath, "utf-8")
     : "";
+  const userVersionSchemaPath = path.join(process.cwd(), "db", "migrations", "009_user_version_column.sql");
+  const userVersionSchema = existsSync(userVersionSchemaPath)
+    ? readFileSync(userVersionSchemaPath, "utf-8")
+    : "";
   const normalizedRbacSchema = normalizeSql(rbacSchema);
   const normalizedTicketOptimisticLockSchema = normalizeSql(ticketOptimisticLockSchema);
   const normalizedBootstrapRateLimitSchema = normalizeSql(bootstrapRateLimitSchema);
+  const normalizedUserVersionSchema = normalizeSql(userVersionSchema);
 
   function tableDefinition(table: string) {
     const match = rbacSchema.match(new RegExp(`CREATE TABLE IF NOT EXISTS ${table} \\(([\\s\\S]*?)\\) ENGINE=`));
@@ -362,6 +367,17 @@ describe("initial MariaDB schema", () => {
     expect(normalizedTicketOptimisticLockSchema).toContain(normalizeSql(`
       ALTER TABLE ai_decisions
         ADD COLUMN IF NOT EXISTS provider VARCHAR(8) NOT NULL DEFAULT 'mock'
+    `));
+  });
+
+  it("adds monotonic version columns for people and accounts", () => {
+    expect(normalizedUserVersionSchema).toContain(normalizeSql(`
+      ALTER TABLE people
+        ADD COLUMN IF NOT EXISTS version INT NOT NULL DEFAULT 0
+    `));
+    expect(normalizedUserVersionSchema).toContain(normalizeSql(`
+      ALTER TABLE accounts
+        ADD COLUMN IF NOT EXISTS version INT NOT NULL DEFAULT 0
     `));
   });
 });

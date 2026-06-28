@@ -81,6 +81,7 @@ function user(phone: string, updatedAt = "same"): UserListItem {
     permissions: ["ticket.claim"],
     hasPassword: false,
     identities: {},
+    version: 0,
     updatedAt
   };
 }
@@ -315,33 +316,42 @@ describe("commitUserImport", () => {
   });
 
   it("rejects a changed existing user against the preview baseline and persists stale row conflicts", async () => {
-    const store = memoryStore();
-    const repo = createFileAppRepository(store);
-    const actor = adminActor();
-    const existing = await repo.createUser({
-      name: "Existing User",
-      phone: "13800138000",
-      groupId: "builder",
-      groupLocked: false,
-      enabled: true
-    }, actor);
-    const preview = await previewOverwrite(repo, actor);
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-15T00:00:00.000Z"));
+    try {
+      const store = memoryStore();
+      const repo = createFileAppRepository(store);
+      const actor = adminActor();
+      const existing = await repo.createUser({
+        name: "Existing User",
+        phone: "13800138000",
+        groupId: "builder",
+        groupLocked: false,
+        enabled: true
+      }, actor);
+      const preview = await previewOverwrite(repo, actor);
 
-    await repo.updateUser(existing.personId, { name: "Changed Elsewhere" }, actor);
+      await repo.updateUser(existing.personId, { name: "Changed Elsewhere" }, actor);
+      await expect(repo.getUser(existing.personId)).resolves.toMatchObject({
+        updatedAt: existing.updatedAt
+      });
 
-    await expect(commitUserImport(repo, preview.jobId, actor)).rejects.toThrow(
-      "导入数据已变化，请重新处理冲突"
-    );
-    const saved = await repo.getUserImportJobRows(preview.jobId, actor);
-    expect(saved.rows[0]).toMatchObject({
-      category: "blocked",
-      allowedActions: ["skip"],
-      conflicts: expect.arrayContaining(["stale-preview"])
-    });
-    await expect(repo.getUser(existing.personId)).resolves.toMatchObject({
-      name: "Changed Elsewhere",
-      groupId: "builder"
-    });
+      await expect(commitUserImport(repo, preview.jobId, actor)).rejects.toThrow(
+        "导入数据已变化，请重新处理冲突"
+      );
+      const saved = await repo.getUserImportJobRows(preview.jobId, actor);
+      expect(saved.rows[0]).toMatchObject({
+        category: "blocked",
+        allowedActions: ["skip"],
+        conflicts: expect.arrayContaining(["stale-preview"])
+      });
+      await expect(repo.getUser(existing.personId)).resolves.toMatchObject({
+        name: "Changed Elsewhere",
+        groupId: "builder"
+      });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("rejects a confirmed identity rebind when the identity owner version changed after preview", async () => {
