@@ -14,6 +14,7 @@ export const dynamic = "force-dynamic";
 
 const BOOTSTRAP_RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000;
 const BOOTSTRAP_RATE_LIMIT_MAX_ATTEMPTS = 5;
+const BOOTSTRAP_RATE_LIMIT_UNKNOWN_MAX = 50;
 
 function bootstrapInput(payload: Record<string, unknown>): BootstrapAdminInput {
   const groupPayload = payload.group as
@@ -53,9 +54,12 @@ function bootstrapRateLimitKey(request: Request) {
 
 async function assertBootstrapRateLimit(request: Request, rateLimiter: RateLimiter) {
   const key = bootstrapRateLimitKey(request);
+  const maxAttempts = key === "unknown"
+    ? BOOTSTRAP_RATE_LIMIT_UNKNOWN_MAX
+    : BOOTSTRAP_RATE_LIMIT_MAX_ATTEMPTS;
   const result = await rateLimiter.checkAndIncrement(
     key,
-    BOOTSTRAP_RATE_LIMIT_MAX_ATTEMPTS,
+    maxAttempts,
     BOOTSTRAP_RATE_LIMIT_WINDOW_MS
   );
   if (!result.allowed) {

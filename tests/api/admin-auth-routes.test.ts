@@ -211,6 +211,34 @@ describe("admin auth routes", () => {
     );
   });
 
+  it("uses a larger shared bootstrap quota when the client IP is unknown", async () => {
+    vi.stubEnv("ADMIN_BOOTSTRAP_PASSWORD", "legacy-secret");
+    const route = await import("@/app/api/admin/auth/bootstrap/route");
+
+    const response = await route.POST(jsonRequest(
+      "https://board.example/api/admin/auth/bootstrap",
+      bootstrapBody()
+    ));
+
+    expect(response.status).toBe(200);
+    expect(store.checkRateLimit).toHaveBeenCalledWith("unknown", 50, 15 * 60 * 1000);
+  });
+
+  it("keeps the standard bootstrap quota for a known client IP", async () => {
+    vi.stubEnv("ADMIN_BOOTSTRAP_PASSWORD", "legacy-secret");
+    const route = await import("@/app/api/admin/auth/bootstrap/route");
+
+    const response = await route.POST(jsonRequest(
+      "https://board.example/api/admin/auth/bootstrap",
+      bootstrapBody(),
+      undefined,
+      { "x-real-ip": "203.0.113.30" }
+    ));
+
+    expect(response.status).toBe(200);
+    expect(store.checkRateLimit).toHaveBeenCalledWith("203.0.113.30", 5, 15 * 60 * 1000);
+  });
+
   it("rate-limits repeated first-admin bootstrap attempts from the same client", async () => {
     vi.stubEnv("ADMIN_BOOTSTRAP_PASSWORD", "legacy-secret");
     let attempts = 0;
