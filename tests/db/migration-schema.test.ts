@@ -1,32 +1,39 @@
+import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { splitSqlStatements } from "@/lib/db/migrations";
 
 function normalizeSql(sql: string) {
   return sql.replace(/\s+/g, " ").trim();
 }
 
+function migrationUpSql(filename: string) {
+  const contents = readFileSync(path.join(process.cwd(), "db", "migrations", filename), "utf-8");
+  const match = contents.match(/^-- migrate:up[^\r\n]*\r?\n([\s\S]*?)^-- migrate:down[^\r\n]*\r?$/m);
+  if (!match) throw new Error(`Invalid dbmate migration: ${filename}`);
+  return match[1].replace(/\r\n/g, "\n");
+}
+
 describe("initial MariaDB schema", () => {
-  const schema = readFileSync(path.join(process.cwd(), "db", "migrations", "001_initial_schema.sql"), "utf-8");
-  const keywordRuleSetSchema = readFileSync(path.join(process.cwd(), "db", "migrations", "002_keyword_rule_sets.sql"), "utf-8");
-  const rbacSchemaPath = path.join(process.cwd(), "db", "migrations", "003_user_rbac_management.sql");
-  const rbacSchema = existsSync(rbacSchemaPath) ? readFileSync(rbacSchemaPath, "utf-8") : "";
-  const ticketOptimisticLockSchemaPath = path.join(process.cwd(), "db", "migrations", "005_ticket_optimistic_lock.sql");
+  const schema = migrationUpSql("20260101000001_initial_schema.sql");
+  const keywordRuleSetSchema = migrationUpSql("20260101000002_keyword_rule_sets.sql");
+  const rbacSchemaPath = path.join(process.cwd(), "db", "migrations", "20260101000003_user_rbac_management.sql");
+  const rbacSchema = existsSync(rbacSchemaPath) ? migrationUpSql("20260101000003_user_rbac_management.sql") : "";
+  const ticketOptimisticLockSchemaPath = path.join(process.cwd(), "db", "migrations", "20260101000005_ticket_optimistic_lock.sql");
   const ticketOptimisticLockSchema = existsSync(ticketOptimisticLockSchemaPath)
-    ? readFileSync(ticketOptimisticLockSchemaPath, "utf-8")
+    ? migrationUpSql("20260101000005_ticket_optimistic_lock.sql")
     : "";
-  const bootstrapRateLimitSchemaPath = path.join(process.cwd(), "db", "migrations", "006_bootstrap_rate_limits.sql");
+  const bootstrapRateLimitSchemaPath = path.join(process.cwd(), "db", "migrations", "20260101000006_bootstrap_rate_limits.sql");
   const bootstrapRateLimitSchema = existsSync(bootstrapRateLimitSchemaPath)
-    ? readFileSync(bootstrapRateLimitSchemaPath, "utf-8")
+    ? migrationUpSql("20260101000006_bootstrap_rate_limits.sql")
     : "";
-  const sessionKindSchemaPath = path.join(process.cwd(), "db", "migrations", "008_session_kind.sql");
+  const sessionKindSchemaPath = path.join(process.cwd(), "db", "migrations", "20260101000008_session_kind.sql");
   const sessionKindSchema = existsSync(sessionKindSchemaPath)
-    ? readFileSync(sessionKindSchemaPath, "utf-8")
+    ? migrationUpSql("20260101000008_session_kind.sql")
     : "";
-  const userVersionSchemaPath = path.join(process.cwd(), "db", "migrations", "009_user_version_column.sql");
+  const userVersionSchemaPath = path.join(process.cwd(), "db", "migrations", "20260101000009_user_version_column.sql");
   const userVersionSchema = existsSync(userVersionSchemaPath)
-    ? readFileSync(userVersionSchemaPath, "utf-8")
+    ? migrationUpSql("20260101000009_user_version_column.sql")
     : "";
   const normalizedRbacSchema = normalizeSql(rbacSchema);
   const normalizedTicketOptimisticLockSchema = normalizeSql(ticketOptimisticLockSchema);
@@ -48,6 +55,24 @@ describe("initial MariaDB schema", () => {
     const match = definition.match(new RegExp(`\\b${column} varchar\\((\\d+)\\)`));
     return Number(match?.[1] ?? Number.NaN);
   }
+
+  it("preserves every historical SQL body inside dbmate directives", () => {
+    const expectedHashes = {
+      "20260101000001_initial_schema.sql": "4e042e4d381ed594db4d339bbe499341a3bf8dd22d1bc64aff9923a4c1b0f629",
+      "20260101000002_keyword_rule_sets.sql": "b38887e3e6243e72b34252d53c88f1750eef82a7290f79aed0a7796a18dda8e2",
+      "20260101000003_user_rbac_management.sql": "164ba04f6bd97fa72a5c5ee1acd5cbcac3341156f32afb2f465645a04319a9ea",
+      "20260101000004_exhibitor_booth_identity.sql": "37b7770f70ac442c321d5a5c12da7f8bea428942793477f6231c10b5181009a5",
+      "20260101000005_ticket_optimistic_lock.sql": "14c982a1f8af4bd8c33eaeed943a049e8fe3c62339294cc01e1ab81afc9076ab",
+      "20260101000006_bootstrap_rate_limits.sql": "39c3af38ab9986bba07b2970f048413d06b04e0746c6f2771fe3714f30a4e040",
+      "20260101000008_session_kind.sql": "b1254ea4ec882a4a307a8291bc1dab7edb94510440fc2edccd40e639a560fede",
+      "20260101000009_user_version_column.sql": "bfd519554410780c8a4ae14a08d027996212b9a1f5b923dd4f8cd3315aafed6e"
+    };
+
+    for (const [filename, expectedHash] of Object.entries(expectedHashes)) {
+      const actualHash = createHash("sha256").update(migrationUpSql(filename)).digest("hex");
+      expect(actualHash, filename).toBe(expectedHash);
+    }
+  });
 
   it("creates the core tables required by the database design", () => {
     [
@@ -150,9 +175,9 @@ describe("initial MariaDB schema", () => {
   });
 
   it("keeps every Task 1 ALTER addition restart-safe and independently splittable", () => {
-    const alterStatements = splitSqlStatements(rbacSchema)
+    const alterStatements = (rbacSchema.match(/ALTER TABLE[\s\S]*?;/g) ?? [])
       .filter((statement) => statement.startsWith("ALTER TABLE"))
-      .map(normalizeSql);
+      .map((statement) => normalizeSql(statement.replace(/;$/, "")));
 
     expect(alterStatements).toEqual([
       normalizeSql(`

@@ -11,8 +11,14 @@
     "restart:external": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\start-external.ps1 -Mode prod -Restart",
     "test": "vitest",
     "test:run": "vitest run",
-    "db:migrate": "node scripts/db-migrate.mjs",
-    "db:import-state": "node scripts/db-import-state.mjs",
+    "db:migrate": "npm run db:migrate:verify && npm run db:migrate:cutover && dbmate --no-dump-schema migrate",
+    "db:migrate:new": "dbmate new",
+    "db:migrate:rollback": "npm run db:migrate:verify && dbmate --no-dump-schema rollback",
+    "db:migrate:status": "dbmate status",
+    "db:migrate:seal": "node scripts/dbmate-checksums.mjs seal",
+    "db:migrate:verify": "node scripts/dbmate-checksums.mjs verify",
+    "db:migrate:cutover": "node scripts/dbmate-cutover.mjs",
+    "db:import-state": "npm run db:migrate && node scripts/db-import-state.mjs",
     "bridge:wxauto": "node scripts/wxauto-rest-bridge.mjs"
   },
   "dependencies": {
@@ -22,6 +28,7 @@
     "next": "16.2.6",
     "react": "19.2.6",
     "react-dom": "19.2.6",
+    "undici": "8.5.0",
     "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
     "zod": "4.4.3"
   },
@@ -33,6 +40,7 @@
     "@types/react": "19.2.15",
     "@types/react-dom": "19.2.3",
     "@vitejs/plugin-react": "6.0.2",
+    "dbmate": "2.33.0",
     "jsdom": "29.1.1",
     "typescript": "6.0.3",
     "vitest": "4.1.7"
