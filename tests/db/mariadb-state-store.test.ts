@@ -122,6 +122,7 @@ function fakeConnection(): DatabaseConnection {
         person_id: "person-1",
         booth_number: "A01",
         issue_type: "网络",
+        session_kind: "handler-reply",
         missing_fields: JSON.stringify(["phone"]),
         created_at: rowDate(),
         updated_at: rowDate(),
@@ -318,8 +319,37 @@ describe("MariaDbStateStore", () => {
     }));
     expect(data.chatIdentities).toEqual([expect.objectContaining({ id: "identity-1", personId: "person-1" })]);
     expect(data.conversations).toEqual([expect.objectContaining({ id: "conv-1", linkedPersonIds: ["person-1"] })]);
-    expect(data.pendingWorkOrderSessions).toEqual([expect.objectContaining({ id: "pending-1", missingFields: ["phone"] })]);
+    expect(data.pendingWorkOrderSessions).toEqual([expect.objectContaining({
+      id: "pending-1",
+      sessionKind: "handler-reply",
+      missingFields: ["phone"]
+    })]);
     expect(data.outboundMessages).toEqual([expect.objectContaining({ id: "outbound-1", status: "pending" })]);
+  });
+
+  it("persists pending work order session kinds", async () => {
+    const { calls, connection } = recordingConnection();
+
+    await new MariaDbStateStore().writeState(writableState({
+      pendingWorkOrderSessions: [{
+        id: "pending-handler-reply",
+        platform: "wechat",
+        conversationId: "conversation-handler",
+        chatIdentityId: "identity-handler",
+        draftText: "已处理完成",
+        draftImages: [],
+        personId: "person-handler",
+        issueType: "搭建",
+        sessionKind: "handler-reply",
+        missingFields: ["boothNumber"],
+        createdAt: "2026-06-27T00:00:00.000Z",
+        updatedAt: "2026-06-27T00:00:00.000Z"
+      }]
+    }), connection);
+
+    const insert = calls.find((call) => call.sql.includes("INSERT INTO pending_work_order_sessions"));
+    expect(normalizedSql(insert?.sql ?? "")).toContain("issue_type, session_kind, missing_fields");
+    expect(insert?.params[13]).toBe("handler-reply");
   });
 
   it("persists booth location, area, and type in MariaDB raw payload", async () => {

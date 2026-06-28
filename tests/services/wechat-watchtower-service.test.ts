@@ -955,6 +955,22 @@ describe("wechat watchtower service", () => {
     });
   });
 
+  it("marks handler prompt sessions with sessionKind without overloading issueType", async () => {
+    const appState = state();
+    addHandlerTicket(appState, "处理中");
+    appState.tickets = [];
+
+    const result = await sendHandlerReply(appState, "已处理完成", "msg-handler-session-kind");
+
+    expect(result.action).toBe("prompted");
+    expect(appState.pendingWorkOrderSessions?.[0]).toMatchObject({
+      personId: "person-builder",
+      sessionKind: "handler-reply",
+      missingFields: ["boothNumber"]
+    });
+    expect(appState.pendingWorkOrderSessions?.[0].issueType).not.toBe("__handler-reply");
+  });
+
   it("lets a builder WeChat reply resolve an assigned ticket and notify the reporter", async () => {
     const appState = state();
     const timestamp = "2026-05-22T08:00:00.000Z";
@@ -1035,6 +1051,8 @@ describe("wechat watchtower service", () => {
       matchedTicketId: "ticket-builder",
       reason: expect.stringContaining("完成反馈")
     });
+    expect(appState.pendingWorkOrderSessions).toEqual([]);
+    expect(appState.outboundMessages?.some((message) => message.text.includes("您当前负责以下未关闭工单"))).toBe(false);
   });
 
   it.each([
@@ -1077,7 +1095,7 @@ describe("wechat watchtower service", () => {
     {
       name: "keeps progress text in processing",
       initialStatus: "处理中",
-      text: "A01 正在加固门头",
+      text: "展位 A01 正在加固门头",
       expectedStatus: "处理中",
       timelineType: "reply",
       toStatus: undefined,

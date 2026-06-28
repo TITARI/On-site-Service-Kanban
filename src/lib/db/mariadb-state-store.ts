@@ -709,6 +709,7 @@ async function readPendingSessions(connection: DatabaseConnection): Promise<Pend
     personId: row.person_id ? String(row.person_id) : undefined,
     boothNumber: row.booth_number ? String(row.booth_number) : undefined,
     issueType: row.issue_type ? String(row.issue_type) : undefined,
+    sessionKind: row.session_kind ? row.session_kind as PendingWorkOrderSession["sessionKind"] : undefined,
     missingFields: parseJsonValue<PendingWorkOrderSession["missingFields"]>(row.missing_fields, []),
     createdAt: requiredIso(row.created_at),
     updatedAt: requiredIso(row.updated_at),
@@ -1648,8 +1649,8 @@ async function writePendingSessions(
       `INSERT INTO pending_work_order_sessions (
         id, platform, conversation_id, chat_identity_id, original_message_record_id, draft_text,
         draft_images, identity_group, contact_name, contact_phone, person_id, booth_number,
-        issue_type, missing_fields, created_at, updated_at, last_prompt_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)${
+        issue_type, session_kind, missing_fields, created_at, updated_at, last_prompt_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)${
         options.upsert
           ? `
       ON DUPLICATE KEY UPDATE
@@ -1664,6 +1665,7 @@ async function writePendingSessions(
         person_id = VALUES(person_id),
         booth_number = VALUES(booth_number),
         issue_type = VALUES(issue_type),
+        session_kind = VALUES(session_kind),
         missing_fields = VALUES(missing_fields),
         updated_at = VALUES(updated_at),
         last_prompt_at = VALUES(last_prompt_at)`
@@ -1683,6 +1685,7 @@ async function writePendingSessions(
         session.personId ?? null,
         session.boothNumber ?? null,
         session.issueType ?? null,
+        session.sessionKind ?? null,
         json(session.missingFields),
         dateOrNull(session.createdAt) ?? now,
         dateOrNull(session.updatedAt) ?? now,

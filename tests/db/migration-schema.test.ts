@@ -84,6 +84,22 @@ describe("initial MariaDB schema", () => {
     `));
   });
 
+  it("adds and backfills pending work order session kinds", () => {
+    expect(normalizedSessionKindSchema).toContain(normalizeSql(`
+      ALTER TABLE pending_work_order_sessions ADD COLUMN session_kind VARCHAR(20) NULL;
+    `));
+    expect(normalizedSessionKindSchema).toContain(normalizeSql(`
+      UPDATE pending_work_order_sessions
+      SET session_kind = 'handler-reply'
+      WHERE issue_type = '__handler-reply';
+    `));
+    expect(normalizedSessionKindSchema).toContain(normalizeSql(`
+      UPDATE pending_work_order_sessions
+      SET session_kind = 'work-order'
+      WHERE issue_type <> '__handler-reply' OR issue_type IS NULL;
+    `));
+  });
+
   it("keeps the indexes needed for current query paths", () => {
     expect(schema).toContain("uniq_booth_exhibitor_per_exhibition");
     expect(schema).toContain("(exhibition_id, booth_number, company_name)");
