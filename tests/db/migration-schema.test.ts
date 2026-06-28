@@ -20,6 +20,10 @@ describe("initial MariaDB schema", () => {
   const bootstrapRateLimitSchema = existsSync(bootstrapRateLimitSchemaPath)
     ? readFileSync(bootstrapRateLimitSchemaPath, "utf-8")
     : "";
+  const sessionKindSchemaPath = path.join(process.cwd(), "db", "migrations", "008_session_kind.sql");
+  const sessionKindSchema = existsSync(sessionKindSchemaPath)
+    ? readFileSync(sessionKindSchemaPath, "utf-8")
+    : "";
   const userVersionSchemaPath = path.join(process.cwd(), "db", "migrations", "009_user_version_column.sql");
   const userVersionSchema = existsSync(userVersionSchemaPath)
     ? readFileSync(userVersionSchemaPath, "utf-8")
@@ -27,6 +31,7 @@ describe("initial MariaDB schema", () => {
   const normalizedRbacSchema = normalizeSql(rbacSchema);
   const normalizedTicketOptimisticLockSchema = normalizeSql(ticketOptimisticLockSchema);
   const normalizedBootstrapRateLimitSchema = normalizeSql(bootstrapRateLimitSchema);
+  const normalizedSessionKindSchema = normalizeSql(sessionKindSchema);
   const normalizedUserVersionSchema = normalizeSql(userVersionSchema);
 
   function tableDefinition(table: string) {
