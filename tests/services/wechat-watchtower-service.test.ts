@@ -1051,6 +1051,8 @@ describe("wechat watchtower service", () => {
       matchedTicketId: "ticket-builder",
       reason: expect.stringContaining("完成反馈")
     });
+    expect(appState.pendingWorkOrderSessions).toEqual([]);
+    expect(appState.outboundMessages?.some((message) => message.text.includes("您当前负责以下未关闭工单"))).toBe(false);
   });
 
   it.each([
@@ -1093,7 +1095,7 @@ describe("wechat watchtower service", () => {
     {
       name: "keeps progress text in processing",
       initialStatus: "处理中",
-      text: "A01 正在加固门头",
+      text: "展位 A01 正在加固门头",
       expectedStatus: "处理中",
       timelineType: "reply",
       toStatus: undefined,
