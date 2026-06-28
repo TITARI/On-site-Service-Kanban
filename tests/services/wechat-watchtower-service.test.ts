@@ -955,6 +955,39 @@ describe("wechat watchtower service", () => {
     });
   });
 
+  it("prompts a handler with assigned ticket choices when multiple candidates match", async () => {
+    const appState = state();
+    const firstTicket = addHandlerTicket(appState, "处理中");
+    firstTicket.updatedAt = "2026-05-21T08:00:02.000Z";
+    const secondTicket: AppState["tickets"][number] = {
+      ...firstTicket,
+      id: "ticket-handler-b02",
+      title: "B02 测试展商 电力",
+      boothNumber: "B02",
+      issueType: "电力",
+      description: "B02 配电箱跳闸",
+      replies: [],
+      timeline: [],
+      createdAt: "2026-05-21T08:00:00.000Z",
+      updatedAt: "2026-05-21T08:00:01.000Z"
+    };
+    appState.tickets.push(secondTicket);
+
+    const result = await sendHandlerReply(appState, "已处理完成", "msg-handler-multiple-candidates");
+
+    expect(result.action).toBe("prompted");
+    expect(firstTicket.replies).toEqual([]);
+    expect(secondTicket.replies).toEqual([]);
+    expect(appState.pendingWorkOrderSessions?.[0]).toMatchObject({
+      personId: "person-builder",
+      missingFields: ["boothNumber"]
+    });
+    const promptText = appState.outboundMessages?.at(-1)?.text ?? "";
+    expect(promptText).toContain("您当前负责以下未关闭工单");
+    expect(promptText).toContain(`${ticketShortCode(firstTicket.id)} - A01 - 搭建`);
+    expect(promptText).toContain(`${ticketShortCode(secondTicket.id)} - B02 - 电力`);
+  });
+
   it("lets a builder WeChat reply resolve an assigned ticket and notify the reporter", async () => {
     const appState = state();
     const timestamp = "2026-05-22T08:00:00.000Z";
@@ -1035,6 +1068,8 @@ describe("wechat watchtower service", () => {
       matchedTicketId: "ticket-builder",
       reason: expect.stringContaining("完成反馈")
     });
+    expect(appState.pendingWorkOrderSessions).toEqual([]);
+    expect(appState.outboundMessages?.some((message) => message.text.includes("您当前负责以下未关闭工单"))).toBe(false);
   });
 
   it.each([

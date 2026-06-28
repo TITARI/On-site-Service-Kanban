@@ -696,7 +696,14 @@ async function tryProcessHandlerReply(
     const promptSession = createPromptSession(state, mergedInput, conversationId, chatIdentityId, ["boothNumber"], session?.originalMessageRecordId ?? record.id);
     promptSession.personId = person.id;
     markHandlerReplySession(promptSession);
-    queuePrompt(state, input, conversationExternalId, chatIdentityId, handlerPromptText(), promptSession.id);
+    const ticketList = candidates
+      .slice(0, 5)
+      .map((ticket, index) => `${index + 1}. ${ticketShortCode(ticket.id)} - ${ticket.boothNumber} - ${ticket.issueType}`)
+      .join("\n");
+    const promptText = candidates.length > 1
+      ? `已收到处理反馈，您当前负责以下未关闭工单，请回复对应工单短链：\n${ticketList}`
+      : handlerPromptText();
+    queuePrompt(state, input, conversationExternalId, chatIdentityId, promptText, promptSession.id);
     return { action: "prompted", record };
   }
 
