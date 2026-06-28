@@ -112,8 +112,8 @@ function isWithinMediaWindow(referenceIso: string | undefined, input: IntakeMess
   return Math.abs(inputTimestampMs(input) - referenceMs) <= MEDIA_FOLLOWUP_WINDOW_MS;
 }
 
-function looksLikeBoothReference(text: string) {
-  return /(?:展位|展台|摊位|booth)?\s*((?:\d+[A-Za-z]{1,4}|[A-Za-z]{1,4})[-\s]?\d{1,5}[A-Za-z]?)/i.test(text);
+export function looksLikeBoothReference(text: string) {
+  return /(?:展位|展台|摊位|booth)\s*((?:\d+[A-Za-z]{1,4}|[A-Za-z]{1,4})[-\s]?\d{1,5}[A-Za-z]?)/i.test(text);
 }
 
 function publicBaseUrlFromFile() {
