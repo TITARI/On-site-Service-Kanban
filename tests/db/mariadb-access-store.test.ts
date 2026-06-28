@@ -1140,11 +1140,17 @@ describe("MariaDB access store", () => {
     const peopleUpdate = calls.find((call) =>
       call.sql.includes("UPDATE people")
     );
+    expect(peopleUpdate?.sql).toContain("version = version + 1");
     expect(peopleUpdate?.params.slice(2, 5)).toEqual([
       "handler",
       "disabled-group",
       "Disabled Group"
     ]);
+    const accountUpdate = calls.find((call) =>
+      call.sql.includes("UPDATE accounts") &&
+      call.sql.includes("SET login_name = ?")
+    );
+    expect(accountUpdate?.sql).toContain("version = version + 1");
     const audit = calls.find((call) =>
       call.sql.includes("INSERT INTO audit_logs")
     );
@@ -2244,6 +2250,7 @@ describe("MariaDB access store", () => {
             baseline: {
               person: {
                 personId: "person-1",
+                version: 0,
                 updatedAt: "2026-06-14T01:00:00.000Z"
               },
               group: {
@@ -2257,8 +2264,9 @@ describe("MariaDB access store", () => {
       if (sql.includes("FROM people p") && sql.includes("p.updated_at")) {
         return [{
           person_id: "person-1",
-          person_updated_at: new Date("2026-06-15T01:00:00.000Z"),
-          account_updated_at: new Date("2026-06-15T01:00:00.000Z")
+          person_version: 1,
+          person_updated_at: new Date("2026-06-14T01:00:00.000Z"),
+          account_updated_at: new Date("2026-06-14T01:00:00.000Z")
         }];
       }
       if (sql.includes("FROM accounts a") && sql.includes("FOR UPDATE")) {
@@ -2321,6 +2329,7 @@ describe("MariaDB access store", () => {
         baseline: {
           person: {
             personId: "person-1",
+            version: 0,
             updatedAt: "2026-06-14T01:00:00.000Z"
           },
           group: {

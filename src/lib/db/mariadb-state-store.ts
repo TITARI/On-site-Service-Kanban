@@ -234,6 +234,7 @@ async function readPeople(connection: DatabaseConnection): Promise<Person[]> {
     nameConflict: parseJsonValue<Person["nameConflict"] | undefined>(row.name_conflict, undefined),
     boothScope: parseJsonValue<string[] | undefined>(row.booth_scope, undefined),
     enabled: bool(row.enabled),
+    version: Number(row.version ?? 0),
     createdAt: requiredIso(row.created_at),
     updatedAt: requiredIso(row.updated_at)
   }));
@@ -911,6 +912,7 @@ async function upsertRuntimeAccessAccounts(
         person_id = VALUES(person_id),
         login_name = VALUES(login_name),
         enabled = VALUES(enabled),
+        version = version + 1,
         updated_at = VALUES(updated_at)`,
       [
         accountId,
@@ -927,7 +929,9 @@ async function upsertRuntimeAccessAccounts(
       await execute(
         connection,
         `UPDATE accounts
-         SET auth_version = auth_version + 1, updated_at = ?
+         SET auth_version = auth_version + 1,
+             version = version + 1,
+             updated_at = ?
          WHERE id = ?`,
         [now, accountId]
       );
@@ -1209,8 +1213,8 @@ async function writePeople(
     await execute(
       connection,
       `INSERT INTO people (
-        id, name, phone, role, group_id, group_name_snapshot, group_locked, name_conflict, booth_scope, enabled, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)${
+        id, name, phone, role, group_id, group_name_snapshot, group_locked, name_conflict, booth_scope, enabled, version, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)${
         options.upsert
           ? `
       ON DUPLICATE KEY UPDATE
@@ -1223,6 +1227,7 @@ async function writePeople(
         name_conflict = VALUES(name_conflict),
         booth_scope = VALUES(booth_scope),
         enabled = VALUES(enabled),
+        version = VALUES(version),
         updated_at = VALUES(updated_at)`
           : ""
       }`,
@@ -1237,6 +1242,7 @@ async function writePeople(
         person.nameConflict ? json(person.nameConflict) : null,
         person.boothScope ? json(person.boothScope) : null,
         person.enabled,
+        person.version ?? 0,
         dateOrNull(person.createdAt) ?? now,
         dateOrNull(person.updatedAt) ?? now
       ]

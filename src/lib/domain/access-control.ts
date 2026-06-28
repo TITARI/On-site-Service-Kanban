@@ -16,6 +16,7 @@ export type Account = {
   loginName: string;
   enabled: boolean;
   authVersion: number;
+  version?: number;
   lastLoginAt?: string;
   createdAt: string;
   updatedAt: string;
@@ -152,6 +153,7 @@ export type UserListItem = {
     externalUserId: string;
     displayName: string;
   }>>;
+  version: number;
   updatedAt: string;
 };
 

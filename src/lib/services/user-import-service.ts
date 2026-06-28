@@ -114,10 +114,14 @@ async function rowIsStale(
 
   const currentUser = await exactUserByPhone(repository, value.phone);
   if (row.baseline?.person) {
+    const baseline = row.baseline.person;
+    const versionChanged = baseline.version === undefined
+      ? currentUser?.updatedAt !== baseline.updatedAt
+      : currentUser?.version !== baseline.version;
     if (
       !currentUser ||
-      currentUser.personId !== row.baseline.person.personId ||
-      currentUser.updatedAt !== row.baseline.person.updatedAt
+      currentUser.personId !== baseline.personId ||
+      versionChanged
     ) {
       return true;
     }

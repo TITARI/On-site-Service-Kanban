@@ -78,6 +78,7 @@ function fakeConnection(): DatabaseConnection {
         group_locked: 1,
         booth_scope: JSON.stringify(["A01"]),
         enabled: 1,
+        version: 7,
         created_at: rowDate(),
         updated_at: rowDate()
       }]];
@@ -313,7 +314,8 @@ describe("MariaDbStateStore", () => {
     expect(data.people).toEqual([expect.objectContaining({ id: "person-1", groupName: "搭建组" })]);
     expect(data.people[0]).toEqual(expect.objectContaining({
       groupId: "builder",
-      groupLocked: true
+      groupLocked: true,
+      version: 7
     }));
     expect(data.chatIdentities).toEqual([expect.objectContaining({ id: "identity-1", personId: "person-1" })]);
     expect(data.conversations).toEqual([expect.objectContaining({ id: "conv-1", linkedPersonIds: ["person-1"] })]);
@@ -441,6 +443,7 @@ describe("MariaDbStateStore", () => {
         groupName: "Admin Group Snapshot",
         groupLocked: true,
         enabled: true,
+        version: 4,
         createdAt: "2026-06-13T10:00:00.000Z",
         updatedAt: "2026-06-13T10:00:00.000Z"
       }]
@@ -449,6 +452,8 @@ describe("MariaDbStateStore", () => {
     const insert = calls.find((call) => call.sql.includes("INSERT INTO people"));
     expect(insert?.sql.replace(/\s+/g, " ")).toContain("group_id, group_name_snapshot, group_locked");
     expect(insert?.params.slice(4, 7)).toEqual(["admin-group", "Admin Group Snapshot", true]);
+    expect(insert?.sql).toContain("enabled, version, created_at");
+    expect(insert?.params[10]).toBe(4);
   });
 
   it("persists group canAdmin with a false fallback for legacy config", async () => {
@@ -1027,6 +1032,7 @@ describe("MariaDbStateStore", () => {
       .split("ON DUPLICATE KEY UPDATE")[1] ?? "";
     expect(duplicateUpdateClause).not.toContain("auth_version");
     expect(duplicateUpdateClause).not.toContain("last_login_at");
+    expect(duplicateUpdateClause).toContain("version = version + 1");
   });
 
   it("continues persisting watchtower tables while processing WeChat messages", async () => {

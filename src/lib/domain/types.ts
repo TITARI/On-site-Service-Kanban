@@ -95,6 +95,7 @@ export type Person = {
   nameConflict?: { attemptedName: string; observedAt: string };
   boothScope?: string[];
   enabled: boolean;
+  version?: number;
   createdAt: string;
   updatedAt: string;
 };

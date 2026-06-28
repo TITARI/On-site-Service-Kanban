@@ -133,7 +133,7 @@ describe("access control", () => {
     ["AuthBootstrapState", "{completedAt?:string;completedByAccountId?:string;}"],
     [
       "UserListItem",
-      "{personId:string;accountId:string;name:string;phone:string;groupId:string;groupName:string;groupLocked:boolean;enabled:boolean;permissions:PermissionCode[];hasPassword:boolean;lastLoginAt?:string;identities:Partial<Record<MessageChannel,{id:string;externalUserId:string;displayName:string}>>;updatedAt:string;}"
+      "{personId:string;accountId:string;name:string;phone:string;groupId:string;groupName:string;groupLocked:boolean;enabled:boolean;permissions:PermissionCode[];hasPassword:boolean;lastLoginAt?:string;identities:Partial<Record<MessageChannel,{id:string;externalUserId:string;displayName:string}>>;version:number;updatedAt:string;}"
     ]
   ])("keeps the exact %s contract", (typeName, expectedType) => {
     expect(normalizedTypeText(typeName)).toBe(normalizeTypeSyntax(expectedType));

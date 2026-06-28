@@ -72,6 +72,7 @@ function user(overrides: Partial<UserListItem> = {}): UserListItem {
     permissions: ["ticket.process"],
     hasPassword: false,
     identities: {},
+    version: 0,
     updatedAt: "2026-06-15T00:00:00.000Z",
     ...overrides
   };
