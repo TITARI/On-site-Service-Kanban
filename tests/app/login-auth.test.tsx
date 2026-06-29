@@ -1,10 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { screen, waitFor } from "@testing-library/react";
 import { renderToString } from "react-dom/server";
+import { QueryClientProvider } from "@tanstack/react-query";
 import userEvent from "@testing-library/user-event";
 import HomePage from "@/app/page";
 import type { Ticket } from "@/lib/domain/types";
 import type { AppConfig } from "@/lib/seed";
+import { createTestQueryClient, renderWithQueryClient as render } from "../helpers/query-client";
 
 const config: AppConfig = {
   issueTypes: [
@@ -119,7 +121,9 @@ afterEach(() => {
 
 describe("login and role access", () => {
   it("does not resolve browser session state while rendering the server shell", () => {
-    const html = renderToString(<HomePage />);
+    const html = renderToString(
+      <QueryClientProvider client={createTestQueryClient()}><HomePage /></QueryClientProvider>
+    );
 
     expect(html).toContain("loading");
     expect(html).not.toContain("auth-card");
@@ -154,8 +158,8 @@ describe("login and role access", () => {
     render(<HomePage />);
 
     expect(await screen.findByRole("option", { name: "Dynamic Management Group" })).not.toBeNull();
-    expect(fetchMock).toHaveBeenCalledWith("/api/auth/session?type=mobile", { cache: "no-store" });
-    expect(fetchMock).toHaveBeenCalledWith("/api/bootstrap?scope=login", { cache: "no-store" });
+    expect(fetchMock).toHaveBeenCalledWith("/api/auth/session?type=mobile", expect.objectContaining({ cache: "no-store", signal: expect.anything() }));
+    expect(fetchMock).toHaveBeenCalledWith("/api/bootstrap?scope=login", expect.objectContaining({ cache: "no-store", signal: expect.anything() }));
   });
 
   it("restores a valid mobile session before loading the board", async () => {
@@ -173,9 +177,9 @@ describe("login and role access", () => {
 
     expect(await screen.findByText("A01 Network")).not.toBeNull();
     expect(localStorage.getItem("internal-board-current-user")).toBeNull();
-    expect(fetchMock).toHaveBeenCalledWith("/api/auth/session?type=mobile", { cache: "no-store" });
-    expect(fetchMock).toHaveBeenCalledWith("/api/bootstrap?scope=mobile", { cache: "no-store" });
-    expect(fetchMock).not.toHaveBeenCalledWith("/api/bootstrap?scope=login", { cache: "no-store" });
+    expect(fetchMock).toHaveBeenCalledWith("/api/auth/session?type=mobile", expect.objectContaining({ cache: "no-store", signal: expect.anything() }));
+    expect(fetchMock).toHaveBeenCalledWith("/api/bootstrap?scope=mobile", expect.objectContaining({ cache: "no-store", signal: expect.anything() }));
+    expect(fetchMock.mock.calls.some((call) => String(call[0]) === "/api/bootstrap?scope=login")).toBe(false);
   });
 
   it("posts member login to the mobile auth route before using the board", async () => {
@@ -314,6 +318,6 @@ describe("login and role access", () => {
 
     expect(await screen.findByRole("option", { name: "Business" })).not.toBeNull();
     expect(fetchMock).toHaveBeenCalledWith("/api/auth/mobile/logout", { method: "POST" });
-    expect(fetchMock).toHaveBeenCalledWith("/api/bootstrap?scope=login", { cache: "no-store" });
+    expect(fetchMock).toHaveBeenCalledWith("/api/bootstrap?scope=login", expect.objectContaining({ cache: "no-store", signal: expect.anything() }));
   });
 });

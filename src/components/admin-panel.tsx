@@ -1,6 +1,7 @@
 ﻿"use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Bot,
   ClipboardList,
@@ -19,6 +20,8 @@ import {
 import { AdminUsersPanel } from "@/components/admin-users-panel";
 import { ExhibitionDataPanel } from "@/components/exhibition-data-panel";
 import { AI_PROVIDER_PRESETS, aiPromptDefaultsOf, aiPromptTemplatesOf, copyAiPromptTemplate, providerPresetFor } from "@/lib/domain/ai-config";
+import { apiFetch, apiJson } from "@/lib/client/api-request";
+import { queryKeys } from "@/lib/client/query-keys";
 import { keywordRuleSetsOf, normalizeKeywordGroups } from "@/lib/domain/keyword-config";
 import type { AiPromptDefaults, AiPromptScenario, AiPromptTemplate, AiProviderPresetId, BoothRecord, ChatIdentity, Conversation, InboundMessageRecord, KeywordGroup, KeywordRuleSet, KeywordTerm, OutboundMessage, PendingWorkOrderSession, Person, WxautoMcpConfig } from "@/lib/domain/types";
 import type { TicketSummary } from "@/lib/domain/ticket-summary";
@@ -149,7 +152,6 @@ function wxautoMcpStateFromRead(payload: WxautoMcpAdminState): WxautoMcpAdminSta
 
 type AiModelListState = {
   models: string[];
-  loading: boolean;
   error?: string;
 };
 
@@ -595,8 +597,6 @@ export function AdminConfigCenter({
 }) {
   const [statusQueue, setStatusQueue] = useState<AdminFeedback[]>([]);
   const nextStatusId = useRef(0);
-  const [isImporting, setIsImporting] = useState(false);
-  const [savingConfigId, setSavingConfigId] = useState<string | null>(null);
   const [newIssueName, setNewIssueName] = useState("");
   const [newGroupName, setNewGroupName] = useState("");
   const [groupDrafts, setGroupDrafts] = useState<Record<string, GroupDraft>>({});
@@ -606,6 +606,7 @@ export function AdminConfigCenter({
   const [aiModelNameDrafts, setAiModelNameDrafts] = useState<Partial<Record<"fast" | "smart", string>>>({});
   const [aiModelLists, setAiModelLists] = useState<Partial<Record<"fast" | "smart", AiModelListState>>>({});
   const [wxautoMcpState, setWxautoMcpState] = useState<WxautoMcpAdminState>(() => wxautoMcpStateFromConfig(config));
+  const wxautoDraftDirtyRef = useRef(false);
   const [displayedBooths, setDisplayedBooths] = useState<BoothRecord[]>(booths);
   const [pendingImportedBooths, setPendingImportedBooths] = useState<BoothRecord[] | null>(null);
   const groups = config.userGroups?.length ? config.userGroups : userGroupsOf(config);
@@ -637,6 +638,82 @@ export function AdminConfigCenter({
     }));
   const showAll = view === "all";
   const activeStatusId = statusQueue[0]?.id;
+  const queryClient = useQueryClient();
+  const configMutation = useMutation({
+    mutationFn: (variables: { nextConfig: AppConfig; savingId: string }) => apiFetch("/api/admin/config", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(variables.nextConfig)
+    }, "配置保存失败")
+  });
+  const importMutation = useMutation({
+    mutationFn: (variables: { file: File; sheetNames?: string[] }) => {
+      const formData = new FormData();
+      formData.append("file", variables.file);
+      formData.append("dryRun", "false");
+      if (variables.sheetNames) formData.append("sheetNames", JSON.stringify(variables.sheetNames));
+      return apiJson<{ booths?: BoothRecord[] }>(
+        "/api/admin/master-data",
+        { method: "POST", body: formData },
+        "主数据导入失败"
+      );
+    }
+  });
+  const saveWxautoMutation = useMutation({
+    mutationFn: (input: { enabled: boolean; autoCreateTickets: boolean; accessToken: string }) => apiJson<{ wxautoMcp: WxautoMcpAdminState }>(
+      "/api/admin/wxauto-mcp",
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(input)
+      },
+      "wxauto 服务配置保存失败"
+    )
+  });
+  const rotateWxautoMutation = useMutation({
+    mutationFn: () => apiJson<{ accessToken: string }>(
+      "/api/admin/wxauto-mcp",
+      { method: "POST" },
+      "访问令牌重置失败"
+    )
+  });
+  const keywordMutation = useMutation({
+    mutationFn: (keywordGroups: KeywordGroup[]) => apiFetch("/api/admin/keywords", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ keywordGroups })
+    }, "关键词配置保存失败")
+  });
+  const aiModelListMutation = useMutation({
+    mutationFn: (variables: { modelId: "fast" | "smart"; endpoint: string; apiKey?: string }) => apiJson<{ models?: string[]; error?: string; message?: string }>(
+      "/api/admin/ai-models",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(variables.apiKey
+          ? { endpoint: variables.endpoint, apiKey: variables.apiKey }
+          : { endpoint: variables.endpoint, modelId: variables.modelId })
+      },
+      "模型列表获取失败"
+    )
+  });
+  const wxautoQuery = useQuery({
+    queryKey: queryKeys.admin.wxauto,
+    queryFn: ({ signal }) => apiJson<{ wxautoMcp?: WxautoMcpAdminState }>(
+      "/api/admin/wxauto-mcp",
+      { cache: "no-store", signal },
+      "wxauto 服务启动失败"
+    ),
+    enabled: view === "system"
+  });
+  const savingConfigId = configMutation.isPending
+    ? configMutation.variables?.savingId ?? null
+    : saveWxautoMutation.isPending || rotateWxautoMutation.isPending
+      ? "wxauto-mcp"
+      : keywordMutation.isPending
+        ? "keywords"
+        : null;
+  const isImporting = importMutation.isPending;
 
   useEffect(() => {
     if (!pendingImportedBooths) {
@@ -658,23 +735,15 @@ export function AdminConfigCenter({
   }, [activeStatusId]);
 
   useEffect(() => {
-    if (view !== "system") return;
-    let cancelled = false;
-    async function ensureWxautoMcp() {
-      try {
-        const response = await fetch("/api/admin/wxauto-mcp", { cache: "no-store" });
-        if (!response.ok) throw new Error("wxauto 服务启动失败");
-        const payload = await response.json() as { wxautoMcp?: WxautoMcpAdminState };
-        if (!cancelled && payload.wxautoMcp) setWxautoMcpState(wxautoMcpStateFromRead(payload.wxautoMcp));
-      } catch (error) {
-        if (!cancelled) setStatus(error instanceof Error ? error.message : "wxauto 服务启动失败");
-      }
+    if (wxautoQuery.data?.wxautoMcp) {
+      const serverState = wxautoMcpStateFromRead(wxautoQuery.data.wxautoMcp);
+      setWxautoMcpState((current) => wxautoDraftDirtyRef.current ? current : serverState);
     }
-    void ensureWxautoMcp();
-    return () => {
-      cancelled = true;
-    };
-  }, [showAll, view]);
+  }, [wxautoQuery.data]);
+
+  useEffect(() => {
+    if (wxautoQuery.error instanceof Error) setStatus(wxautoQuery.error.message);
+  }, [wxautoQuery.error]);
 
   function setStatus(message: string | null) {
     if (!message) return;
@@ -709,95 +778,67 @@ export function AdminConfigCenter({
     return value && groupOptions().includes(value) ? value : "";
   }
 
+  async function invalidateAdminData(includeWxauto = false) {
+    const invalidations = [queryClient.invalidateQueries({ queryKey: queryKeys.admin.bootstrap })];
+    if (includeWxauto) invalidations.push(queryClient.invalidateQueries({ queryKey: queryKeys.admin.wxauto }));
+    await Promise.all(invalidations);
+  }
+
   async function saveConfig(nextConfig: AppConfig, successMessage: string, savingId: string) {
-    setSavingConfigId(savingId);
     setStatus(null);
     try {
-      const response = await fetch("/api/admin/config", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(nextConfig)
-      });
-      if (!response.ok) throw new Error("配置保存失败");
+      await configMutation.mutateAsync({ nextConfig, savingId });
+      await invalidateAdminData();
       setStatus(successMessage);
-      onRefresh();
       return true;
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "配置保存失败");
       return false;
-    } finally {
-      setSavingConfigId(null);
     }
   }
 
   async function importFile(file: File, sheetNames?: string[]) {
-    setIsImporting(true);
     setStatus("正在导入");
     try {
-      const formData = new FormData();
-      formData.append("file", file);
-      formData.append("dryRun", "false");
-      if (sheetNames) formData.append("sheetNames", JSON.stringify(sheetNames));
-      const response = await fetch("/api/admin/master-data", {
-        method: "POST",
-        body: formData
-      });
-      if (!response.ok) throw new Error("主数据导入失败");
-      const payload = await response.json() as { booths?: BoothRecord[] };
+      const payload = await importMutation.mutateAsync({ file, sheetNames });
       if (payload.booths) {
         setPendingImportedBooths(payload.booths);
         setDisplayedBooths(payload.booths);
       }
+      await invalidateAdminData();
       setStatus("导入完成");
-      onRefresh();
     } catch (error) {
       setStatus(`导入失败：${error instanceof Error ? error.message : "请检查文件"}`);
-    } finally {
-      setIsImporting(false);
     }
   }
 
   async function saveWxautoMcp(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const formData = new FormData(event.currentTarget);
-    setSavingConfigId("wxauto-mcp");
     try {
-      const response = await fetch("/api/admin/wxauto-mcp", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          enabled: isChecked(formData, "wxautoMcp-enabled"),
-          autoCreateTickets: isChecked(formData, "wxautoMcp-autoCreateTickets"),
-          accessToken: textValue(formData, "wxautoMcp-accessToken")
-        })
+      const payload = await saveWxautoMutation.mutateAsync({
+        enabled: isChecked(formData, "wxautoMcp-enabled"),
+        autoCreateTickets: isChecked(formData, "wxautoMcp-autoCreateTickets"),
+        accessToken: textValue(formData, "wxautoMcp-accessToken")
       });
-      if (!response.ok) throw new Error("wxauto 服务配置保存失败");
-      const payload = await response.json() as { wxautoMcp: WxautoMcpAdminState };
+      wxautoDraftDirtyRef.current = false;
       setWxautoMcpState(payload.wxautoMcp);
+      await invalidateAdminData(true);
       setStatus("wxauto 桌面服务已保存");
-      onRefresh();
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "wxauto 服务配置保存失败");
-    } finally {
-      setSavingConfigId(null);
     }
   }
 
   async function rotateWxautoToken() {
-    setSavingConfigId("wxauto-mcp");
     try {
-      const response = await fetch("/api/admin/wxauto-mcp", {
-        method: "POST"
-      });
-      if (!response.ok) throw new Error("访问令牌重置失败");
-      const payload = await response.json() as { accessToken: string };
+      const payload = await rotateWxautoMutation.mutateAsync();
+      wxautoDraftDirtyRef.current = false;
       setWxautoMcpState((current) => ({ ...current, accessToken: payload.accessToken, tokenPreview: undefined }));
+      await invalidateAdminData(true);
       setStatus("访问令牌已重置");
-      onRefresh();
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "访问令牌重置失败");
-    } finally {
-      setSavingConfigId(null);
     }
   }
 
@@ -848,21 +889,13 @@ export function AdminConfigCenter({
       setStatus("关键词不能为空");
       return;
     }
-    setSavingConfigId("keywords");
     setStatus(null);
     try {
-      const response = await fetch("/api/admin/keywords", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ keywordGroups: nextGroups })
-      });
-      if (!response.ok) throw new Error("关键词配置保存失败");
+      await keywordMutation.mutateAsync(nextGroups);
+      await invalidateAdminData();
       setStatus("关键词配置已保存");
-      onRefresh();
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "关键词配置保存失败");
-    } finally {
-      setSavingConfigId(null);
     }
   }
 
@@ -1041,23 +1074,16 @@ export function AdminConfigCenter({
       setStatus("请先填写智能接口地址和接口密钥，或保存已配置密钥后再获取模型列表");
       return;
     }
-    setAiModelLists((current) => ({ ...current, [modelId]: { models: current[modelId]?.models ?? [], loading: true } }));
     try {
-      const response = await fetch("/api/admin/ai-models", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(apiKey ? { endpoint, apiKey } : { endpoint, modelId })
-      });
-      const data = await response.json() as { models?: string[]; error?: string; message?: string };
-      if (!response.ok) throw new Error(data.error ?? data.message ?? "模型列表获取失败");
+      const data = await aiModelListMutation.mutateAsync({ modelId, endpoint, apiKey: apiKey || undefined });
       const models = Array.isArray(data.models) ? data.models.filter((model) => model.trim()) : [];
       if (models.length === 0) throw new Error("未获取到可用模型");
-      setAiModelLists((current) => ({ ...current, [modelId]: { models, loading: false } }));
+      setAiModelLists((current) => ({ ...current, [modelId]: { models } }));
       setAiModelNameDrafts((current) => ({ ...current, [modelId]: models.includes(currentModelName) ? currentModelName : models[0] }));
       setStatus("智能模型列表已更新");
     } catch (error) {
       const message = error instanceof Error ? error.message : "模型列表获取失败";
-      setAiModelLists((current) => ({ ...current, [modelId]: { models: current[modelId]?.models ?? [], loading: false, error: message } }));
+      setAiModelLists((current) => ({ ...current, [modelId]: { models: current[modelId]?.models ?? [], error: message } }));
       setStatus(message);
     }
   }
@@ -1212,7 +1238,7 @@ export function AdminConfigCenter({
         </div>
       )}
       {view === "users" && (
-        <AdminUsersPanel groups={groups} onRefresh={onRefresh} />
+        <AdminUsersPanel groups={groups} />
       )}
       {(showAll || view === "work-order-settings") && (
         <div className="work-order-settings-grid" role="region" aria-label="工单设置配置台">
@@ -1487,6 +1513,7 @@ export function AdminConfigCenter({
           const selectedPreset = providerPresetFor(selectedAiProviderPresetId(item));
           const presetHasDefaults = selectedPreset.id !== "custom";
           const modelList = aiModelLists[item.id];
+          const modelListLoading = aiModelListMutation.isPending && aiModelListMutation.variables?.modelId === item.id;
           const modelName = selectedAiModelName(item, presetHasDefaults ? selectedPreset.modelName : undefined);
           const modelOptions = uniqueModelOptions([
             modelName,
@@ -1539,7 +1566,7 @@ export function AdminConfigCenter({
               <p className="config-lock-note">{selectedPreset.helper}</p>
               {modelList?.error && <p className="config-lock-note">{modelList.error}</p>}
               <label className="check-row"><input name="enabled" type="checkbox" defaultChecked={item.enabled} />{item.label}启用</label>
-              <button aria-label={`获取${aiModelControlLabel(item.label, "模型列表")}`} className="secondary-button" type="button" onClick={(event) => loadAiModelList(event, item.id)} disabled={modelList?.loading}>{modelList?.loading ? "获取中" : "获取模型列表"}</button>
+              <button aria-label={`获取${aiModelControlLabel(item.label, "模型列表")}`} className="secondary-button" type="button" onClick={(event) => loadAiModelList(event, item.id)} disabled={modelListLoading}>{modelListLoading ? "获取中" : "获取模型列表"}</button>
               <button aria-label={`保存${item.label}`} className="secondary-button" type="submit" disabled={savingConfigId === `ai-${item.id}`}>保存{item.label}</button>
             </form>
           );
@@ -1641,7 +1668,7 @@ export function AdminConfigCenter({
       {(showAll || view === "system") && <div className="admin-card config-list" id="admin-message">
         <h3>wxauto 桌面服务</h3>
         <form className="config-list-form" onSubmit={saveWxautoMcp}>
-          <article className="config-edit-card" key={`${wxautoMcp.enabled}-${wxautoMcp.autoCreateTickets}-${wxautoMcp.accessToken ?? wxautoMcp.tokenPreview ?? ""}`}>
+          <article className="config-edit-card">
             <strong className="config-edit-title">内置标准 MCP 服务</strong>
             <p className="config-lock-note">打开后台后，看板会自动准备 wxauto MCP 服务。桌面应用只需要填写服务地址和访问令牌，不再需要配置微信 MCP 服务器名、接收地址或密钥环境变量。</p>
             <div className="config-edit-grid">
@@ -1651,12 +1678,27 @@ export function AdminConfigCenter({
               </label>
               <label>
                 <span>访问令牌</span>
-                <input name="wxautoMcp-accessToken" defaultValue={wxautoMcp.accessToken ?? ""} aria-label="wxauto访问令牌" placeholder="保存后自动生成，也可手动粘贴" />
+                <input
+                  name="wxautoMcp-accessToken"
+                  value={wxautoMcp.accessToken ?? ""}
+                  aria-label="wxauto访问令牌"
+                  placeholder="保存后自动生成，也可手动粘贴"
+                  onChange={(event) => {
+                    wxautoDraftDirtyRef.current = true;
+                    setWxautoMcpState((current) => ({ ...current, accessToken: event.target.value }));
+                  }}
+                />
               </label>
             </div>
             <div className="config-check-grid">
-              <label className="check-row"><input name="wxautoMcp-enabled" type="checkbox" defaultChecked={wxautoMcp.enabled} />启用 wxauto 桌面服务</label>
-              <label className="check-row"><input name="wxautoMcp-autoCreateTickets" type="checkbox" defaultChecked={wxautoMcp.autoCreateTickets} />自动建单</label>
+              <label className="check-row"><input name="wxautoMcp-enabled" type="checkbox" checked={wxautoMcp.enabled} onChange={(event) => {
+                wxautoDraftDirtyRef.current = true;
+                setWxautoMcpState((current) => ({ ...current, enabled: event.target.checked }));
+              }} />启用 wxauto 桌面服务</label>
+              <label className="check-row"><input name="wxautoMcp-autoCreateTickets" type="checkbox" checked={wxautoMcp.autoCreateTickets} onChange={(event) => {
+                wxautoDraftDirtyRef.current = true;
+                setWxautoMcpState((current) => ({ ...current, autoCreateTickets: event.target.checked }));
+              }} />自动建单</label>
             </div>
             <p className="config-lock-note">当前令牌：{wxautoMcp.tokenPreview ?? (wxautoMcp.accessToken ? "已设置" : "未设置")}。桌面应用填写看板地址加 <code>/api/mcp</code>，访问令牌填写上方令牌。</p>
           </article>

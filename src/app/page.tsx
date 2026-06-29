@@ -1,18 +1,21 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { LoginPanel } from "@/components/login-panel";
 import { MobileShell, type MobileTab } from "@/components/mobile-shell";
 import { TicketDetail } from "@/components/ticket-detail";
 import { TicketList } from "@/components/ticket-list";
 import { TicketSubmitForm } from "@/components/ticket-submit-form";
+import { StatusMessage } from "@/components/status-message";
 import type { CurrentUser } from "@/lib/client/auth";
+import { apiJson, isUnauthorized } from "@/lib/client/api-request";
+import { queryKeys } from "@/lib/client/query-keys";
 import { removeLegacyStoredUser, resolveMobileSession } from "@/lib/client/session-auth";
 import { findTicketByShortCode } from "@/lib/domain/ticket-links";
 import { getPriorityDisplay } from "@/lib/domain/priority-label";
 import type { Ticket } from "@/lib/domain/types";
 import { defaultConfig, type AppConfig } from "@/lib/seed";
-import { StatusMessage } from "@/components/status-message";
 
 type TicketSummary = Pick<
   Ticket,
@@ -61,96 +64,99 @@ function ticketIdFromCurrentUrl(tickets: TicketSummary[]) {
 }
 
 export default function HomePage() {
-  const [authReady, setAuthReady] = useState(false);
-  const [user, setUser] = useState<CurrentUser | null>(null);
+  const queryClient = useQueryClient();
   const [tab, setTab] = useState<MobileTab>("tickets");
-  const [data, setData] = useState<Bootstrap | null>(null);
-  const [loginConfig, setLoginConfig] = useState<AppConfig | null>(null);
-  const [isLoginConfigLoading, setIsLoginConfigLoading] = useState(false);
-  const [loginConfigError, setLoginConfigError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | undefined>();
-  const [detailTicket, setDetailTicket] = useState<Ticket | null>(null);
-  const [detailError, setDetailError] = useState<string | null>(null);
-  const [isDetailLoading, setIsDetailLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
 
-  function clearSessionState() {
+  const sessionQuery = useQuery({
+    queryKey: queryKeys.mobile.session,
+    queryFn: ({ signal }) => resolveMobileSession(signal),
+    retry: false
+  });
+  const user = sessionQuery.data ?? null;
+  const loginConfigQuery = useQuery({
+    queryKey: queryKeys.mobile.loginConfig,
+    queryFn: ({ signal }) => apiJson<LoginBootstrap>(
+      "/api/bootstrap?scope=login",
+      { cache: "no-store", signal },
+      "登录配置加载失败"
+    ),
+    enabled: (sessionQuery.isSuccess && !user) || sessionQuery.isError
+  });
+  const bootstrapQuery = useQuery({
+    queryKey: queryKeys.mobile.bootstrap,
+    queryFn: ({ signal }) => apiJson<Bootstrap>(
+      "/api/bootstrap?scope=mobile",
+      { cache: "no-store", signal },
+      "数据加载失败"
+    ),
+    enabled: Boolean(user)
+  });
+  const data = bootstrapQuery.data ?? null;
+
+  const selectedTicket = useMemo(
+    () => data?.tickets.find((ticket) => ticket.id === selectedId),
+    [data, selectedId]
+  );
+  const myTickets = useMemo(
+    () => data?.tickets.filter((ticket) => ticket.submitterId === user?.id || ticket.handlerId === user?.id) ?? [],
+    [data, user]
+  );
+  const selectedMineTicket = useMemo(
+    () => myTickets.find((ticket) => ticket.id === selectedId),
+    [myTickets, selectedId]
+  );
+  const isDetailPage = (tab === "tickets" && Boolean(selectedTicket)) || (tab === "mine" && Boolean(selectedMineTicket));
+  const inlineTicket = selectedTicket && "timeline" in selectedTicket ? selectedTicket as Ticket : undefined;
+  const detailQuery = useQuery({
+    queryKey: queryKeys.mobile.ticket(selectedId ?? ""),
+    queryFn: async ({ signal }) => {
+      const payload = await apiJson<{ ticket?: Ticket }>(
+        `/api/tickets/${selectedId}`,
+        { cache: "no-store", signal },
+        "Ticket detail failed to load"
+      );
+      if (!payload.ticket) throw new Error("Ticket detail failed to load");
+      return payload.ticket;
+    },
+    enabled: Boolean(selectedId && isDetailPage)
+  });
+  const activeDetailTicket = detailQuery.data ?? inlineTicket;
+
+  async function clearSessionState() {
     removeLegacyStoredUser();
-    setUser(null);
-    setData(null);
+    await queryClient.cancelQueries({ queryKey: queryKeys.mobile.all });
+    queryClient.removeQueries({
+      queryKey: queryKeys.mobile.all,
+      predicate: (query) => query.queryKey[1] !== "session"
+    });
+    queryClient.setQueryData<CurrentUser | null>(queryKeys.mobile.session, null);
     setSelectedId(undefined);
-    setDetailTicket(null);
-    setDetailError(null);
-    setError(null);
-    setIsLoading(false);
     setTab("tickets");
-    void refreshLoginConfig();
   }
 
-  async function refreshLoginConfig() {
-    setIsLoginConfigLoading(true);
-    setLoginConfigError(null);
-    try {
-      const response = await fetch("/api/bootstrap?scope=login", { cache: "no-store" });
-      if (!response.ok) throw new Error("登录配置加载失败");
-      const payload = await response.json() as LoginBootstrap;
-      setLoginConfig(payload.config);
-    } catch (refreshError) {
-      setLoginConfigError(refreshError instanceof Error ? refreshError.message : "登录配置加载失败");
-    } finally {
-      setIsLoginConfigLoading(false);
-    }
-  }
-
-  async function refresh() {
-    setIsLoading(true);
-    setError(null);
-    try {
-      const response = await fetch("/api/bootstrap?scope=mobile", { cache: "no-store" });
-      if (response.status === 401) {
-        clearSessionState();
-        return;
-      }
-      if (!response.ok) throw new Error("数据加载失败");
-      const payload = await response.json() as Bootstrap;
-      setData(payload);
-      setLoginConfig(payload.config);
-    } catch (refreshError) {
-      setError(refreshError instanceof Error ? refreshError.message : "数据加载失败");
-    } finally {
-      setIsLoading(false);
-    }
-  }
-
-  async function refreshTicketDetail(ticketId: string, fallback?: Ticket) {
-    if (fallback) setDetailTicket(fallback);
-    setIsDetailLoading(true);
-    setDetailError(null);
-    try {
-      const response = await fetch(`/api/tickets/${ticketId}`, { cache: "no-store" });
-      if (response.status === 401) {
-        clearSessionState();
-        return;
-      }
-      if (!response.ok) throw new Error("ticket detail failed");
-      const payload = await response.json() as { ticket?: Ticket };
-      if (payload.ticket) {
-        setDetailTicket(payload.ticket);
-      } else if (!fallback) {
-        throw new Error("ticket detail missing");
-      }
-    } catch {
-      if (!fallback) setDetailTicket(null);
-      setDetailError("Ticket detail failed to load");
-    } finally {
-      setIsDetailLoading(false);
-    }
-  }
+  const logoutMutation = useMutation({
+    mutationFn: () => fetch("/api/auth/mobile/logout", { method: "POST" }),
+    onSettled: clearSessionState
+  });
 
   useEffect(() => {
-    if (user) void refresh();
-  }, [user]);
+    if (bootstrapQuery.data?.config) {
+      queryClient.setQueryData<LoginBootstrap>(queryKeys.mobile.loginConfig, {
+        config: bootstrapQuery.data.config
+      });
+    }
+  }, [bootstrapQuery.data, queryClient]);
+
+  useEffect(() => {
+    if (sessionQuery.isSuccess && user) removeLegacyStoredUser();
+  }, [sessionQuery.isSuccess, user]);
+
+  useEffect(() => {
+    if (isUnauthorized(bootstrapQuery.error) || isUnauthorized(detailQuery.error)) {
+      void clearSessionState();
+    }
+  }, [bootstrapQuery.error, detailQuery.error]);
 
   useEffect(() => {
     if (!data || selectedId) return;
@@ -159,55 +165,6 @@ export default function HomePage() {
     setTab("tickets");
     setSelectedId(linkedTicketId);
   }, [data, selectedId]);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    async function initializeAuth() {
-      try {
-        const sessionUser = await resolveMobileSession();
-        if (cancelled) return;
-        if (sessionUser) {
-          removeLegacyStoredUser();
-          setUser(sessionUser);
-          setTab("tickets");
-          setIsLoading(true);
-        } else {
-          await refreshLoginConfig();
-        }
-      } catch {
-        if (!cancelled) await refreshLoginConfig();
-      } finally {
-        if (!cancelled) setAuthReady(true);
-      }
-    }
-
-    void initializeAuth();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  const selectedTicket = useMemo(() => data?.tickets.find((ticket) => ticket.id === selectedId), [data, selectedId]);
-  const myTickets = useMemo(
-    () => data?.tickets.filter((ticket) => ticket.submitterId === user?.id || ticket.handlerId === user?.id) ?? [],
-    [data, user]
-  );
-  const selectedMineTicket = useMemo(() => myTickets.find((ticket) => ticket.id === selectedId), [myTickets, selectedId]);
-  const isDetailPage = (tab === "tickets" && Boolean(selectedTicket)) || (tab === "mine" && Boolean(selectedMineTicket));
-  const activeDetailTicket: Ticket | undefined = detailTicket && detailTicket.id === selectedId ? detailTicket : undefined;
-
-  useEffect(() => {
-    if (!selectedId || !isDetailPage) {
-      setDetailTicket(null);
-      setDetailError(null);
-      setIsDetailLoading(false);
-      return;
-    }
-
-    const inlineTicket = selectedTicket && "timeline" in selectedTicket ? selectedTicket as Ticket : undefined;
-    void refreshTicketDetail(selectedId, inlineTicket);
-  }, [selectedId, isDetailPage]);
 
   const metrics = useMemo(() => ({
     today: data?.tickets.length ?? 0,
@@ -218,60 +175,44 @@ export default function HomePage() {
   const changeTab = (nextTab: MobileTab) => {
     setTab(nextTab);
     setSelectedId(undefined);
-    setDetailTicket(null);
-    setDetailError(null);
   };
 
   const login = (nextUser: CurrentUser) => {
-    setUser(nextUser);
-    setData(null);
-    setIsLoading(true);
-    setDetailTicket(null);
-    setDetailError(null);
+    queryClient.removeQueries({
+      queryKey: queryKeys.mobile.all,
+      predicate: (query) => query.queryKey[1] !== "session" && query.queryKey[1] !== "login-config"
+    });
+    queryClient.setQueryData(queryKeys.mobile.session, nextUser);
     setTab("tickets");
     setSelectedId(undefined);
   };
 
   const logout = async () => {
-    await fetch("/api/auth/mobile/logout", { method: "POST" });
-    setUser(null);
-    setData(null);
-    setSelectedId(undefined);
-    setDetailTicket(null);
-    setDetailError(null);
-    setError(null);
-    setIsLoading(false);
-    setTab("tickets");
-    void refreshLoginConfig();
+    await logoutMutation.mutateAsync().catch(() => undefined);
   };
 
-  if (!authReady) return <main className="app-shell loading">加载中</main>;
-  if (!user && isLoginConfigLoading && !loginConfig) return <main className="app-shell loading">加载中</main>;
-  if (!user && loginConfigError && !loginConfig) {
+  if (sessionQuery.isPending) return <main className="app-shell loading">加载中</main>;
+  if (!user && loginConfigQuery.isPending && !loginConfigQuery.data) return <main className="app-shell loading">加载中</main>;
+  if (!user && loginConfigQuery.error && !loginConfigQuery.data) {
     return (
       <main className="app-shell loading">
-        <StatusMessage tone="error">{loginConfigError}</StatusMessage>
-        <button className="primary-button" type="button" onClick={() => void refreshLoginConfig()}>重新加载</button>
+        <StatusMessage tone="error">{loginConfigQuery.error.message}</StatusMessage>
+        <button className="primary-button" type="button" onClick={() => void loginConfigQuery.refetch()}>重新加载</button>
       </main>
     );
   }
-  if (!user) return <LoginPanel config={loginConfig ?? defaultConfig()} onLogin={login} />;
-  if (isLoading && !data) return <main className="app-shell loading">加载中</main>;
-  if (error && !data) {
+  if (!user) return <LoginPanel config={loginConfigQuery.data?.config ?? defaultConfig()} onLogin={login} />;
+  if (bootstrapQuery.isPending && !data) return <main className="app-shell loading">加载中</main>;
+  if (bootstrapQuery.error && !data && !isUnauthorized(bootstrapQuery.error)) {
     return (
       <main className="app-shell loading">
-        <StatusMessage tone="error">{error}</StatusMessage>
-        <button className="primary-button" type="button" onClick={() => void refresh()}>重新加载</button>
+        <StatusMessage tone="error">{bootstrapQuery.error.message}</StatusMessage>
+        <button className="primary-button" type="button" onClick={() => void bootstrapQuery.refetch()}>重新加载</button>
         <button className="secondary-button" type="button" onClick={() => void logout()}>退出登录</button>
       </main>
     );
   }
   if (!data) return null;
-
-  const refreshCurrentDetail = () => {
-    void refresh();
-    if (selectedId) void refreshTicketDetail(selectedId);
-  };
 
   return (
     <MobileShell activeTab={tab} currentUser={user} hideHero={isDetailPage} metrics={metrics} onLogout={() => void logout()} onTabChange={changeTab}>
@@ -279,34 +220,34 @@ export default function HomePage() {
         <TicketSubmitForm
           config={data.config}
           currentUser={user}
-          onSubmitted={() => { changeTab("tickets"); void refresh(); }}
-          onUnauthorized={clearSessionState}
+          onSubmitted={() => changeTab("tickets")}
+          onUnauthorized={() => void clearSessionState()}
         />
       )}
       {tab === "tickets" && !selectedTicket && <TicketList tickets={data.tickets} onSelect={setSelectedId} />}
       {tab === "tickets" && selectedTicket && (
         <section className="detail-route">
           <button className="back-button" type="button" onClick={() => setSelectedId(undefined)}>返回工单列表</button>
-          {isDetailLoading && !activeDetailTicket ? (
+          {detailQuery.isPending && !activeDetailTicket ? (
             <section className="empty-state">加载中...</section>
-          ) : detailError && !activeDetailTicket ? (
-            <section className="empty-state">{detailError}</section>
+          ) : detailQuery.error && !activeDetailTicket ? (
+            <section className="empty-state">Ticket detail failed to load</section>
           ) : (
-            <TicketDetail ticket={activeDetailTicket} currentUser={user} onRefresh={refreshCurrentDetail} onUnauthorized={clearSessionState} />
+            <TicketDetail ticket={activeDetailTicket} currentUser={user} onUnauthorized={() => void clearSessionState()} />
           )}
         </section>
       )}
-      {error && <StatusMessage tone="error">{error}</StatusMessage>}
+      {bootstrapQuery.error && <StatusMessage tone="error">{bootstrapQuery.error.message}</StatusMessage>}
       {tab === "mine" && !selectedMineTicket && <TicketList tickets={myTickets} onSelect={setSelectedId} />}
       {tab === "mine" && selectedMineTicket && (
         <section className="detail-route">
           <button className="back-button" type="button" onClick={() => setSelectedId(undefined)}>返回我的工单</button>
-          {isDetailLoading && !activeDetailTicket ? (
+          {detailQuery.isPending && !activeDetailTicket ? (
             <section className="empty-state">加载中...</section>
-          ) : detailError && !activeDetailTicket ? (
-            <section className="empty-state">{detailError}</section>
+          ) : detailQuery.error && !activeDetailTicket ? (
+            <section className="empty-state">Ticket detail failed to load</section>
           ) : (
-            <TicketDetail ticket={activeDetailTicket} currentUser={user} onRefresh={refreshCurrentDetail} onUnauthorized={clearSessionState} />
+            <TicketDetail ticket={activeDetailTicket} currentUser={user} onUnauthorized={() => void clearSessionState()} />
           )}
         </section>
       )}

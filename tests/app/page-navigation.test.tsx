@@ -1,11 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import HomePage from "@/app/page";
 import type { CurrentUser } from "@/lib/client/auth";
 import { ticketShortCode } from "@/lib/domain/ticket-links";
 import type { Ticket } from "@/lib/domain/types";
 import type { AppConfig } from "@/lib/seed";
+import { renderWithQueryClient as render } from "../helpers/query-client";
 
 const config: AppConfig = {
   issueTypes: [{ id: "network", name: "网络", urgencyMinutes: 20, priorityWeight: 25, assignmentGroup: "网络组", enabled: true }],
@@ -100,7 +101,34 @@ describe("home page ticket navigation", () => {
     const [rowTitle] = await screen.findAllByText(ticket.title);
     await userEvent.click(rowTitle.closest("button")!);
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/tickets/ticket-1", { cache: "no-store" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/api/tickets/ticket-1",
+      expect.objectContaining({ cache: "no-store", signal: expect.anything() })
+    ));
+  });
+
+  it("aborts an unfinished ticket detail request when leaving the detail view", async () => {
+    const { imageUrls, replies, timeline, aiDecisions, ...summary } = ticket;
+    let detailSignal: AbortSignal | null | undefined;
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "/api/auth/session?type=mobile") return Promise.resolve(sessionResponse());
+      if (url === "/api/tickets/ticket-1") {
+        detailSignal = init?.signal;
+        return new Promise<Response>(() => undefined);
+      }
+      return Promise.resolve(new Response(JSON.stringify({ tickets: [summary], config }), { status: 200 }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<HomePage />);
+
+    const [rowTitle] = await screen.findAllByText(ticket.title);
+    await userEvent.click(rowTitle.closest("button")!);
+    await waitFor(() => expect(detailSignal).toBeDefined());
+    await userEvent.click(screen.getByRole("button", { name: "返回工单列表" }));
+
+    expect(detailSignal?.aborted).toBe(true);
   });
 
   it("opens ticket details from a short ticket code query", async () => {
@@ -118,7 +146,10 @@ describe("home page ticket navigation", () => {
 
     render(<HomePage />);
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/tickets/ticket-1", { cache: "no-store" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/api/tickets/ticket-1",
+      expect.objectContaining({ cache: "no-store", signal: expect.anything() })
+    ));
     expect((await screen.findAllByText("处理人")).length).toBeGreaterThan(0);
   });
 

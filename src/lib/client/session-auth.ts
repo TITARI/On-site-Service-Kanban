@@ -1,8 +1,9 @@
 import { AUTH_STORAGE_KEY, type CurrentUser } from "@/lib/client/auth";
 
-export async function resolveMobileSession(): Promise<CurrentUser | null> {
+export async function resolveMobileSession(signal?: AbortSignal): Promise<CurrentUser | null> {
   const response = await fetch("/api/auth/session?type=mobile", {
-    cache: "no-store"
+    cache: "no-store",
+    signal
   });
   if (response.status === 401) return null;
   if (!response.ok) throw new Error("Session check failed");

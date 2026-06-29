@@ -1,9 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { AdminUsersPanel } from "@/components/admin-users-panel";
 import type { UserGroup } from "@/lib/domain/types";
 import type { UserListItem } from "@/lib/domain/access-control";
+import { queryKeys } from "@/lib/client/query-keys";
+import { renderWithQueryClient } from "../helpers/query-client";
 
 const groups: UserGroup[] = [
   {
@@ -108,7 +110,8 @@ describe("AdminUsersPanel chat identity controls", () => {
     vi.stubGlobal("fetch", fetchMock);
     const userDriver = userEvent.setup();
 
-    render(<AdminUsersPanel groups={groups} />);
+    const { queryClient } = renderWithQueryClient(<AdminUsersPanel groups={groups} />);
+    queryClient.setQueryData(queryKeys.admin.bootstrap, { config: {} });
 
     await userDriver.click(await screen.findByRole("button", { name: "编辑张三" }));
     const editor = await screen.findByRole("complementary", { name: "编辑用户张三" });
@@ -128,6 +131,7 @@ describe("AdminUsersPanel chat identity controls", () => {
     expect(
       (within(wechatSection).getByRole("button", { name: "解绑微信身份" }) as HTMLButtonElement).disabled
     ).toBe(false);
+    await waitFor(() => expect(queryClient.getQueryState(queryKeys.admin.bootstrap)?.isInvalidated).toBe(true));
   });
 
   it("binds chat identities from the editor after explicit conflict confirmation", async () => {
@@ -187,7 +191,7 @@ describe("AdminUsersPanel chat identity controls", () => {
     vi.stubGlobal("fetch", fetchMock);
     const userDriver = userEvent.setup();
 
-    render(<AdminUsersPanel groups={groups} />);
+    renderWithQueryClient(<AdminUsersPanel groups={groups} />);
 
     await userDriver.click(await screen.findByRole("button", { name: "编辑张三" }));
     const editor = await screen.findByRole("complementary", { name: "编辑用户张三" });
@@ -233,7 +237,7 @@ describe("AdminUsersPanel", () => {
     vi.stubGlobal("fetch", fetchMock);
     const userDriver = userEvent.setup();
 
-    render(<AdminUsersPanel groups={groups} />);
+    renderWithQueryClient(<AdminUsersPanel groups={groups} />);
 
     expect(await screen.findByText("张三")).not.toBeNull();
     expect(screen.queryByRole("button", { name: "刷新用户" })).toBeNull();
@@ -303,7 +307,7 @@ describe("AdminUsersPanel", () => {
     vi.stubGlobal("fetch", fetchMock);
     const userDriver = userEvent.setup();
 
-    render(<AdminUsersPanel groups={groups} />);
+    renderWithQueryClient(<AdminUsersPanel groups={groups} />);
 
     await userDriver.click(await screen.findByRole("button", { name: "编辑张三" }));
     const editor = await screen.findByRole("complementary", { name: "编辑用户张三" });
@@ -323,20 +327,22 @@ describe("AdminUsersPanel", () => {
   it("ignores stale user list responses after a newer filtered response completes", async () => {
     const requests: Array<{
       url: string;
+      signal?: AbortSignal | null;
       resolve: (response: Response) => void;
     }> = [];
-    const fetchMock = vi.fn((input: RequestInfo | URL) => new Promise<Response>((resolve) => {
-      requests.push({ url: String(input), resolve });
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => new Promise<Response>((resolve) => {
+      requests.push({ url: String(input), signal: init?.signal, resolve });
     }));
     vi.stubGlobal("fetch", fetchMock);
     const userDriver = userEvent.setup();
 
-    render(<AdminUsersPanel groups={groups} />);
+    renderWithQueryClient(<AdminUsersPanel groups={groups} />);
 
     await waitFor(() => expect(requests).toHaveLength(1));
     await userDriver.type(screen.getByLabelText("搜索姓名或手机号"), "13800138000");
     fireEvent.submit(screen.getByLabelText("搜索姓名或手机号").closest("form") as HTMLFormElement);
     await waitFor(() => expect(requests).toHaveLength(2));
+    expect(requests[0].signal?.aborted).toBe(true);
 
     await act(async () => {
       requests[1].resolve(new Response(JSON.stringify({
@@ -387,7 +393,7 @@ describe("AdminUsersPanel", () => {
     vi.stubGlobal("fetch", fetchMock);
     const userDriver = userEvent.setup();
 
-    render(<AdminUsersPanel groups={[...groups, viewerGroup]} />);
+    renderWithQueryClient(<AdminUsersPanel groups={[...groups, viewerGroup]} />);
 
     await userDriver.click(await screen.findByRole("button", { name: "编辑张三" }));
     const editor = await screen.findByRole("complementary", { name: "编辑用户张三" });
