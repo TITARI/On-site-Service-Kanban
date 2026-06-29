@@ -10,7 +10,7 @@
 ## 环境要求
 
 - Windows Server 2016 或更新版本。
-- Node.js 20 LTS 或更新版本。
+- Node.js 22 LTS 或更新版本。
 - 默认端口为 `3000`，可用下面方式改端口：
 
 ```powershell
