@@ -88,7 +88,8 @@ describe("master data route AI assisted import", () => {
               { field: "companyName", columnIndex: 1, confidence: 0.95, reason: "参展单位是展商名称" }
             ]
           })
-        }
+        },
+        finish_reason: "stop"
       }]
     }), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
@@ -129,7 +130,7 @@ describe("master data route AI assisted import", () => {
         ? [{ field: "area", columnIndex: 5, confidence: 0.96, reason: "第二个展位号列的样例是面积数值" }]
         : [];
       return new Response(JSON.stringify({
-        choices: [{ message: { content: JSON.stringify({ mappings }) } }]
+        choices: [{ message: { content: JSON.stringify({ mappings }) }, finish_reason: "stop" }]
       }), { status: 200 });
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -187,7 +188,7 @@ describe("master data route AI assisted import", () => {
         ? [{ field: "area", columnIndex: 4, confidence: 0.96, reason: "面积列是数值面积" }]
         : [];
       return new Response(JSON.stringify({
-        choices: [{ message: { content: JSON.stringify({ mappings }) } }]
+        choices: [{ message: { content: JSON.stringify({ mappings }) }, finish_reason: "stop" }]
       }), { status: 200 });
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -346,7 +347,7 @@ describe("master data route AI assisted import", () => {
 
   it("returns workbook sheet inspection details without committing", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
-      choices: [{ message: { content: JSON.stringify({ mappings: [] }) } }]
+      choices: [{ message: { content: JSON.stringify({ mappings: [] }) }, finish_reason: "stop" }]
     }), { status: 200 })));
 
     const route = await import("@/app/api/admin/master-data/route");
@@ -389,7 +390,7 @@ describe("master data route AI assisted import", () => {
 
   it("commits only the selected uploaded workbook sheets", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
-      choices: [{ message: { content: JSON.stringify({ mappings: [] }) } }]
+      choices: [{ message: { content: JSON.stringify({ mappings: [] }) }, finish_reason: "stop" }]
     }), { status: 200 })));
 
     const workbook = XLSX.utils.book_new();
@@ -454,7 +455,8 @@ describe("master data route AI assisted import", () => {
                 { field: "builder", columnIndex: 6, confidence: 0.92, reason: "样例是现场搭建成员" }
               ]
             })
-          }
+          },
+          finish_reason: "stop"
         }]
       }), { status: 200 });
     });

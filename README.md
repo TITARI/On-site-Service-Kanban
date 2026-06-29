@@ -68,7 +68,7 @@
 
 ## 快速启动
 
-建议使用 Node.js 20 LTS 或更新版本。
+建议使用 Node.js 22 LTS 或更新版本。
 
 ```bash
 npm ci

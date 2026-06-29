@@ -330,7 +330,7 @@ Clear-LogFile -Path $PublicBaseUrlFile
 
 $nodePath = Get-CommandPath -Names @("node.exe", "node")
 if (-not $nodePath) {
-  throw "Node.js was not found. Install Node.js 20 LTS or newer first."
+  throw "Node.js was not found. Install Node.js 22 LTS or newer first."
 }
 
 if ($Mode -eq "prod") {

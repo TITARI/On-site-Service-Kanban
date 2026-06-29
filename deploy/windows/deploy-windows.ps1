@@ -32,7 +32,7 @@ function Get-LocalUrls {
 }
 
 if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
-  throw "Node.js is not installed. Install Node.js 20 LTS or newer first, then run this script again."
+  throw "Node.js is not installed. Install Node.js 22 LTS or newer first, then run this script again."
 }
 
 if (-not (Test-Path -LiteralPath (Join-Path $AppDir "server.js"))) {

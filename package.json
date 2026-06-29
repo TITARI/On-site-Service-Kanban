@@ -2,6 +2,9 @@
   "name": "internal-collaboration-board",
   "version": "0.1.0",
   "private": true,
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "dev": "next dev",
     "dev:external": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\start-external.ps1",
@@ -22,7 +25,9 @@
     "bridge:wxauto": "node scripts/wxauto-rest-bridge.mjs"
   },
   "dependencies": {
+    "@ai-sdk/openai-compatible": "3.0.1",
     "@modelcontextprotocol/sdk": "1.29.0",
+    "ai": "7.0.4",
     "lucide-react": "1.16.0",
     "mysql2": "3.22.4",
     "next": "16.2.6",
