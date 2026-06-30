@@ -1,6 +1,8 @@
 "use client";
 
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import * as Dialog from "@radix-ui/react-dialog";
+import * as AlertDialog from "@radix-ui/react-alert-dialog";
+import { useEffect, useState, type ReactElement, type ReactNode } from "react";
 import { ExhibitorImportWizard } from "@/components/exhibitor-import-wizard";
 import type { BoothRecord } from "@/lib/domain/types";
 
@@ -68,6 +70,11 @@ type BoothDiffDraft = {
 
 const EXHIBITOR_PAGE_SIZE = 10;
 const EXHIBITOR_PAGE_SIZE_OPTIONS = [EXHIBITOR_PAGE_SIZE, 20, 30, 50, 100];
+const useTypeDialogScope = Dialog.createDialogScope();
+const useAssignmentDialogScope = Dialog.createDialogScope();
+const useDiffDialogScope = Dialog.createDialogScope();
+const useEditDialogScope = Dialog.createDialogScope();
+const useBatchTypeDialogScope = Dialog.createDialogScope();
 
 const DEFAULT_MANAGED_TYPES: ManagedExhibitorType[] = [
   { id: "ordinary-green", name: "普通绿搭", enabled: true },
@@ -185,6 +192,11 @@ export function ExhibitorDashboard({
   showShell?: boolean;
   projectSelector?: ReactNode;
 }) {
+  const typeDialogScope = useTypeDialogScope(undefined);
+  const assignmentDialogScope = useAssignmentDialogScope(undefined);
+  const diffDialogScope = useDiffDialogScope(undefined);
+  const editDialogScope = useEditDialogScope(undefined);
+  const batchTypeDialogScope = useBatchTypeDialogScope(undefined);
   const [booths, setBooths] = useState<DashboardBoothRecord[]>(() => incomingBooths.map((booth) => ({ ...booth, enabled: true })));
   const [searchQuery, setSearchQuery] = useState("");
   const [locationFilter, setLocationFilter] = useState("all");
@@ -195,8 +207,10 @@ export function ExhibitorDashboard({
   const [pageSize, setPageSize] = useState(EXHIBITOR_PAGE_SIZE);
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(() => new Set());
   const [activeBooth, setActiveBooth] = useState<DashboardBoothRecord | null>(null);
+  const [detailTriggerId, setDetailTriggerId] = useState<string | null>(null);
   const [activePanel, setActivePanel] = useState<DashboardPanel>(null);
   const [assignmentDialog, setAssignmentDialog] = useState<AssignmentDialogState | null>(null);
+  const [assignmentTriggerId, setAssignmentTriggerId] = useState<string | null>(null);
   const [assignmentMemberNames, setAssignmentMemberNames] = useState<Set<string>>(() => new Set());
   const [typeDialogOpen, setTypeDialogOpen] = useState(false);
   const [importWizardOpen, setImportWizardOpen] = useState(false);
@@ -209,7 +223,6 @@ export function ExhibitorDashboard({
   const [editingBooth, setEditingBooth] = useState<{ originalKey: string; draft: BoothEditorDraft } | null>(null);
   const [managedTypes, setManagedTypes] = useState<ManagedExhibitorType[]>(() => DEFAULT_MANAGED_TYPES);
   const [typeNameDrafts, setTypeNameDrafts] = useState<Record<string, string>>({});
-  const detailReturnFocusRef = useRef<HTMLButtonElement | null>(null);
   useEffect(() => {
     setBooths(incomingBooths.map((booth) => ({ ...booth, enabled: true })));
     setCurrentPage(1);
@@ -567,7 +580,6 @@ export function ExhibitorDashboard({
   function closeDetailDrawer() {
     setActiveBooth(null);
     setEditingBooth(null);
-    window.setTimeout(() => detailReturnFocusRef.current?.focus(), 0);
   }
 
   function goToPage(page: number) {
@@ -578,14 +590,34 @@ export function ExhibitorDashboard({
     setPageSize(Number(event.currentTarget.value));
   }
 
-  useEffect(() => {
-    if (!activeBooth) return;
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") closeDetailDrawer();
-    }
-    document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [activeBooth]);
+  function renderDetailTrigger(booth: DashboardBoothRecord, surface: "table" | "card") {
+    const triggerId = `${surface}:${boothRecordKey(booth)}`;
+    const button = (
+      <button
+        className="table-action"
+        type="button"
+        aria-label={`查看${booth.companyName}`}
+        onClick={() => {
+          setDetailTriggerId(triggerId);
+          setActiveBooth(booth);
+        }}
+      >
+        查看
+      </button>
+    );
+    return detailTriggerId === triggerId ? <Dialog.Trigger asChild>{button}</Dialog.Trigger> : button;
+  }
+
+  function openAssignmentDialog(nextDialog: AssignmentDialogState, triggerId: string) {
+    setAssignmentTriggerId(triggerId);
+    setAssignmentDialog(nextDialog);
+  }
+
+  function renderAssignmentTrigger(triggerId: string, button: ReactElement) {
+    return assignmentTriggerId === triggerId
+      ? <Dialog.Trigger {...assignmentDialogScope} asChild>{button}</Dialog.Trigger>
+      : button;
+  }
 
   useEffect(() => {
     if (!assignmentDialog) {
@@ -600,7 +632,44 @@ export function ExhibitorDashboard({
   }, [assignmentDialog]);
 
   return (
-    <section className="exhibitor-dashboard" id="admin-master-data" aria-labelledby="exhibitor-dashboard-title">
+    <Dialog.Root
+      open={Boolean(activeBooth)}
+      onOpenChange={(open) => {
+        if (!open) closeDetailDrawer();
+      }}
+    >
+      <Dialog.Root {...typeDialogScope} open={typeDialogOpen} onOpenChange={setTypeDialogOpen}>
+        <Dialog.Root
+          {...assignmentDialogScope}
+          open={Boolean(assignmentDialog)}
+          onOpenChange={(open) => {
+            if (!open) setAssignmentDialog(null);
+          }}
+        >
+          <Dialog.Root
+            {...diffDialogScope}
+            open={diffDialogOpen}
+            onOpenChange={(open) => {
+              if (open) openDiffDialog();
+              else closeDiffDialog();
+            }}
+          >
+            <Dialog.Root
+              {...editDialogScope}
+              open={Boolean(editingBooth)}
+              onOpenChange={(open) => {
+                if (!open) setEditingBooth(null);
+              }}
+            >
+              <Dialog.Root
+                {...batchTypeDialogScope}
+                open={batchTypeDialogOpen}
+                onOpenChange={(open) => {
+                  if (!open) setBatchTypeDialogOpen(false);
+                }}
+              >
+                <AlertDialog.Root open={batchDisableDialogOpen} onOpenChange={setBatchDisableDialogOpen}>
+                  <section className="exhibitor-dashboard" id="admin-master-data" aria-labelledby="exhibitor-dashboard-title">
       {showShell && (
         <>
           <div className="exhibitor-dashboard-topbar">
@@ -679,7 +748,9 @@ export function ExhibitorDashboard({
                 <option key={type} value={type}>{type}</option>
               ))}
             </select>
-            <button className="exhibitor-filter-button" type="button" onClick={() => setTypeDialogOpen(true)}>类型设置</button>
+            <Dialog.Trigger {...typeDialogScope} asChild>
+              <button className="exhibitor-filter-button" type="button">类型设置</button>
+            </Dialog.Trigger>
             <select aria-label="按成员分配状态筛选" value={assignmentFilter} onChange={(event) => setAssignmentFilter(event.currentTarget.value as AssignmentFilter)}>
               <option value="all">全部分配状态</option>
               <option value="assigned">仅看已分配</option>
@@ -693,17 +764,18 @@ export function ExhibitorDashboard({
             </select>
           </div>
           <div className="exhibitor-toolbar-right">
-            <button
-              className={`exhibitor-diff-action ${importDiffCount > 0 ? "pending" : ""}`}
-              type="button"
-              onClick={openDiffDialog}
-              aria-label="处理导入差异"
-            >
-              <span>处理导入差异</span>
-              <strong>{importDiffCount}</strong>
-              <small>待确认</small>
-              <span className="sr-only">{importDiffCount} 条导入差异待确认</span>
-            </button>
+            <Dialog.Trigger {...diffDialogScope} asChild>
+              <button
+                className={`exhibitor-diff-action ${importDiffCount > 0 ? "pending" : ""}`}
+                type="button"
+                aria-label="处理导入差异"
+              >
+                <span>处理导入差异</span>
+                <strong>{importDiffCount}</strong>
+                <small>待确认</small>
+                <span className="sr-only">{importDiffCount} 条导入差异待确认</span>
+              </button>
+            </Dialog.Trigger>
             {!showShell && (
               <button className="secondary-button" type="button" onClick={() => setActivePanel((current) => current === "history" ? null : "history")}>导入历史</button>
             )}
@@ -742,9 +814,15 @@ export function ExhibitorDashboard({
         {selectedKeys.size > 0 && (
           <div className="exhibitor-bulk-bar" role="status">
             <strong>已选择 {selectedKeys.size} 个展商</strong>
-            <button className="secondary-button" type="button" onClick={() => setAssignmentDialog({ mode: "bulk" })}>批量分配搭建成员</button>
-            <button className="secondary-button" type="button" onClick={openBatchTypeDialog}>批量修改类型</button>
-            <button className="danger-button" type="button" onClick={() => setBatchDisableDialogOpen(true)}>批量停用</button>
+            {renderAssignmentTrigger("bulk", (
+              <button className="secondary-button" type="button" onClick={() => openAssignmentDialog({ mode: "bulk" }, "bulk")}>批量分配搭建成员</button>
+            ))}
+            <Dialog.Trigger {...batchTypeDialogScope} asChild>
+              <button className="secondary-button" type="button" onClick={openBatchTypeDialog}>批量修改类型</button>
+            </Dialog.Trigger>
+            <AlertDialog.Trigger asChild>
+              <button className="danger-button" type="button">批量停用</button>
+            </AlertDialog.Trigger>
             <button className="ghost-button" type="button" onClick={() => setSelectedKeys(new Set())}>取消选择</button>
           </div>
         )}
@@ -811,10 +889,14 @@ export function ExhibitorDashboard({
                               <span className="sr-only">{member.name}</span>
                             </span>
                           ))}
-                          <button className="exhibitor-member-add" type="button" aria-label={`添加${booth.companyName}搭建成员`} onClick={() => setAssignmentDialog({ mode: "single", booth })}>+</button>
+                          {renderAssignmentTrigger(`table-member:${key}`, (
+                            <button className="exhibitor-member-add" type="button" aria-label={`添加${booth.companyName}搭建成员`} onClick={() => openAssignmentDialog({ mode: "single", booth }, `table-member:${key}`)}>+</button>
+                          ))}
                         </div>
                       ) : (
-                        <button className="exhibitor-empty-member-button" type="button" aria-label={`分配${booth.companyName}搭建成员`} onClick={() => setAssignmentDialog({ mode: "single", booth })}>+ 分配成员</button>
+                        renderAssignmentTrigger(`table-empty:${key}`, (
+                          <button className="exhibitor-empty-member-button" type="button" aria-label={`分配${booth.companyName}搭建成员`} onClick={() => openAssignmentDialog({ mode: "single", booth }, `table-empty:${key}`)}>+ 分配成员</button>
+                        ))
                       )}
                     </td>
                     <td>
@@ -828,17 +910,7 @@ export function ExhibitorDashboard({
                           启用
                         </button>
                       ) : (
-                        <button
-                          className="table-action"
-                          type="button"
-                          aria-label={`查看${booth.companyName}`}
-                          onClick={(event) => {
-                            detailReturnFocusRef.current = event.currentTarget;
-                            setActiveBooth(booth);
-                          }}
-                        >
-                          查看
-                        </button>
+                        renderDetailTrigger(booth, "table")
                       )}
                       {!booth.enabled && <span className="exhibitor-disabled-flag">已停用</span>}
                     </td>
@@ -889,10 +961,14 @@ export function ExhibitorDashboard({
                           <span className="sr-only">{member.name}</span>
                         </span>
                       ))}
-                      <button className="exhibitor-member-add" type="button" aria-label={`添加${booth.companyName}搭建成员`} onClick={() => setAssignmentDialog({ mode: "single", booth })}>+</button>
+                      {renderAssignmentTrigger(`card-member:${key}`, (
+                        <button className="exhibitor-member-add" type="button" aria-label={`添加${booth.companyName}搭建成员`} onClick={() => openAssignmentDialog({ mode: "single", booth }, `card-member:${key}`)}>+</button>
+                      ))}
                     </div>
                   ) : (
-                    <button className="exhibitor-empty-member-button" type="button" aria-label={`分配${booth.companyName}搭建成员`} onClick={() => setAssignmentDialog({ mode: "single", booth })}>+ 分配成员</button>
+                    renderAssignmentTrigger(`card-empty:${key}`, (
+                      <button className="exhibitor-empty-member-button" type="button" aria-label={`分配${booth.companyName}搭建成员`} onClick={() => openAssignmentDialog({ mode: "single", booth }, `card-empty:${key}`)}>+ 分配成员</button>
+                    ))
                   )}
                 </div>
                 <div className="exhibitor-card-actions">
@@ -906,17 +982,7 @@ export function ExhibitorDashboard({
                       启用
                     </button>
                   ) : (
-                    <button
-                      className="table-action"
-                      type="button"
-                      aria-label={`查看${booth.companyName}`}
-                      onClick={(event) => {
-                        detailReturnFocusRef.current = event.currentTarget;
-                        setActiveBooth(booth);
-                      }}
-                    >
-                      查看
-                    </button>
+                    renderDetailTrigger(booth, "card")
                   )}
                   {!booth.enabled && <span className="exhibitor-disabled-flag">已停用</span>}
                 </div>
@@ -961,15 +1027,22 @@ export function ExhibitorDashboard({
       </div>
 
       {typeDialogOpen && (
-        <div className="exhibitor-assignment-layer">
-          <button className="exhibitor-detail-scrim" type="button" aria-label="关闭类型设置" onClick={() => setTypeDialogOpen(false)} />
-          <section className="exhibitor-assignment-dialog exhibitor-type-dialog" role="dialog" aria-modal="true" aria-label="展商类型设置">
+        <Dialog.Portal {...typeDialogScope}>
+          <div className="exhibitor-assignment-layer">
+            <Dialog.Overlay {...typeDialogScope} className="exhibitor-detail-scrim" />
+            <Dialog.Content {...typeDialogScope} className="exhibitor-assignment-dialog exhibitor-type-dialog" aria-label="展商类型设置">
             <div className="exhibitor-panel-head">
               <div>
-                <h4>展商类型设置</h4>
-                <p>维护项目内可用类型；接入专用接口后将支持正式排序、停用和重命名。</p>
+                <Dialog.Title {...typeDialogScope} asChild>
+                  <h4>展商类型设置</h4>
+                </Dialog.Title>
+                <Dialog.Description {...typeDialogScope} asChild>
+                  <p>维护项目内可用类型；接入专用接口后将支持正式排序、停用和重命名。</p>
+                </Dialog.Description>
               </div>
-              <button className="ghost-button" type="button" aria-label="关闭类型设置" onClick={() => setTypeDialogOpen(false)}>关闭</button>
+              <Dialog.Close {...typeDialogScope} asChild>
+                <button className="ghost-button" type="button" aria-label="关闭类型设置">关闭</button>
+              </Dialog.Close>
             </div>
             <div className="exhibitor-type-list">
               {managedTypes.map((type, index) => {
@@ -1015,25 +1088,32 @@ export function ExhibitorDashboard({
               </label>
               <button className="secondary-button" type="submit">新增类型</button>
             </form>
-          </section>
-        </div>
+            </Dialog.Content>
+          </div>
+        </Dialog.Portal>
       )}
 
       {assignmentDialog && (
-        <div className="exhibitor-assignment-layer">
-          <button className="exhibitor-detail-scrim" type="button" aria-label="关闭成员分配" onClick={() => setAssignmentDialog(null)} />
-          <section
+        <Dialog.Portal {...assignmentDialogScope}>
+          <div className="exhibitor-assignment-layer">
+            <Dialog.Overlay {...assignmentDialogScope} className="exhibitor-detail-scrim" />
+            <Dialog.Content
+              {...assignmentDialogScope}
             className="exhibitor-assignment-dialog exhibitor-member-assignment-dialog"
-            role="dialog"
-            aria-modal="true"
             aria-label={assignmentDialog.mode === "bulk" ? "批量分配现场搭建成员" : "分配现场搭建成员"}
           >
             <div className="exhibitor-panel-head">
               <div>
-                <h4>{assignmentDialog.mode === "bulk" ? "批量分配现场搭建成员" : "分配现场搭建成员"}</h4>
-                <p>{assignmentDialog.mode === "bulk" ? `已选择 ${selectedBooths.length} 个展商` : assignmentDialog.booth.companyName}</p>
+                <Dialog.Title {...assignmentDialogScope} asChild>
+                  <h4>{assignmentDialog.mode === "bulk" ? "批量分配现场搭建成员" : "分配现场搭建成员"}</h4>
+                </Dialog.Title>
+                <Dialog.Description {...assignmentDialogScope} asChild>
+                  <p>{assignmentDialog.mode === "bulk" ? `已选择 ${selectedBooths.length} 个展商` : assignmentDialog.booth.companyName}</p>
+                </Dialog.Description>
               </div>
-              <button className="ghost-button" type="button" aria-label="关闭成员分配" onClick={() => setAssignmentDialog(null)}>关闭</button>
+              <Dialog.Close {...assignmentDialogScope} asChild>
+                <button className="ghost-button" type="button" aria-label="关闭成员分配">关闭</button>
+              </Dialog.Close>
             </div>
             <div className="exhibitor-assignment-scrollbody" aria-label="批量分配可滚动内容">
               <div className="exhibitor-assignment-targets" aria-label="已选择展商列表">
@@ -1059,23 +1139,33 @@ export function ExhibitorDashboard({
               </div>
             </div>
             <div className="exhibitor-detail-actions exhibitor-assignment-sticky-actions" role="group" aria-label="成员分配操作">
-              <button className="secondary-button" type="button" aria-label="取消成员分配" onClick={() => setAssignmentDialog(null)}>取消</button>
+              <Dialog.Close {...assignmentDialogScope} asChild>
+                <button className="secondary-button" type="button" aria-label="取消成员分配">取消</button>
+              </Dialog.Close>
               <button className="secondary-button" type="button" onClick={saveAssignment}>确认分配</button>
             </div>
-          </section>
-        </div>
+            </Dialog.Content>
+          </div>
+        </Dialog.Portal>
       )}
 
       {diffDialogOpen && (
-        <div className="exhibitor-assignment-layer">
-          <button className="exhibitor-detail-scrim" type="button" aria-label="关闭导入差异数值确认" onClick={closeDiffDialog} />
-          <section className="exhibitor-assignment-dialog exhibitor-diff-dialog" role="dialog" aria-modal="true" aria-label="导入差异数值确认">
+        <Dialog.Portal {...diffDialogScope}>
+          <div className="exhibitor-assignment-layer">
+            <Dialog.Overlay {...diffDialogScope} className="exhibitor-detail-scrim" />
+            <Dialog.Content {...diffDialogScope} className="exhibitor-assignment-dialog exhibitor-diff-dialog" aria-label="导入差异数值确认">
             <div className="exhibitor-panel-head">
               <div>
-                <h4>导入差异数值确认</h4>
-                <p>这些记录缺少看板必需字段，先在这里补齐；点击应用后只更新当前看板字段。</p>
+                <Dialog.Title {...diffDialogScope} asChild>
+                  <h4>导入差异数值确认</h4>
+                </Dialog.Title>
+                <Dialog.Description {...diffDialogScope} asChild>
+                  <p>这些记录缺少看板必需字段，先在这里补齐；点击应用后只更新当前看板字段。</p>
+                </Dialog.Description>
               </div>
-              <button className="ghost-button" type="button" aria-label="关闭导入差异数值确认" onClick={closeDiffDialog}>关闭</button>
+              <Dialog.Close {...diffDialogScope} asChild>
+                <button className="ghost-button" type="button" aria-label="关闭导入差异数值确认">关闭</button>
+              </Dialog.Close>
             </div>
             <div className="exhibitor-diff-guides" aria-label="导入差异处理说明">
               <article>
@@ -1129,24 +1219,33 @@ export function ExhibitorDashboard({
               <p className="exhibitor-empty-note">当前没有待确认导入差异。</p>
             )}
             <div className="exhibitor-detail-actions">
-              <button className="secondary-button" type="button" onClick={closeDiffDialog}>取消</button>
+              <Dialog.Close {...diffDialogScope} asChild>
+                <button className="secondary-button" type="button">取消</button>
+              </Dialog.Close>
               <button className="secondary-button" type="button" onClick={applyDiffRows} disabled={!allDiffDraftsComplete}>应用到看板并移出待确认</button>
             </div>
-          </section>
-        </div>
+            </Dialog.Content>
+          </div>
+        </Dialog.Portal>
       )}
 
       {activeBooth && (
-        <div className="exhibitor-detail-layer">
-          <button className="exhibitor-detail-scrim" type="button" aria-label="关闭详情" onClick={closeDetailDrawer} />
-          <aside className="exhibitor-detail-drawer" role="complementary" aria-label="展商详情">
+          <Dialog.Portal>
+            <div className="exhibitor-detail-layer">
+              <Dialog.Overlay className="exhibitor-detail-scrim" />
+              <Dialog.Content className="exhibitor-detail-drawer" aria-label="展商详情">
+            <Dialog.Title className="sr-only">展商详情</Dialog.Title>
             <div className="exhibitor-detail-head">
               <div>
                 <span>{displayText(activeBooth.boothType)}</span>
                 <h4>{activeBooth.companyName}</h4>
-                <p>展位 {activeBooth.boothNumber}</p>
+                <Dialog.Description asChild>
+                  <p>展位 {activeBooth.boothNumber}</p>
+                </Dialog.Description>
               </div>
-              <button className="ghost-button" type="button" aria-label="关闭详情" onClick={closeDetailDrawer}>关闭</button>
+              <Dialog.Close asChild>
+                <button className="ghost-button" type="button" aria-label="关闭详情">关闭</button>
+              </Dialog.Close>
             </div>
             <section className="exhibitor-detail-section">
               <h5>展商基础数据</h5>
@@ -1175,12 +1274,20 @@ export function ExhibitorDashboard({
               ) : (
                 <p className="exhibitor-empty-note">暂未分配现场搭建成员。</p>
               )}
-              <button className="secondary-button" type="button" aria-label="添加现场搭建成员" onClick={() => setAssignmentDialog({ mode: "single", booth: activeBooth })}>+ 添加现场搭建成员</button>
+              {renderAssignmentTrigger(`drawer-add:${boothRecordKey(activeBooth)}`, (
+                <button className="secondary-button" type="button" aria-label="添加现场搭建成员" onClick={() => openAssignmentDialog({ mode: "single", booth: activeBooth }, `drawer-add:${boothRecordKey(activeBooth)}`)}>+ 添加现场搭建成员</button>
+              ))}
             </section>
             <div className="exhibitor-detail-actions">
-              <button className="secondary-button" type="button" onClick={closeDetailDrawer}>取消</button>
-              <button className="primary-button" type="button" onClick={() => openEditDialog(activeBooth)}>编辑展商数据</button>
-              <button className="secondary-button" type="button" onClick={() => setAssignmentDialog({ mode: "single", booth: activeBooth })}>分配搭建成员</button>
+              <Dialog.Close asChild>
+                <button className="secondary-button" type="button">取消</button>
+              </Dialog.Close>
+              <Dialog.Trigger {...editDialogScope} asChild>
+                <button className="primary-button" type="button" onClick={() => openEditDialog(activeBooth)}>编辑展商数据</button>
+              </Dialog.Trigger>
+              {renderAssignmentTrigger(`drawer-footer:${boothRecordKey(activeBooth)}`, (
+                <button className="secondary-button" type="button" onClick={() => openAssignmentDialog({ mode: "single", booth: activeBooth }, `drawer-footer:${boothRecordKey(activeBooth)}`)}>分配搭建成员</button>
+              ))}
               <button
                 className="secondary-button"
                 type="button"
@@ -1189,8 +1296,9 @@ export function ExhibitorDashboard({
                 {activeBooth.enabled === false ? `启用${activeBooth.companyName}` : "停用展商"}
               </button>
             </div>
-          </aside>
-        </div>
+              </Dialog.Content>
+            </div>
+          </Dialog.Portal>
       )}
 
       {importWizardOpen && (
@@ -1202,15 +1310,22 @@ export function ExhibitorDashboard({
       )}
 
       {editingBooth && (
-        <div className="exhibitor-assignment-layer">
-          <button className="exhibitor-detail-scrim" type="button" aria-label="关闭编辑展商数据" onClick={() => setEditingBooth(null)} />
-          <section className="exhibitor-assignment-dialog" role="dialog" aria-modal="true" aria-label="编辑展商数据">
+        <Dialog.Portal {...editDialogScope}>
+          <div className="exhibitor-assignment-layer">
+            <Dialog.Overlay {...editDialogScope} className="exhibitor-detail-scrim" />
+            <Dialog.Content {...editDialogScope} className="exhibitor-assignment-dialog" aria-label="编辑展商数据">
             <div className="exhibitor-panel-head">
               <div>
-                <h4>编辑展商数据</h4>
-                <p>只保留展位号、展商、位置、面积、面积规格、类型、销售七项基础数据。</p>
+                <Dialog.Title {...editDialogScope} asChild>
+                  <h4>编辑展商数据</h4>
+                </Dialog.Title>
+                <Dialog.Description {...editDialogScope} asChild>
+                  <p>只保留展位号、展商、位置、面积、面积规格、类型、销售七项基础数据。</p>
+                </Dialog.Description>
               </div>
-              <button className="ghost-button" type="button" aria-label="关闭编辑展商数据" onClick={() => setEditingBooth(null)}>关闭</button>
+              <Dialog.Close {...editDialogScope} asChild>
+                <button className="ghost-button" type="button" aria-label="关闭编辑展商数据">关闭</button>
+              </Dialog.Close>
             </div>
             <div className="exhibitor-edit-form">
               {[
@@ -1233,23 +1348,33 @@ export function ExhibitorDashboard({
               ))}
             </div>
             <div className="exhibitor-detail-actions">
-              <button className="secondary-button" type="button" onClick={() => setEditingBooth(null)}>取消</button>
+              <Dialog.Close {...editDialogScope} asChild>
+                <button className="secondary-button" type="button">取消</button>
+              </Dialog.Close>
               <button className="secondary-button" type="button" onClick={saveEditedBooth}>保存展商数据</button>
             </div>
-          </section>
-        </div>
+            </Dialog.Content>
+          </div>
+        </Dialog.Portal>
       )}
 
       {batchTypeDialogOpen && (
-        <div className="exhibitor-assignment-layer">
-          <button className="exhibitor-detail-scrim" type="button" aria-label="关闭批量修改类型" onClick={() => setBatchTypeDialogOpen(false)} />
-          <section className="exhibitor-assignment-dialog" role="dialog" aria-modal="true" aria-label="批量修改类型">
+        <Dialog.Portal {...batchTypeDialogScope}>
+          <div className="exhibitor-assignment-layer">
+            <Dialog.Overlay {...batchTypeDialogScope} className="exhibitor-detail-scrim" />
+            <Dialog.Content {...batchTypeDialogScope} className="exhibitor-assignment-dialog" aria-label="批量修改类型">
             <div className="exhibitor-panel-head">
               <div>
-                <h4>批量修改类型</h4>
-                <p>为已选展商统一修改展商类型。</p>
+                <Dialog.Title {...batchTypeDialogScope} asChild>
+                  <h4>批量修改类型</h4>
+                </Dialog.Title>
+                <Dialog.Description {...batchTypeDialogScope} asChild>
+                  <p>为已选展商统一修改展商类型。</p>
+                </Dialog.Description>
               </div>
-              <button className="ghost-button" type="button" aria-label="关闭批量修改类型" onClick={() => setBatchTypeDialogOpen(false)}>关闭</button>
+              <Dialog.Close {...batchTypeDialogScope} asChild>
+                <button className="ghost-button" type="button" aria-label="关闭批量修改类型">关闭</button>
+              </Dialog.Close>
             </div>
             <label className="exhibitor-type-form">
               <span>目标类型</span>
@@ -1260,31 +1385,51 @@ export function ExhibitorDashboard({
               </select>
             </label>
             <div className="exhibitor-detail-actions">
-              <button className="secondary-button" type="button" onClick={() => setBatchTypeDialogOpen(false)}>取消</button>
+              <Dialog.Close {...batchTypeDialogScope} asChild>
+                <button className="secondary-button" type="button">取消</button>
+              </Dialog.Close>
               <button className="secondary-button" type="button" onClick={saveBatchType}>确认修改类型</button>
             </div>
-          </section>
-        </div>
+            </Dialog.Content>
+          </div>
+        </Dialog.Portal>
       )}
 
       {batchDisableDialogOpen && (
-        <div className="exhibitor-assignment-layer">
-          <button className="exhibitor-detail-scrim" type="button" aria-label="关闭批量停用展商" onClick={() => setBatchDisableDialogOpen(false)} />
-          <section className="exhibitor-assignment-dialog" role="dialog" aria-modal="true" aria-label="批量停用展商">
+        <AlertDialog.Portal>
+          <div className="exhibitor-assignment-layer">
+            <AlertDialog.Overlay className="exhibitor-detail-scrim" />
+            <AlertDialog.Content className="exhibitor-assignment-dialog" aria-label="批量停用展商">
             <div className="exhibitor-panel-head">
               <div>
-                <h4>批量停用展商</h4>
-                <p>已选择 {selectedKeys.size} 个展商，停用后将从默认可用列表中移出。</p>
+                <AlertDialog.Title asChild>
+                  <h4>批量停用展商</h4>
+                </AlertDialog.Title>
+                <AlertDialog.Description asChild>
+                  <p>已选择 {selectedKeys.size} 个展商，停用后将从默认可用列表中移出。</p>
+                </AlertDialog.Description>
               </div>
               <button className="ghost-button" type="button" aria-label="关闭批量停用展商" onClick={() => setBatchDisableDialogOpen(false)}>关闭</button>
             </div>
             <div className="exhibitor-detail-actions">
-              <button className="secondary-button" type="button" onClick={() => setBatchDisableDialogOpen(false)}>取消</button>
-              <button className="danger-button" type="button" onClick={batchDisableSelectedBooths}>确认停用展商</button>
+              <AlertDialog.Cancel asChild>
+                <button className="secondary-button" type="button">取消</button>
+              </AlertDialog.Cancel>
+              <AlertDialog.Action asChild>
+                <button className="danger-button" type="button" onClick={batchDisableSelectedBooths}>确认停用展商</button>
+              </AlertDialog.Action>
             </div>
-          </section>
-        </div>
+            </AlertDialog.Content>
+          </div>
+        </AlertDialog.Portal>
       )}
-    </section>
+                  </section>
+                </AlertDialog.Root>
+              </Dialog.Root>
+            </Dialog.Root>
+          </Dialog.Root>
+        </Dialog.Root>
+      </Dialog.Root>
+    </Dialog.Root>
   );
 }

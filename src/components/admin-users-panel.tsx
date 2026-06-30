@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import * as Dialog from "@radix-ui/react-dialog";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Ban,
@@ -545,7 +546,8 @@ export function AdminUsersPanel({
   }
 
   return (
-    <section className="admin-card admin-users-panel" aria-label="用户与权限管理">
+    <Dialog.Root open={importOpen} onOpenChange={setImportOpen}>
+      <section className="admin-card admin-users-panel" aria-label="用户与权限管理">
       <div className="admin-card-head admin-users-head">
         <div>
           <h3>用户与权限</h3>
@@ -626,10 +628,12 @@ export function AdminUsersPanel({
             <Search size={17} aria-hidden="true" />
             筛选用户
           </button>
-          <button className="secondary-button" type="button" onClick={() => setImportOpen(true)}>
-            <Upload size={17} aria-hidden="true" />
-            批量导入
-          </button>
+          <Dialog.Trigger asChild>
+            <button className="secondary-button" type="button">
+              <Upload size={17} aria-hidden="true" />
+              批量导入
+            </button>
+          </Dialog.Trigger>
           <button className="primary-button admin-user-create" type="button" onClick={() => openEditor("create")}>
             <Plus size={17} aria-hidden="true" />
             新增用户
@@ -722,7 +726,6 @@ export function AdminUsersPanel({
 
       {importOpen && (
         <AdminUserImport
-          onClose={() => setImportOpen(false)}
           onCompleted={async () => {
             await invalidateUserData();
           }}
@@ -913,6 +916,7 @@ export function AdminUsersPanel({
           </section>
         </div>
       )}
-    </section>
+      </section>
+    </Dialog.Root>
   );
 }

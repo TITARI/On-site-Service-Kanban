@@ -36,6 +36,33 @@ afterEach(() => {
 });
 
 describe("AdminUserImport", () => {
+  it("traps focus, closes with Escape, and restores the batch import opener", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input) === "/api/admin/users?page=1&pageSize=20") {
+        return new Response(JSON.stringify({ users: [], total: 0 }), { status: 200 });
+      }
+      throw new Error(`Unexpected request ${String(input)}`);
+    }));
+    const userDriver = userEvent.setup();
+
+    renderWithQueryClient(<AdminUsersPanel groups={groups} />);
+    const opener = await screen.findByRole("button", { name: "批量导入" });
+    await userDriver.click(opener);
+
+    const dialog = await screen.findByRole("dialog", { name: "批量导入用户" });
+    const closeButton = within(dialog).getByRole("button", { name: "关闭导入向导" });
+    expect(document.activeElement).toBe(closeButton);
+
+    within(dialog).getByLabelText("选择用户导入文件").focus();
+    await userDriver.tab();
+    expect(document.activeElement).toBe(closeButton);
+
+    await userDriver.keyboard("{Escape}");
+
+    expect(screen.queryByRole("dialog", { name: "批量导入用户" })).toBeNull();
+    await waitFor(() => expect(document.activeElement).toBe(opener));
+  });
+
   it("parses a file, previews decisions, commits, refreshes users, and downloads the report", async () => {
     const reportBlob = new Blob(["report"], {
       type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
