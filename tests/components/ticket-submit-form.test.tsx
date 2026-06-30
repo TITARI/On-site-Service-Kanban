@@ -1,9 +1,11 @@
 ﻿import { afterEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { TicketSubmitForm } from "@/components/ticket-submit-form";
 import type { CurrentUser } from "@/lib/client/auth";
 import type { AppConfig } from "@/lib/seed";
+import { queryKeys } from "@/lib/client/query-keys";
+import { renderWithQueryClient as render } from "../helpers/query-client";
 
 const config: AppConfig = {
   issueTypes: [{ id: "network", name: "网络", urgencyMinutes: 20, priorityWeight: 25, assignmentGroup: "网络组", enabled: true }],
@@ -40,7 +42,8 @@ describe("TicketSubmitForm", () => {
     const onSubmitted = vi.fn();
     const user = userEvent.setup();
 
-    render(<TicketSubmitForm config={config} currentUser={currentUser} onSubmitted={onSubmitted} />);
+    const { queryClient } = render(<TicketSubmitForm config={config} currentUser={currentUser} onSubmitted={onSubmitted} />);
+    queryClient.setQueryData(queryKeys.mobile.bootstrap, { tickets: [], config });
 
     expect(screen.getByText("张三")).not.toBeNull();
     expect(screen.getByText("13800138000")).not.toBeNull();
@@ -62,5 +65,6 @@ describe("TicketSubmitForm", () => {
     expect(body.imageUrls).toHaveLength(1);
     expect(body.imageUrls[0]).toMatch(/^data:image\/jpeg;base64,/);
     expect(onSubmitted).toHaveBeenCalled();
+    expect(queryClient.getQueryState(queryKeys.mobile.bootstrap)?.isInvalidated).toBe(true);
   });
 });

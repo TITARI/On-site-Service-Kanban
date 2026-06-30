@@ -1,10 +1,13 @@
 ﻿"use client";
 
 import { useState } from "react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { ImagePlus, Send } from "lucide-react";
 import { readImagesAsDataUrls } from "@/lib/client/images";
 import type { CurrentUser } from "@/lib/client/auth";
 import type { AppConfig } from "@/lib/seed";
+import { apiFetch, isUnauthorized } from "@/lib/client/api-request";
+import { queryKeys } from "@/lib/client/query-keys";
 import { StatusMessage } from "./status-message";
 
 type Props = {
@@ -15,9 +18,20 @@ type Props = {
 };
 
 export function TicketSubmitForm({ config, currentUser, onSubmitted, onUnauthorized }: Props) {
-  const [isSubmitting, setIsSubmitting] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [imageUrls, setImageUrls] = useState<string[]>([]);
+  const queryClient = useQueryClient();
+  const submitMutation = useMutation({
+    mutationFn: (payload: { boothNumber: string; description: string; issueType: string; imageUrls: string[] }) => apiFetch(
+      "/api/tickets",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      },
+      "提交失败，请检查展位号和问题描述后重试"
+    )
+  });
 
   async function addImages(files: FileList | null) {
     if (!files?.length) return;
@@ -33,7 +47,6 @@ export function TicketSubmitForm({ config, currentUser, onSubmitted, onUnauthori
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = event.currentTarget;
-    setIsSubmitting(true);
     setMessage(null);
     const formData = new FormData(form);
     const payload = {
@@ -44,24 +57,18 @@ export function TicketSubmitForm({ config, currentUser, onSubmitted, onUnauthori
     };
 
     try {
-      const response = await fetch("/api/tickets", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
-      });
-      if (response.status === 401) {
-        onUnauthorized?.();
-        return;
-      }
-      if (!response.ok) throw new Error("submit failed");
+      await submitMutation.mutateAsync(payload);
+      await queryClient.invalidateQueries({ queryKey: queryKeys.mobile.bootstrap });
       form.reset();
       setImageUrls([]);
       setMessage("工单已提交");
-      setIsSubmitting(false);
       onSubmitted();
-    } catch {
+    } catch (error) {
+      if (isUnauthorized(error)) {
+        onUnauthorized?.();
+        return;
+      }
       setMessage("提交失败，请检查展位号和问题描述后重试");
-      setIsSubmitting(false);
     }
   }
 
@@ -102,9 +109,9 @@ export function TicketSubmitForm({ config, currentUser, onSubmitted, onUnauthori
       )}
       <p className="image-hint"><ImagePlus size={16} aria-hidden="true" />已选择 {imageUrls.length} 张图片</p>
       {message && <StatusMessage tone={message === "工单已提交" ? "status" : "error"}>{message}</StatusMessage>}
-      <button className="primary-button" type="submit" disabled={isSubmitting}>
+      <button className="primary-button" type="submit" disabled={submitMutation.isPending}>
         <Send size={18} aria-hidden="true" />
-        {isSubmitting ? "提交中" : "提交工单"}
+        {submitMutation.isPending ? "提交中" : "提交工单"}
       </button>
     </form>
   );

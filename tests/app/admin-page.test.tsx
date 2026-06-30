@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import AdminPage from "@/app/admin/page";
 import type { AppConfig } from "@/lib/seed";
+import { renderWithQueryClient } from "../helpers/query-client";
 
 const config: AppConfig = {
   issueTypes: [
@@ -81,20 +82,23 @@ describe("admin page login", () => {
     const fetchMock = mockAdminFetch(adminSessionResponse(false, false));
     vi.stubGlobal("fetch", fetchMock);
 
-    render(<AdminPage />);
+    renderWithQueryClient(<AdminPage />);
 
     expect(await screen.findByText("后台配置登录")).not.toBeNull();
     expect(screen.getByLabelText("管理员手机号")).not.toBeNull();
     expect(screen.getByLabelText("管理员密码")).not.toBeNull();
     expect(screen.queryByText("配置总览")).toBeNull();
-    expect(fetchMock).toHaveBeenCalledWith("/api/auth/session?type=admin", { cache: "no-store" });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/auth/session?type=admin",
+      expect.objectContaining({ cache: "no-store", signal: expect.anything() })
+    );
   });
 
   it("renders the first-admin bootstrap form when the server requires bootstrap", async () => {
     const fetchMock = mockAdminFetch(adminSessionResponse(false, true));
     vi.stubGlobal("fetch", fetchMock);
 
-    render(<AdminPage />);
+    renderWithQueryClient(<AdminPage />);
 
     expect(await screen.findByText("首个管理员初始化")).not.toBeNull();
     expect(screen.getByLabelText("初始化旧口令")).not.toBeNull();
@@ -107,7 +111,7 @@ describe("admin page login", () => {
     vi.stubGlobal("fetch", fetchMock);
     const user = userEvent.setup();
 
-    render(<AdminPage />);
+    renderWithQueryClient(<AdminPage />);
 
     await user.type(await screen.findByLabelText("管理员手机号"), "13800138000");
     await user.type(screen.getByLabelText("管理员密码"), "new-password-123");
@@ -118,9 +122,31 @@ describe("admin page login", () => {
     expect(fetchMock).toHaveBeenCalledWith("/api/admin/auth/login", expect.objectContaining({
       method: "POST"
     }));
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/bootstrap", { cache: "no-store" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/api/bootstrap",
+      expect.objectContaining({ cache: "no-store", signal: expect.anything() })
+    ));
     expect(screen.queryByText("微信/企微消息")).toBeNull();
     expect(screen.queryByText("出站通知")).toBeNull();
+  });
+
+  it("shows a login error when a successful response omits the user", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/auth/session?type=admin") return adminSessionResponse(false, false);
+      if (url === "/api/admin/auth/login") return new Response(JSON.stringify({}), { status: 200 });
+      return new Response(null, { status: 404 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+
+    renderWithQueryClient(<AdminPage />);
+
+    await user.type(await screen.findByLabelText("管理员手机号"), "13800138000");
+    await user.type(screen.getByLabelText("管理员密码"), "new-password-123");
+    await user.click(screen.getByRole("button", { name: "进入后台" }));
+
+    expect(await screen.findByText("后台登录失败")).not.toBeNull();
   });
 
   it("opens the config center after first-admin bootstrap succeeds", async () => {
@@ -128,7 +154,7 @@ describe("admin page login", () => {
     vi.stubGlobal("fetch", fetchMock);
     const user = userEvent.setup();
 
-    render(<AdminPage />);
+    renderWithQueryClient(<AdminPage />);
 
     await user.type(await screen.findByLabelText("初始化旧口令"), "admin123");
     await user.type(screen.getByLabelText("管理员姓名"), "Admin");
@@ -147,7 +173,7 @@ describe("admin page login", () => {
     const fetchMock = mockAdminFetch(adminSessionResponse(true, false));
     vi.stubGlobal("fetch", fetchMock);
 
-    render(<AdminPage />);
+    renderWithQueryClient(<AdminPage />);
 
     expect(await screen.findByRole("heading", { name: "后台工作台" })).not.toBeNull();
     expect(screen.queryByText("后台配置登录")).toBeNull();

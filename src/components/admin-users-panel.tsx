@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Ban,
   Building2,
@@ -21,6 +22,8 @@ import {
 } from "lucide-react";
 import type { PermissionCode, UserListItem } from "@/lib/domain/access-control";
 import type { ChatIdentity, MessageChannel, UserGroup } from "@/lib/domain/types";
+import { apiFetch, apiJson } from "@/lib/client/api-request";
+import { queryKeys } from "@/lib/client/query-keys";
 import { AdminUserImport } from "./admin-user-import";
 
 type UserPayload = {
@@ -178,34 +181,156 @@ function BindingSummary({
 }
 
 export function AdminUsersPanel({
-  groups,
-  onRefresh
+  groups
 }: {
   groups: UserGroup[];
-  onRefresh?: () => void;
 }) {
   const [filters, setFilters] = useState<FilterState>(DEFAULT_FILTERS);
   const [appliedFilters, setAppliedFilters] = useState<FilterState>(DEFAULT_FILTERS);
-  const [users, setUsers] = useState<UserListItem[]>([]);
-  const [total, setTotal] = useState(0);
-  const [loading, setLoading] = useState(false);
-  const [listError, setListError] = useState<string | null>(null);
   const [editor, setEditor] = useState<EditorState | null>(null);
   const [draft, setDraft] = useState<DraftState>(() => draftFromUser(undefined, groups));
-  const [savingAction, setSavingAction] = useState<string | null>(null);
   const [editorError, setEditorError] = useState<string | null>(null);
   const [passwordError, setPasswordError] = useState<string | null>(null);
   const [identityDrafts, setIdentityDrafts] = useState<Record<MessageChannel, IdentityDraft>>(EMPTY_IDENTITY_DRAFT);
-  const [availableIdentities, setAvailableIdentities] = useState<Record<MessageChannel, ChatIdentity[]>>({
-    wechat: [],
-    wecom: []
-  });
   const [identityErrors, setIdentityErrors] = useState<Partial<Record<MessageChannel, string>>>({});
   const [identityConflict, setIdentityConflict] = useState<ConflictState | null>(null);
   const [actionErrors, setActionErrors] = useState<Record<string, string>>({});
   const [importOpen, setImportOpen] = useState(false);
   const [password, setPassword] = useState("");
-  const latestListRequestId = useRef(0);
+
+  const usersQuery = useQuery({
+    queryKey: queryKeys.admin.users.list(appliedFilters),
+    queryFn: ({ signal }) => apiJson<UserPayload>(
+      usersUrl(appliedFilters),
+      { cache: "no-store", signal },
+      "用户列表加载失败"
+    )
+  });
+  const identityQueries = {
+    wechat: useQuery({
+      queryKey: queryKeys.admin.users.identities("wechat"),
+      queryFn: ({ signal }) => apiJson<{ identities?: ChatIdentity[] }>(
+        "/api/admin/chat-identities?platform=wechat",
+        { cache: "no-store", signal },
+        "微信身份加载失败"
+      ),
+      enabled: editor?.mode === "edit"
+    }),
+    wecom: useQuery({
+      queryKey: queryKeys.admin.users.identities("wecom"),
+      queryFn: ({ signal }) => apiJson<{ identities?: ChatIdentity[] }>(
+        "/api/admin/chat-identities?platform=wecom",
+        { cache: "no-store", signal },
+        "企业微信身份加载失败"
+      ),
+      enabled: editor?.mode === "edit"
+    })
+  };
+  const users = usersQuery.data?.users ?? [];
+  const total = usersQuery.data?.total ?? users.length;
+  const loading = usersQuery.isFetching;
+  const listError = usersQuery.error instanceof Error ? usersQuery.error.message : null;
+  const availableIdentities: Record<MessageChannel, ChatIdentity[]> = {
+    wechat: identityQueries.wechat.data?.identities ?? [],
+    wecom: identityQueries.wecom.data?.identities ?? []
+  };
+  const queryClient = useQueryClient();
+
+  async function invalidateUserData(platform?: MessageChannel) {
+    const invalidations = [
+      queryClient.invalidateQueries({ queryKey: queryKeys.admin.users.all }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.admin.bootstrap })
+    ];
+    if (platform) {
+      invalidations.push(queryClient.invalidateQueries({ queryKey: queryKeys.admin.users.identities(platform) }));
+    }
+    await Promise.all(invalidations);
+  }
+
+  const identityMutation = useMutation({
+    mutationFn: async (variables: {
+      kind: "bind" | "unbind";
+      personId: string;
+      platform: MessageChannel;
+      externalUserId?: string;
+      displayName?: string;
+      confirmationToken?: string;
+    }) => {
+      const endpoint = `/api/admin/users/${variables.personId}/chat-identities/${variables.platform}`;
+      if (variables.kind === "unbind") {
+        await apiFetch(endpoint, { method: "DELETE" }, `${PLATFORM_LABELS[variables.platform]}解绑失败`);
+        return { kind: "unbound" as const };
+      }
+
+      const response = await fetch(endpoint, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          externalUserId: variables.externalUserId,
+          displayName: variables.displayName,
+          ...(variables.confirmationToken ? { confirmationToken: variables.confirmationToken } : {})
+        })
+      });
+      if (response.status === 409) {
+        const payload = await response.json() as {
+          code?: string;
+          message?: string;
+          confirmationToken?: string;
+          currentOwner?: { name?: string };
+        };
+        if (payload.code === "IDENTITY_CONFLICT" && payload.confirmationToken) {
+          return { kind: "conflict" as const, payload };
+        }
+        throw new Error(payload.message ?? `${PLATFORM_LABELS[variables.platform]}绑定失败`);
+      }
+      if (!response.ok) throw new Error(await responseMessage(response, `${PLATFORM_LABELS[variables.platform]}绑定失败`));
+      const payload = await response.json() as { identity?: ChatIdentity };
+      return { kind: "bound" as const, identity: payload.identity };
+    }
+  });
+
+  const saveUserMutation = useMutation({
+    mutationFn: async (variables: { endpoint: string; method: "PATCH" | "POST"; body: DraftState }) => {
+      await apiFetch(variables.endpoint, {
+        method: variables.method,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(variables.body)
+      }, "用户保存失败");
+    }
+  });
+
+  const userActionMutation = useMutation({
+    mutationFn: async (variables: { personId: string; action: "enable" | "disable" | "delete"; label: string }) => {
+      const endpoint = variables.action === "delete"
+        ? `/api/admin/users/${variables.personId}`
+        : `/api/admin/users/${variables.personId}/${variables.action}`;
+      await apiFetch(endpoint, {
+        method: variables.action === "delete" ? "DELETE" : "POST"
+      }, `${variables.label}用户失败`);
+    }
+  });
+
+  const passwordMutation = useMutation({
+    mutationFn: async (variables: { personId: string; password: string }) => {
+      await apiFetch(`/api/admin/users/${variables.personId}/password`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password: variables.password })
+      }, "密码设置失败");
+    }
+  });
+
+  const savingAction = identityMutation.isPending
+    ? identityMutation.variables?.kind === "unbind"
+      ? `identity-${identityMutation.variables.platform}-unbind`
+      : `identity-${identityMutation.variables?.platform}`
+    : saveUserMutation.isPending
+      ? "save"
+      : userActionMutation.isPending
+        ? `${userActionMutation.variables?.personId}-${userActionMutation.variables?.action}`
+        : passwordMutation.isPending
+          ? "password"
+          : null;
 
   const enabledGroups = useMemo(() => groups.filter((group) => group.enabled), [groups]);
   const inheritedPermissions = useMemo(
@@ -216,30 +341,6 @@ export function AdminUsersPanel({
     [draft.groupId, editor?.user, groups]
   );
   const canSetPassword = inheritedPermissions.includes("admin.access");
-
-  async function loadUsers(nextFilters = appliedFilters) {
-    const requestId = latestListRequestId.current + 1;
-    latestListRequestId.current = requestId;
-    setLoading(true);
-    setListError(null);
-    try {
-      const response = await fetch(usersUrl(nextFilters), { cache: "no-store" });
-      if (!response.ok) throw new Error(await responseMessage(response, "用户列表加载失败"));
-      const payload = await response.json() as UserPayload;
-      if (requestId !== latestListRequestId.current) return;
-      setUsers(payload.users ?? []);
-      setTotal(payload.total ?? payload.users?.length ?? 0);
-    } catch (error) {
-      if (requestId !== latestListRequestId.current) return;
-      setListError(error instanceof Error ? error.message : "用户列表加载失败");
-    } finally {
-      if (requestId === latestListRequestId.current) setLoading(false);
-    }
-  }
-
-  useEffect(() => {
-    void loadUsers(appliedFilters);
-  }, [appliedFilters]);
 
   function openEditor(mode: "create" | "edit", user?: UserListItem) {
     setEditor({ mode, user });
@@ -260,31 +361,6 @@ export function AdminUsersPanel({
     setIdentityConflict(null);
     setPassword("");
   }
-
-  async function loadChatIdentities(platform: MessageChannel) {
-    try {
-      const response = await fetch(`/api/admin/chat-identities?platform=${platform}`, {
-        cache: "no-store"
-      });
-      if (!response.ok) throw new Error(await responseMessage(response, `${PLATFORM_LABELS[platform]}身份加载失败`));
-      const payload = await response.json() as { identities?: ChatIdentity[] };
-      setAvailableIdentities((current) => ({
-        ...current,
-        [platform]: payload.identities ?? []
-      }));
-    } catch (error) {
-      setIdentityErrors((current) => ({
-        ...current,
-        [platform]: error instanceof Error ? error.message : `${PLATFORM_LABELS[platform]}身份加载失败`
-      }));
-    }
-  }
-
-  useEffect(() => {
-    if (editor?.mode !== "edit") return;
-    void loadChatIdentities("wechat");
-    void loadChatIdentities("wecom");
-  }, [editor?.mode, editor?.user?.personId]);
 
   function updateIdentityDraft(
     platform: MessageChannel,
@@ -342,75 +418,55 @@ export function AdminUsersPanel({
       }));
       return;
     }
-    setSavingAction(`identity-${platform}`);
     setIdentityErrors((current) => ({ ...current, [platform]: "" }));
     try {
-      const response = await fetch(`/api/admin/users/${editor.user.personId}/chat-identities/${platform}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+      const result = await identityMutation.mutateAsync({
+        kind: "bind",
+        personId: editor.user.personId,
+        platform,
+        externalUserId,
+        displayName,
+        confirmationToken
+      });
+      if (result.kind === "conflict") {
+        setIdentityConflict({
+          platform,
+          token: result.payload.confirmationToken!,
           externalUserId,
           displayName,
-          ...(confirmationToken ? { confirmationToken } : {})
-        })
-      });
-      if (response.status === 409) {
-        const payload = await response.json() as {
-          code?: string;
-          message?: string;
-          confirmationToken?: string;
-          currentOwner?: { name?: string };
-        };
-        if (payload.code === "IDENTITY_CONFLICT" && payload.confirmationToken) {
-          setIdentityConflict({
-            platform,
-            token: payload.confirmationToken,
-            externalUserId,
-            displayName,
-            ownerName: payload.currentOwner?.name
-          });
-          return;
-        }
-        throw new Error(payload.message ?? `${PLATFORM_LABELS[platform]}绑定失败`);
+          ownerName: result.payload.currentOwner?.name
+        });
+        return;
       }
-      if (!response.ok) throw new Error(await responseMessage(response, `${PLATFORM_LABELS[platform]}绑定失败`));
-      const payload = await response.json() as { identity?: ChatIdentity };
       setIdentityConflict(null);
-      if (payload.identity) {
-        updateEditorIdentity(platform, payload.identity);
+      if (result.kind === "bound" && result.identity) {
+        updateEditorIdentity(platform, result.identity);
       }
-      await loadUsers();
-      await loadChatIdentities(platform);
-      onRefresh?.();
+      await invalidateUserData(platform);
     } catch (error) {
       setIdentityErrors((current) => ({
         ...current,
         [platform]: error instanceof Error ? error.message : `${PLATFORM_LABELS[platform]}绑定失败`
       }));
-    } finally {
-      setSavingAction(null);
     }
   }
 
   async function unbindIdentity(platform: MessageChannel) {
     if (!editor?.user) return;
-    setSavingAction(`identity-${platform}-unbind`);
     setIdentityErrors((current) => ({ ...current, [platform]: "" }));
     try {
-      const response = await fetch(`/api/admin/users/${editor.user.personId}/chat-identities/${platform}`, {
-        method: "DELETE"
+      await identityMutation.mutateAsync({
+        kind: "unbind",
+        personId: editor.user.personId,
+        platform
       });
-      if (!response.ok) throw new Error(await responseMessage(response, `${PLATFORM_LABELS[platform]}解绑失败`));
       updateEditorIdentity(platform);
-      await loadUsers();
-      onRefresh?.();
+      await invalidateUserData(platform);
     } catch (error) {
       setIdentityErrors((current) => ({
         ...current,
         [platform]: error instanceof Error ? error.message : `${PLATFORM_LABELS[platform]}解绑失败`
       }));
-    } finally {
-      setSavingAction(null);
     }
   }
 
@@ -420,7 +476,6 @@ export function AdminUsersPanel({
       setEditorError("请填写姓名、手机号并选择分组");
       return;
     }
-    setSavingAction("save");
     setEditorError(null);
     try {
       const body = {
@@ -433,19 +488,15 @@ export function AdminUsersPanel({
       const endpoint = editor?.mode === "edit" && editor.user
         ? `/api/admin/users/${editor.user.personId}`
         : "/api/admin/users";
-      const response = await fetch(endpoint, {
+      await saveUserMutation.mutateAsync({
+        endpoint,
         method: editor?.mode === "edit" ? "PATCH" : "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body)
+        body
       });
-      if (!response.ok) throw new Error(await responseMessage(response, "用户保存失败"));
-      await loadUsers();
-      onRefresh?.();
+      await invalidateUserData();
       closeEditor();
     } catch (error) {
       setEditorError(error instanceof Error ? error.message : "用户保存失败");
-    } finally {
-      setSavingAction(null);
     }
   }
 
@@ -453,25 +504,15 @@ export function AdminUsersPanel({
     const actionLabel = action === "enable" ? "启用" : action === "disable" ? "停用" : "删除";
     if (!window.confirm(`确认${actionLabel}${user.name}？`)) return;
     const key = `${user.personId}-${action}`;
-    setSavingAction(key);
     setActionErrors((current) => ({ ...current, [key]: "" }));
     try {
-      const endpoint = action === "delete"
-        ? `/api/admin/users/${user.personId}`
-        : `/api/admin/users/${user.personId}/${action}`;
-      const response = await fetch(endpoint, {
-        method: action === "delete" ? "DELETE" : "POST"
-      });
-      if (!response.ok) throw new Error(await responseMessage(response, `${actionLabel}用户失败`));
-      await loadUsers();
-      onRefresh?.();
+      await userActionMutation.mutateAsync({ personId: user.personId, action, label: actionLabel });
+      await invalidateUserData();
     } catch (error) {
       setActionErrors((current) => ({
         ...current,
         [key]: error instanceof Error ? error.message : `${actionLabel}用户失败`
       }));
-    } finally {
-      setSavingAction(null);
     }
   }
 
@@ -480,21 +521,13 @@ export function AdminUsersPanel({
       setPasswordError("请填写新密码");
       return;
     }
-    setSavingAction("password");
     setPasswordError(null);
     try {
-      const response = await fetch(`/api/admin/users/${editor.user.personId}/password`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ password })
-      });
-      if (!response.ok) throw new Error(await responseMessage(response, "密码设置失败"));
+      await passwordMutation.mutateAsync({ personId: editor.user.personId, password });
       setPassword("");
-      await loadUsers();
+      await invalidateUserData();
     } catch (error) {
       setPasswordError(error instanceof Error ? error.message : "密码设置失败");
-    } finally {
-      setSavingAction(null);
     }
   }
 
@@ -524,7 +557,12 @@ export function AdminUsersPanel({
         className="admin-users-commandbar"
         onSubmit={(event) => {
           event.preventDefault();
-          setAppliedFilters({ ...filters });
+          const nextFilters = { ...filters };
+          if (JSON.stringify(nextFilters) === JSON.stringify(appliedFilters)) {
+            void usersQuery.refetch();
+          } else {
+            setAppliedFilters(nextFilters);
+          }
         }}
       >
         <div className="admin-users-control-strip">
@@ -686,8 +724,7 @@ export function AdminUsersPanel({
         <AdminUserImport
           onClose={() => setImportOpen(false)}
           onCompleted={async () => {
-            await loadUsers();
-            onRefresh?.();
+            await invalidateUserData();
           }}
         />
       )}
@@ -746,7 +783,9 @@ export function AdminUsersPanel({
                 const label = PLATFORM_LABELS[platform];
                 const current = editor.user?.identities[platform];
                 const draftIdentity = identityDrafts[platform];
-                const error = identityErrors[platform];
+                const queryError = identityQueries[platform].error;
+                const error = identityErrors[platform]
+                  || (queryError instanceof Error ? queryError.message : "");
                 return (
                   <section className="admin-user-identity-card" key={platform} aria-label={`${label}身份绑定`}>
                     <div className="admin-user-identity-head">

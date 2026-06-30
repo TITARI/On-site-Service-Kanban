@@ -1,8 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { AdminUsersPanel } from "@/components/admin-users-panel";
 import type { UserGroup } from "@/lib/domain/types";
+import { queryKeys } from "@/lib/client/query-keys";
+import { renderWithQueryClient } from "../helpers/query-client";
 
 const groups: UserGroup[] = [
   {
@@ -35,7 +37,6 @@ afterEach(() => {
 
 describe("AdminUserImport", () => {
   it("parses a file, previews decisions, commits, refreshes users, and downloads the report", async () => {
-    const onRefresh = vi.fn();
     const reportBlob = new Blob(["report"], {
       type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     });
@@ -119,7 +120,8 @@ describe("AdminUserImport", () => {
     });
     const userDriver = userEvent.setup();
 
-    render(<AdminUsersPanel groups={groups} onRefresh={onRefresh} />);
+    const { queryClient } = renderWithQueryClient(<AdminUsersPanel groups={groups} />);
+    queryClient.setQueryData(queryKeys.admin.bootstrap, { config: {} });
 
     await userDriver.click(await screen.findByRole("button", { name: "批量导入" }));
     const importDialog = await screen.findByRole("dialog", { name: "批量导入用户" });
@@ -142,7 +144,7 @@ describe("AdminUserImport", () => {
     await userDriver.click(within(importDialog).getByLabelText("确认微信换绑"));
     await userDriver.click(within(importDialog).getByRole("button", { name: "提交导入" }));
 
-    await waitFor(() => expect(onRefresh).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(queryClient.getQueryState(queryKeys.admin.bootstrap)?.isInvalidated).toBe(true));
     expect(await within(importDialog).findByText("用户导入完成")).not.toBeNull();
     await userDriver.click(within(importDialog).getByRole("button", { name: "下载导入报告" }));
 
@@ -212,7 +214,7 @@ describe("AdminUserImport", () => {
     vi.stubGlobal("fetch", fetchMock);
     const userDriver = userEvent.setup();
 
-    render(<AdminUsersPanel groups={groups} />);
+    renderWithQueryClient(<AdminUsersPanel groups={groups} />);
 
     await userDriver.click(await screen.findByRole("button", { name: "批量导入" }));
     const importDialog = await screen.findByRole("dialog", { name: "批量导入用户" });

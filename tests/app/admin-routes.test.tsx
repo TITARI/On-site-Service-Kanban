@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import AdminPage from "@/app/admin/page";
 import AdminLogsPage from "@/app/admin/logs/page";
@@ -8,6 +8,7 @@ import AdminWorkOrderSettingsPage from "@/app/admin/work-order-settings/page";
 import AdminExhibitionDataPage from "@/app/admin/exhibition-data/page";
 import AdminSystemPage from "@/app/admin/system/page";
 import { defaultConfig } from "@/lib/seed";
+import { renderWithQueryClient } from "../helpers/query-client";
 
 const bootstrap = {
   tickets: [],
@@ -123,12 +124,45 @@ function mockBootstrapFetch(extra?: { logs?: unknown[] }) {
 
 async function renderWithSession(ui: React.ReactElement, fetchMock = mockBootstrapFetch()) {
   vi.stubGlobal("fetch", fetchMock);
-  render(ui);
-  await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/auth/session?type=admin", { cache: "no-store" }));
-  await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/bootstrap", { cache: "no-store" }));
+  renderWithQueryClient(ui);
+  await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+    "/api/auth/session?type=admin",
+    expect.objectContaining({ cache: "no-store", signal: expect.anything() })
+  ));
+  await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+    "/api/bootstrap",
+    expect.objectContaining({ cache: "no-store", signal: expect.anything() })
+  ));
 }
 
 describe("admin subroutes", () => {
+  it("starts bootstrap and logs in parallel after authentication", async () => {
+    const started: string[] = [];
+    let resolveBootstrap!: (response: Response) => void;
+    let resolveLogs!: (response: Response) => void;
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/auth/session?type=admin") return Promise.resolve(authenticatedSession());
+      if (url === "/api/bootstrap") {
+        started.push("bootstrap");
+        return new Promise<Response>((resolve) => { resolveBootstrap = resolve; });
+      }
+      if (url.includes("/api/admin/wechat-order-logs")) {
+        started.push("logs");
+        return new Promise<Response>((resolve) => { resolveLogs = resolve; });
+      }
+      return Promise.resolve(new Response(JSON.stringify({ wxautoMcp: { enabled: false } }), { status: 200 }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderWithQueryClient(<AdminPage />);
+
+    await waitFor(() => expect(started).toEqual(expect.arrayContaining(["bootstrap", "logs"])));
+    resolveBootstrap(new Response(JSON.stringify(bootstrap), { status: 200 }));
+    resolveLogs(new Response(JSON.stringify({ logs: [] }), { status: 200 }));
+    expect(await screen.findByRole("heading", { name: "后台工作台" })).not.toBeNull();
+  });
+
   it("uses the root admin route as a workbench with sidebar navigation", async () => {
     await renderWithSession(<AdminPage />);
 
@@ -173,7 +207,10 @@ describe("admin subroutes", () => {
 
     expect((await screen.findAllByRole("heading", { name: "微信下单日志" })).length).toBeGreaterThan(0);
     expect(await screen.findByText("已创建工单")).not.toBeNull();
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/admin/wechat-order-logs?limit=50", { cache: "no-store" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/api/admin/wechat-order-logs?limit=50",
+      expect.objectContaining({ cache: "no-store", signal: expect.anything() })
+    ));
   });
 
   it("renders each backend subroute as a focused management page", async () => {
@@ -232,7 +269,10 @@ describe("admin subroutes", () => {
 
     await renderWithSession(<AdminSystemPage />, fetchMock);
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/admin/wechat-order-logs?limit=50", { cache: "no-store" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/api/admin/wechat-order-logs?limit=50",
+      expect.objectContaining({ cache: "no-store", signal: expect.anything() })
+    ));
     const logLink = Array.from(document.querySelectorAll("a")).find((link) => link.getAttribute("href") === "/admin/logs");
     expect(logLink?.textContent).toContain("2");
   });
@@ -253,7 +293,7 @@ describe("admin subroutes", () => {
     vi.stubGlobal("fetch", fetchMock);
     const user = userEvent.setup();
 
-    render(<AdminLogsPage />);
+    renderWithQueryClient(<AdminLogsPage />);
 
     expect(await screen.findByText("后台配置登录")).not.toBeNull();
     await user.type(screen.getByLabelText("管理员手机号"), "13800138000");

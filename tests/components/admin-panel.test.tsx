@@ -1,10 +1,12 @@
 ﻿import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import * as XLSX from "xlsx";
 import { AdminConfigCenter } from "@/components/admin-panel";
 import type { AiPromptTemplate, ChatIdentity, Conversation, OutboundMessage, PendingWorkOrderSession, Person, InboundMessageRecord, Ticket } from "@/lib/domain/types";
 import type { AppConfig } from "@/lib/seed";
+import { queryKeys } from "@/lib/client/query-keys";
+import { renderWithQueryClient as render } from "../helpers/query-client";
 
 const config: AppConfig = {
   issueTypes: [
@@ -287,7 +289,8 @@ describe("AdminConfigCenter user groups", () => {
     vi.stubGlobal("fetch", fetchMock);
     const user = userEvent.setup();
 
-    render(<AdminConfigCenter config={config} onRefresh={vi.fn()} />);
+    const { queryClient } = render(<AdminConfigCenter config={config} onRefresh={vi.fn()} />);
+    queryClient.setQueryData(queryKeys.admin.bootstrap, { config });
 
     expect(screen.getAllByText("用户分组").length).toBeGreaterThan(0);
     expect(screen.getByText("业务组")).not.toBeNull();
@@ -311,6 +314,7 @@ describe("AdminConfigCenter user groups", () => {
     expect(body.userGroups).toContainEqual(expect.objectContaining({ id: "builder", name: "搭建组", enabled: false }));
     expect(body.userGroups).toContainEqual(expect.objectContaining({ name: "客服组", description: "负责现场答疑和回访", canAccept: true, canAdmin: true, enabled: true }));
     await waitFor(() => expect((screen.getByLabelText("新增分组名称") as HTMLInputElement).value).toBe(""));
+    expect(queryClient.getQueryState(queryKeys.admin.bootstrap)?.isInvalidated).toBe(true);
   });
 
   it("deletes groups with no tickets and keeps used groups disable-only", async () => {
@@ -708,9 +712,14 @@ describe("AdminConfigCenter user groups", () => {
     vi.stubGlobal("fetch", fetchMock);
     const user = userEvent.setup();
 
-    render(<AdminConfigCenter config={config} view="system" onRefresh={vi.fn()} />);
+    const { queryClient } = render(<AdminConfigCenter config={config} view="system" onRefresh={vi.fn()} />);
+    queryClient.setQueryData(queryKeys.admin.bootstrap, { config });
 
     expect(await screen.findByRole("heading", { name: "wxauto 桌面服务" })).not.toBeNull();
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/api/admin/wxauto-mcp",
+      expect.objectContaining({ cache: "no-store", signal: expect.anything() })
+    ));
     expect(screen.queryByLabelText("微信 MCP服务名称")).toBeNull();
     expect(screen.queryByLabelText("微信 MCP密钥环境变量")).toBeNull();
     expect((screen.getByLabelText("MCP 服务地址") as HTMLInputElement).value).toBe("/api/mcp");
@@ -729,6 +738,7 @@ describe("AdminConfigCenter user groups", () => {
       autoCreateTickets: true,
       accessToken: "manual-token"
     });
+    await waitFor(() => expect(queryClient.getQueryState(queryKeys.admin.bootstrap)?.isInvalidated).toBe(true));
   });
 
   it("rotates the wxauto access token from the system page", async () => {
@@ -910,7 +920,6 @@ describe("AdminConfigCenter user groups", () => {
 
   it("imports exhibition data from an uploaded workbook file", async () => {
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({ ok: true }), { status: 200 }));
-    const onRefresh = vi.fn();
     const user = userEvent.setup();
     vi.stubGlobal("fetch", fetchMock);
 
@@ -920,7 +929,7 @@ describe("AdminConfigCenter user groups", () => {
     const buffer = XLSX.write(workbook, { type: "array", bookType: "xlsx" });
     const file = new File([buffer], "booths.xlsx", { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
 
-    render(
+    const { queryClient } = render(
       <AdminConfigCenter
         config={config}
         view="exhibition-data"
@@ -931,9 +940,10 @@ describe("AdminConfigCenter user groups", () => {
           salesOwner: "王宁",
           builder: "搭建组"
         }]}
-        onRefresh={onRefresh}
+        onRefresh={vi.fn()}
       />
     );
+    queryClient.setQueryData(queryKeys.admin.bootstrap, { config });
 
     expect(screen.getByRole("heading", { name: "展商数据看板" })).not.toBeNull();
     expect(screen.getByText("系统展商")).not.toBeNull();
@@ -950,7 +960,7 @@ describe("AdminConfigCenter user groups", () => {
     expect(uploadedFile.name).toBe("booths.xlsx");
     expect(uploadedFile.size).toBeGreaterThan(0);
     expect(body.get("dryRun")).toBe("false");
-    await waitFor(() => expect(onRefresh).toHaveBeenCalled());
+    await waitFor(() => expect(queryClient.getQueryState(queryKeys.admin.bootstrap)?.isInvalidated).toBe(true));
   });
 
   it("shows imported booth records from the import response before parent refresh completes", async () => {
@@ -1570,7 +1580,6 @@ describe("AdminConfigCenter user groups", () => {
 
   it("uploads titled logistics workbook for server-side sheet inspection instead of parsing only the first sheet", async () => {
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({ ok: true }), { status: 200 }));
-    const onRefresh = vi.fn();
     const user = userEvent.setup();
     vi.stubGlobal("fetch", fetchMock);
 
@@ -1596,14 +1605,15 @@ describe("AdminConfigCenter user groups", () => {
     const buffer = XLSX.write(workbook, { type: "array", bookType: "xlsx" });
     const file = new File([buffer], "logistics.xlsx", { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
 
-    render(
+    const { queryClient } = render(
       <AdminConfigCenter
         config={config}
         view="exhibition-data"
         booths={[]}
-        onRefresh={onRefresh}
+        onRefresh={vi.fn()}
       />
     );
+    queryClient.setQueryData(queryKeys.admin.bootstrap, { config });
 
     await user.upload(screen.getByLabelText("导入展位数据文件"), file);
 
@@ -1616,7 +1626,7 @@ describe("AdminConfigCenter user groups", () => {
     expect(uploadedFile.name).toBe("logistics.xlsx");
     expect(uploadedFile.size).toBeGreaterThan(0);
     expect(body.get("dryRun")).toBe("false");
-    await waitFor(() => expect(onRefresh).toHaveBeenCalled());
+    await waitFor(() => expect(queryClient.getQueryState(queryKeys.admin.bootstrap)?.isInvalidated).toBe(true));
   });
 
   it("does not render record management modules in the PC config center", () => {

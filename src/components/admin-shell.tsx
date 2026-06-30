@@ -1,12 +1,14 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { LogIn, LogOut, ShieldCheck } from "lucide-react";
 import { AdminConfigCenter, type AdminView, type WechatOrderLog } from "@/components/admin-panel";
 import type { SessionUser } from "@/lib/client/auth";
 import type { BoothRecord, ChatIdentity, Conversation, InboundMessageRecord, OutboundMessage, PendingWorkOrderSession, Person } from "@/lib/domain/types";
 import type { TicketSummary } from "@/lib/domain/ticket-summary";
 import type { AppConfig } from "@/lib/seed";
+import { apiJson } from "@/lib/client/api-request";
+import { queryKeys } from "@/lib/client/query-keys";
 import { StatusMessage } from "./status-message";
 
 type AdminBootstrap = {
@@ -34,170 +36,157 @@ function adminTitle(view: AdminView) {
   return "后台工作台";
 }
 
-async function parseJsonMessage(response: Response, fallback: string) {
-  try {
-    const payload = await response.json() as { message?: string };
-    return payload.message ?? fallback;
-  } catch {
-    return fallback;
-  }
-}
-
 export function AdminBackendShell({ view }: { view: AdminView }) {
-  const [authReady, setAuthReady] = useState(false);
-  const [authenticated, setAuthenticated] = useState(false);
-  const [bootstrapRequired, setBootstrapRequired] = useState(false);
-  const [currentAdmin, setCurrentAdmin] = useState<SessionUser | null>(null);
-  const [data, setData] = useState<AdminBootstrap | null>(null);
-  const [logs, setLogs] = useState<WechatOrderLog[]>([]);
-  const [message, setMessage] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
+  const queryClient = useQueryClient();
+  const sessionQuery = useQuery({
+    queryKey: queryKeys.admin.session,
+    queryFn: ({ signal }) => apiJson<AdminSessionPayload>(
+      "/api/auth/session?type=admin",
+      { cache: "no-store", signal },
+      "后台登录状态检查失败"
+    ),
+    retry: false
+  });
+  const authenticated = sessionQuery.data?.authenticated === true;
+  const bootstrapQuery = useQuery({
+    queryKey: queryKeys.admin.bootstrap,
+    queryFn: ({ signal }) => apiJson<AdminBootstrap>(
+      "/api/bootstrap",
+      { cache: "no-store", signal },
+      "后台数据加载失败"
+    ),
+    enabled: authenticated
+  });
+  const logsQuery = useQuery({
+    queryKey: queryKeys.admin.logs(50),
+    queryFn: ({ signal }) => apiJson<{ logs?: WechatOrderLog[] }>(
+      "/api/admin/wechat-order-logs?limit=50",
+      { cache: "no-store", signal },
+      "微信下单日志加载失败"
+    ),
+    enabled: authenticated
+  });
+
+  const loginMutation = useMutation({
+    mutationFn: async (input: { phone: string; password: string }) => {
+      const payload = await apiJson<{ user?: SessionUser }>(
+        "/api/admin/auth/login",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(input)
+        },
+        "后台登录失败"
+      );
+      if (!payload.user) throw new Error("后台登录失败");
+      return payload.user;
+    }
+  });
+  const bootstrapMutation = useMutation({
+    mutationFn: async (input: {
+      legacyPassword: string;
+      name: string;
+      phone: string;
+      password: string;
+      group: { mode: "create"; name: string };
+    }) => {
+      const payload = await apiJson<{ user?: SessionUser }>(
+        "/api/admin/auth/bootstrap",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(input)
+        },
+        "管理员初始化失败"
+      );
+      if (!payload.user) throw new Error("管理员初始化失败");
+      return payload.user;
+    }
+  });
+  const logoutMutation = useMutation({
+    mutationFn: () => fetch("/api/admin/auth/logout", { method: "POST" }),
+    onSettled: async () => {
+      await queryClient.cancelQueries({ queryKey: queryKeys.admin.all });
+      queryClient.removeQueries({
+        queryKey: queryKeys.admin.all,
+        predicate: (query) => query.queryKey[1] !== "session"
+      });
+      const loggedOutSession: AdminSessionPayload = {
+        authenticated: false,
+        bootstrapRequired: false
+      };
+      queryClient.setQueryData(queryKeys.admin.session, loggedOutSession);
+    }
+  });
 
   async function refresh() {
-    setIsLoading(true);
-    setError(null);
-    try {
-      const response = await fetch("/api/bootstrap", { cache: "no-store" });
-      if (!response.ok) throw new Error("后台数据加载失败");
-      setData(await response.json());
-      void fetch("/api/admin/wxauto-mcp", { cache: "no-store" }).catch(() => undefined);
-      const logResponse = await fetch("/api/admin/wechat-order-logs?limit=50", { cache: "no-store" });
-      if (!logResponse.ok && view !== "logs") {
-        setLogs([]);
-        return;
-      }
-      if (!logResponse.ok) throw new Error("微信下单日志加载失败");
-      const payload = await logResponse.json() as { logs?: WechatOrderLog[] };
-      setLogs(payload.logs ?? []);
-    } catch (refreshError) {
-      setError(refreshError instanceof Error ? refreshError.message : "后台数据加载失败");
-    } finally {
-      setIsLoading(false);
-    }
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: queryKeys.admin.bootstrap }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.admin.logs(50) })
+    ]);
   }
-
-  useEffect(() => {
-    let active = true;
-    async function resolveSession() {
-      try {
-        const response = await fetch("/api/auth/session?type=admin", {
-          cache: "no-store"
-        });
-        if (!response.ok) throw new Error("后台登录状态检查失败");
-        const payload = await response.json() as AdminSessionPayload;
-        if (!active) return;
-        if (payload.authenticated) {
-          setAuthenticated(true);
-          setBootstrapRequired(false);
-          setCurrentAdmin(payload.user);
-        } else {
-          setAuthenticated(false);
-          setBootstrapRequired(payload.bootstrapRequired);
-          setCurrentAdmin(null);
-        }
-      } catch (sessionError) {
-        if (!active) return;
-        setAuthenticated(false);
-        setBootstrapRequired(false);
-        setCurrentAdmin(null);
-        setError(sessionError instanceof Error ? sessionError.message : "后台登录状态检查失败");
-      } finally {
-        if (active) setAuthReady(true);
-      }
-    }
-    void resolveSession();
-    return () => {
-      active = false;
-    };
-  }, []);
-
-  useEffect(() => {
-    if (authReady && authenticated) void refresh();
-  }, [authReady, authenticated]);
 
   async function login(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const formData = new FormData(event.currentTarget);
-    setMessage(null);
-    setError(null);
-    setIsLoading(true);
     try {
-      const response = await fetch("/api/admin/auth/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          phone: String(formData.get("phone") ?? ""),
-          password: String(formData.get("password") ?? "")
-        })
+      const user = await loginMutation.mutateAsync({
+        phone: String(formData.get("phone") ?? ""),
+        password: String(formData.get("password") ?? "")
       });
-      if (!response.ok) {
-        throw new Error(await parseJsonMessage(response, "后台登录失败"));
-      }
-      const payload = await response.json() as { user?: SessionUser };
-      if (!payload.user) throw new Error("后台登录失败");
-      setCurrentAdmin(payload.user);
-      setBootstrapRequired(false);
-      setData(null);
-      setAuthenticated(true);
-    } catch (loginError) {
-      setMessage(loginError instanceof Error ? loginError.message : "后台登录失败");
-    } finally {
-      setIsLoading(false);
+      queryClient.removeQueries({ queryKey: queryKeys.admin.bootstrap });
+      const authenticatedSession: AdminSessionPayload = {
+        authenticated: true,
+        user
+      };
+      queryClient.setQueryData(queryKeys.admin.session, authenticatedSession);
+    } catch {
+      // Mutation error is rendered below.
     }
   }
 
   async function bootstrap(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const formData = new FormData(event.currentTarget);
-    setMessage(null);
-    setError(null);
-    setIsLoading(true);
     try {
-      const response = await fetch("/api/admin/auth/bootstrap", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          legacyPassword: String(formData.get("legacyPassword") ?? ""),
-          name: String(formData.get("name") ?? ""),
-          phone: String(formData.get("phone") ?? ""),
-          password: String(formData.get("password") ?? ""),
-          group: {
-            mode: "create",
-            name: String(formData.get("groupName") ?? "")
-          }
-        })
+      const user = await bootstrapMutation.mutateAsync({
+        legacyPassword: String(formData.get("legacyPassword") ?? ""),
+        name: String(formData.get("name") ?? ""),
+        phone: String(formData.get("phone") ?? ""),
+        password: String(formData.get("password") ?? ""),
+        group: {
+          mode: "create",
+          name: String(formData.get("groupName") ?? "")
+        }
       });
-      if (!response.ok) {
-        throw new Error(await parseJsonMessage(response, "管理员初始化失败"));
-      }
-      const payload = await response.json() as { user?: SessionUser };
-      if (!payload.user) throw new Error("管理员初始化失败");
-      setCurrentAdmin(payload.user);
-      setBootstrapRequired(false);
-      setData(null);
-      setAuthenticated(true);
-    } catch (bootstrapError) {
-      setMessage(bootstrapError instanceof Error ? bootstrapError.message : "管理员初始化失败");
-    } finally {
-      setIsLoading(false);
+      queryClient.removeQueries({ queryKey: queryKeys.admin.bootstrap });
+      const authenticatedSession: AdminSessionPayload = {
+        authenticated: true,
+        user
+      };
+      queryClient.setQueryData(queryKeys.admin.session, authenticatedSession);
+    } catch {
+      // Mutation error is rendered below.
     }
   }
 
   async function logout() {
-    try {
-      await fetch("/api/admin/auth/logout", { method: "POST" });
-    } catch {
-      // Local UI state should still reset if the network drops during logout.
-    }
-    setAuthenticated(false);
-    setCurrentAdmin(null);
-    setBootstrapRequired(false);
-    setData(null);
-    setLogs([]);
-    setError(null);
-    setMessage(null);
+    await logoutMutation.mutateAsync().catch(() => undefined);
   }
+
+  const authReady = !sessionQuery.isPending;
+  const bootstrapRequired = sessionQuery.data?.authenticated === false && sessionQuery.data.bootstrapRequired;
+  const currentAdmin = sessionQuery.data?.authenticated ? sessionQuery.data.user : null;
+  const data = bootstrapQuery.data ?? null;
+  const logs = logsQuery.data?.logs ?? [];
+  const messageError = loginMutation.error ?? bootstrapMutation.error;
+  const message = messageError instanceof Error ? messageError.message : null;
+  const queryError = sessionQuery.error ?? bootstrapQuery.error ?? (view === "logs" ? logsQuery.error : null);
+  const error = queryError instanceof Error ? queryError.message : null;
+  const isLoading = loginMutation.isPending
+    || bootstrapMutation.isPending
+    || logoutMutation.isPending
+    || (authenticated && bootstrapQuery.isPending);
 
   if (!authReady) return <main className="admin-page-shell loading">加载中</main>;
 

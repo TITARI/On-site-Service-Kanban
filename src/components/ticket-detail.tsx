@@ -1,6 +1,7 @@
 ﻿"use client";
 
 import { useEffect, useRef, useState, type CSSProperties, type FormEvent, type TouchEvent } from "react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Camera,
   CheckCircle2,
@@ -20,6 +21,8 @@ import {
 import { createPortal } from "react-dom";
 import type { CurrentUser } from "@/lib/client/auth";
 import { readImagesAsDataUrls } from "@/lib/client/images";
+import { apiFetch, isUnauthorized } from "@/lib/client/api-request";
+import { queryKeys } from "@/lib/client/query-keys";
 import { formatDisplayDateTime, formatDisplayTime } from "@/lib/domain/time-format";
 import type { Ticket, TicketStatus } from "@/lib/domain/types";
 import { PriorityBadge } from "./priority-badge";
@@ -135,17 +138,13 @@ function GalleryImageGrid({
 
 export function TicketDetail({
   currentUser,
-  onRefresh,
   onUnauthorized,
   ticket
 }: {
   ticket?: Ticket;
   currentUser?: CurrentUser;
-  onRefresh: () => void;
   onUnauthorized?: () => void;
 }) {
-  const [isReplying, setIsReplying] = useState(false);
-  const [isActing, setIsActing] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [replyImageUrls, setReplyImageUrls] = useState<string[]>([]);
   const [processImageUrls, setProcessImageUrls] = useState<string[]>([]);
@@ -155,6 +154,29 @@ export function TicketDetail({
   const galleryCloseButtonRef = useRef<HTMLButtonElement | null>(null);
   const galleryOpenerRef = useRef<HTMLButtonElement | null>(null);
   const galleryStageRef = useRef<HTMLDivElement | null>(null);
+  const queryClient = useQueryClient();
+  const patchMutation = useMutation({
+    mutationFn: (variables: { ticketId: string; payload: Record<string, unknown> }) => apiFetch(
+      `/api/tickets/${variables.ticketId}`,
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(variables.payload)
+      },
+      "工单操作失败，请稍后重试"
+    )
+  });
+  const replyMutation = useMutation({
+    mutationFn: (variables: { ticketId: string; body: string; imageUrls: string[] }) => apiFetch(
+      `/api/tickets/${variables.ticketId}/replies`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ body: variables.body, imageUrls: variables.imageUrls })
+      },
+      "回复失败，请稍后重试"
+    )
+  });
   const isGalleryOpen = Boolean(gallery);
   const activeGalleryRotation = gallery ? gallery.rotations[gallery.index] ?? 0 : 0;
 
@@ -316,25 +338,22 @@ export function TicketDetail({
   const canAccept = Boolean(currentUser?.permissions?.canAccept && ticket.status === "已解决");
 
   async function patchTicket(payload: Record<string, unknown>) {
-    setIsActing(true);
     setMessage(null);
     try {
-      const response = await fetch(`/api/tickets/${currentTicket.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
-      });
-      if (response.status === 401) {
-        onUnauthorized?.();
-        return;
-      }
-      if (!response.ok) throw new Error("ticket action failed");
+      await patchMutation.mutateAsync({ ticketId: currentTicket.id, payload });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.mobile.bootstrap }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.mobile.ticket(currentTicket.id) })
+      ]);
       setProcessImageUrls([]);
-      onRefresh();
-    } catch {
+      return true;
+    } catch (error) {
+      if (isUnauthorized(error)) {
+        onUnauthorized?.();
+        return false;
+      }
       setMessage("工单操作失败，请稍后重试");
-    } finally {
-      setIsActing(false);
+      return false;
     }
   }
 
@@ -356,13 +375,13 @@ export function TicketDetail({
       setMessage("请填写处理内容并上传处理照片");
       return;
     }
-    await patchTicket({
+    const succeeded = await patchTicket({
       action: "progress",
       status: String(formData.get("nextStatus") ?? processOptions[0]),
       processBody,
       imageUrls: processImageUrls
     });
-    form.reset();
+    if (succeeded) form.reset();
   }
 
   async function acceptTicket() {
@@ -383,42 +402,38 @@ export function TicketDetail({
       setMessage("请填写未通过原因");
       return;
     }
-    await patchTicket({
+    const succeeded = await patchTicket({
       action: "reject",
       status: "待再次处理",
       reason
     });
-    form.reset();
+    if (succeeded) form.reset();
   }
 
   async function addReply(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = event.currentTarget;
-    setIsReplying(true);
     setMessage(null);
     const formData = new FormData(form);
     try {
-      const response = await fetch(`/api/tickets/${currentTicket.id}/replies`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          body: String(formData.get("body") ?? ""),
-          imageUrls: replyImageUrls
-        })
+      await replyMutation.mutateAsync({
+        ticketId: currentTicket.id,
+        body: String(formData.get("body") ?? ""),
+        imageUrls: replyImageUrls
       });
-      if (response.status === 401) {
-        onUnauthorized?.();
-        return;
-      }
-      if (!response.ok) throw new Error("reply failed");
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.mobile.bootstrap }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.mobile.ticket(currentTicket.id) })
+      ]);
       form.reset();
       setReplyImageUrls([]);
       setMessage("回复已追加");
-      onRefresh();
-    } catch {
+    } catch (error) {
+      if (isUnauthorized(error)) {
+        onUnauthorized?.();
+        return;
+      }
       setMessage("回复失败，请稍后重试");
-    } finally {
-      setIsReplying(false);
     }
   }
 
@@ -447,7 +462,7 @@ export function TicketDetail({
       {(canClaim || canProcess || canAccept) && (
         <section className="action-panel" aria-label="工单操作">
           {canClaim && (
-            <button className="primary-button" type="button" onClick={() => void claimTicket()} disabled={isActing}>
+            <button className="primary-button" type="button" onClick={() => void claimTicket()} disabled={patchMutation.isPending}>
               <Hand size={17} aria-hidden="true" />认领工单
             </button>
           )}
@@ -477,12 +492,12 @@ export function TicketDetail({
                 />
               )}
               <p className="image-hint"><Camera size={16} aria-hidden="true" />已选择 {processImageUrls.length} 张处理照片</p>
-              <button className="primary-button" type="submit" disabled={isActing}><Send size={17} aria-hidden="true" />提交处理进度</button>
+              <button className="primary-button" type="submit" disabled={patchMutation.isPending}><Send size={17} aria-hidden="true" />提交处理进度</button>
             </form>
           )}
           {canAccept && (
             <>
-              <button className="primary-button accept-button" type="button" onClick={() => void acceptTicket()} disabled={isActing}>
+              <button className="primary-button accept-button" type="button" onClick={() => void acceptTicket()} disabled={patchMutation.isPending}>
                 <CheckCircle2 size={17} aria-hidden="true" />验收通过
               </button>
               <form className="reject-form" onSubmit={rejectTicket}>
@@ -490,7 +505,7 @@ export function TicketDetail({
                   <span>未通过原因</span>
                   <textarea name="rejectReason" placeholder="说明未通过原因，便于处理组再次整改" required />
                 </label>
-                <button className="secondary-button reject-button" type="submit" disabled={isActing}>验收未通过</button>
+                <button className="secondary-button reject-button" type="submit" disabled={patchMutation.isPending}>验收未通过</button>
               </form>
             </>
           )}
@@ -600,9 +615,9 @@ export function TicketDetail({
         )}
         <p className="image-hint"><ImagePlus size={16} aria-hidden="true" />已选择 {replyImageUrls.length} 张图片</p>
         {message && <StatusMessage tone={message === "回复已追加" ? "status" : "error"}>{message}</StatusMessage>}
-        <button type="submit" disabled={isReplying}>
+        <button type="submit" disabled={replyMutation.isPending}>
           <MessageSquareReply size={18} aria-hidden="true" />
-          {isReplying ? "回复中" : "回复"}
+          {replyMutation.isPending ? "回复中" : "回复"}
         </button>
       </form>
 
