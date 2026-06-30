@@ -80,7 +80,7 @@ describe("wxauto rest bridge helpers", () => {
     expect(JSON.parse(String(calls[1].options.body))).toEqual({ status: "sent" });
   });
 
-  it("marks outbound messages failed when wxauto send fails", async () => {
+  it("leaves transient wxauto failures to BullMQ for retry", async () => {
     const calls: Array<{ url: string; options: RequestInit }> = [];
     const fetchImpl = vi.fn(async (url: string, options: RequestInit) => {
       calls.push({ url, options });
@@ -110,11 +110,10 @@ describe("wxauto rest bridge helpers", () => {
       }
     })).rejects.toThrow("outbound send failed");
 
-    expect(calls[1].url).toBe("http://127.0.0.1:3000/api/integrations/wechat/outbound/outbound-2");
-    expect(JSON.parse(String(calls[1].options.body))).toEqual({ status: "failed", error: "窗口不存在" });
+    expect(calls).toHaveLength(1);
   });
 
-  it("marks outbound messages failed when wxauto send request throws", async () => {
+  it("leaves thrown wxauto requests to BullMQ for retry", async () => {
     const calls: Array<{ url: string; options: RequestInit }> = [];
     const fetchImpl = vi.fn(async (url: string, options: RequestInit) => {
       calls.push({ url, options });
@@ -138,25 +137,98 @@ describe("wxauto rest bridge helpers", () => {
       }
     })).rejects.toThrow("outbound send failed");
 
-    expect(calls[1].url).toBe("http://127.0.0.1:3000/api/integrations/wechat/outbound/outbound-throw");
-    expect(JSON.parse(String(calls[1].options.body))).toEqual({ status: "failed", error: "request timeout" });
+    expect(calls).toHaveLength(1);
   });
 
-  it("claims outbound messages from the app", async () => {
+  it("asks the app to dispatch outbound messages to BullMQ", async () => {
     const fetchImpl = vi.fn(async () => ({
       ok: true,
       status: 200,
-      json: async () => ({ messages: [{ id: "outbound-1", targetName: "现场群", text: "请补充展位号" }] })
+      json: async () => ({ messages: [], queued: 1 })
     }));
 
-    const messages = await bridge.pullOutboundMessages(fetchImpl, {
+    const result = await bridge.dispatchOutboundMessages(fetchImpl, {
       outboundUrl: "http://127.0.0.1:3000/api/integrations/wechat/outbound",
       intakeSecret: "secret"
     });
 
-    expect(messages).toHaveLength(1);
+    expect(result).toEqual({ queued: 1 });
     expect(fetchImpl).toHaveBeenCalledWith("http://127.0.0.1:3000/api/integrations/wechat/outbound", expect.objectContaining({
       method: "POST"
     }));
+  });
+
+  it("runs outbound delivery in a stalled-aware BullMQ worker with a DLQ", async () => {
+    const redisInstances: Array<{ url: string; options: unknown }> = [];
+    const queues: Array<{ name: string; add: ReturnType<typeof vi.fn> }> = [];
+    const workers: Array<{
+      processor: (job: { data: unknown }) => Promise<void>;
+      options: unknown;
+      listeners: Record<string, (...args: unknown[]) => unknown>;
+    }> = [];
+    const handler = vi.fn(async () => undefined);
+    const onTerminalFailure = vi.fn(async () => undefined);
+
+    class FakeRedis {
+      quit = vi.fn(async () => "OK");
+      constructor(public url: string, public options: unknown) {
+        redisInstances.push(this);
+      }
+    }
+    class FakeQueue {
+      add = vi.fn(async () => undefined);
+      close = vi.fn(async () => undefined);
+      constructor(public name: string) {
+        queues.push(this);
+      }
+    }
+    class FakeWorker {
+      listeners: Record<string, (...args: unknown[]) => unknown> = {};
+      close = vi.fn(async () => undefined);
+      constructor(
+        public name: string,
+        public processor: (job: { data: unknown }) => Promise<void>,
+        public options: unknown
+      ) {
+        workers.push(this);
+      }
+      on(event: string, listener: (...args: unknown[]) => unknown) {
+        this.listeners[event] = listener;
+        return this;
+      }
+    }
+
+    bridge.createBridgeOutboundWorker({
+      redisUrl: "redis://127.0.0.1:6379",
+      handler,
+      onTerminalFailure,
+      RedisClass: FakeRedis,
+      QueueClass: FakeQueue,
+      WorkerClass: FakeWorker
+    });
+
+    expect(redisInstances).toEqual([
+      expect.objectContaining({ options: expect.objectContaining({ maxRetriesPerRequest: null }) }),
+      expect.objectContaining({ options: expect.objectContaining({ maxRetriesPerRequest: 1 }) })
+    ]);
+    expect(workers[0].options).toMatchObject({ concurrency: 5, stalledInterval: 30000, maxStalledCount: 1 });
+
+    const message = { id: "outbound-1", targetName: "现场群", text: "工单已创建" };
+    await workers[0].processor({ data: message });
+    expect(handler).toHaveBeenCalledWith(message, expect.objectContaining({ data: message }));
+
+    await workers[0].listeners.failed({
+      id: "outbound-1",
+      name: "send",
+      data: message,
+      attemptsMade: 3,
+      opts: { attempts: 3 }
+    }, new Error("wxauto unavailable"));
+    expect(onTerminalFailure).toHaveBeenCalledWith(message, expect.any(Error), 3);
+    expect(queues[0].add).toHaveBeenCalledWith(
+      "dead-letter",
+      expect.objectContaining({ message, failedReason: "wxauto unavailable", attemptsMade: 3 }),
+      { jobId: "outbound-1" }
+    );
   });
 });

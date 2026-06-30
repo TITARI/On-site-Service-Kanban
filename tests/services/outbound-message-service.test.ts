@@ -85,6 +85,17 @@ describe("outbound message service", () => {
     expect(message.lastError).toBeUndefined();
   });
 
+  it("records BullMQ's minimum retry count on terminal failure", () => {
+    const appState = state();
+    const message = queueOutboundMessage(appState, { channel: "wechat", targetName: "张三", text: "发送失败测试" });
+
+    markOutboundMessageFailed(appState, message.id, "重试耗尽", "2026-05-27T12:02:00.000Z", 3);
+    markOutboundMessageFailed(appState, message.id, "重试耗尽", "2026-05-27T12:02:01.000Z", 3);
+
+    expect(message.retryCount).toBe(3);
+    expect(message.status).toBe("failed");
+  });
+
   it("reclaims expired sending messages without claiming fresh ones", () => {
     const appState = state();
     const expired = queueOutboundMessage(appState, { channel: "wechat", targetName: "张三", text: "过期发送中" });

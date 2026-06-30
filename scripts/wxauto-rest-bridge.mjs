@@ -3,6 +3,11 @@
 import crypto from "node:crypto";
 import process from "node:process";
 import { pathToFileURL } from "node:url";
+import { Queue, Worker } from "bullmq";
+import IORedis from "ioredis";
+
+const OUTBOUND_QUEUE_NAME = "outbound-messages";
+const OUTBOUND_DLQ_NAME = "outbound-messages-dlq";
 
 const config = {
   wxautoBaseUrl: (process.env.WXAUTO_REST_BASE_URL ?? "http://127.0.0.1:8001").replace(/\/+$/, ""),
@@ -11,6 +16,7 @@ const config = {
   filterMute: (process.env.WXAUTO_FILTER_MUTE ?? "false").toLowerCase() === "true",
   intakeUrl: process.env.INTAKE_URL ?? "http://127.0.0.1:3000/api/integrations/wechat/messages",
   outboundUrl: process.env.OUTBOUND_URL ?? "http://127.0.0.1:3000/api/integrations/wechat/outbound",
+  redisUrl: process.env.REDIS_URL ?? "",
   intakeSecret: process.env.INTAKE_SECRET ?? "",
   pollIntervalMs: Number.parseInt(process.env.BRIDGE_POLL_INTERVAL_MS ?? "1200", 10),
   outboundPollIntervalMs: Number.parseInt(process.env.BRIDGE_OUTBOUND_POLL_INTERVAL_MS ?? "1500", 10),
@@ -39,6 +45,9 @@ function assertConfig() {
   }
   if (!config.outboundUrl.startsWith("http://") && !config.outboundUrl.startsWith("https://")) {
     errors.push("OUTBOUND_URL must start with http:// or https://.");
+  }
+  if (!config.dryRun && !config.redisUrl) {
+    errors.push("REDIS_URL is required when BRIDGE_DRY_RUN is false.");
   }
 
   if (errors.length > 0) {
@@ -297,11 +306,32 @@ export function mapOutboundToWxautoSend(message) {
   };
 }
 
+export async function reportOutboundResult({
+  messageId,
+  status,
+  error,
+  attemptsMade,
+  fetchImpl = fetch,
+  config: runtimeConfig = config
+}) {
+  const headers = {
+    "Content-Type": "application/json"
+  };
+  if (runtimeConfig.intakeSecret) {
+    headers["x-mcp-secret"] = runtimeConfig.intakeSecret;
+  }
+  const response = await fetchImpl(`${runtimeConfig.outboundUrl}/${messageId}`, {
+    method: "PATCH",
+    headers,
+    body: JSON.stringify(status === "sent" ? { status } : { status, error, attemptsMade })
+  });
+  if (!response.ok) throw new Error(`outbound result update failed: HTTP ${response.status}`);
+}
+
 export async function sendOutboundMessage({ message, fetchImpl = fetch, config: runtimeConfig = config }) {
-  let status = "failed";
-  let error;
+  let sendResponse;
   try {
-    const sendResponse = await fetchImpl(`${runtimeConfig.wxautoBaseUrl}/v1/wechat/send`, {
+    sendResponse = await fetchImpl(`${runtimeConfig.wxautoBaseUrl}/v1/wechat/send`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -309,29 +339,90 @@ export async function sendOutboundMessage({ message, fetchImpl = fetch, config: 
       },
       body: JSON.stringify(mapOutboundToWxautoSend(message))
     });
-    const sendBody = await sendResponse.json().catch(() => ({}));
-    status = sendResponse.ok && sendBody?.success !== false ? "sent" : "failed";
-    error = status === "failed" ? sendBody?.message ?? `HTTP ${sendResponse.status}` : undefined;
   } catch (caught) {
-    error = caught instanceof Error ? caught.message : String(caught);
+    const reason = caught instanceof Error ? caught.message : String(caught);
+    throw new Error(`outbound send failed: ${reason}`);
   }
 
-  const headers = {
-    "Content-Type": "application/json"
-  };
-  if (runtimeConfig.intakeSecret) {
-    headers["x-mcp-secret"] = runtimeConfig.intakeSecret;
+  const sendBody = await sendResponse.json().catch(() => ({}));
+  if (!sendResponse.ok || sendBody?.success === false) {
+    throw new Error(`outbound send failed: ${sendBody?.message ?? `HTTP ${sendResponse.status}`}`);
   }
-  await fetchImpl(`${runtimeConfig.outboundUrl}/${message.id}`, {
-    method: "PATCH",
-    headers,
-    body: JSON.stringify(status === "sent" ? { status } : { status, error })
-  });
 
-  if (status === "failed") throw new Error(`outbound send failed: ${error}`);
+  await reportOutboundResult({ messageId: message.id, status: "sent", fetchImpl, config: runtimeConfig });
 }
 
-export async function pullOutboundMessages(fetchImpl = fetch, runtimeConfig = config) {
+function isExhaustedJob(job, error) {
+  const attempts = typeof job?.opts?.attempts === "number" ? job.opts.attempts : 1;
+  return job?.attemptsMade >= attempts || /stalled more than allowable limit/i.test(error?.message ?? "");
+}
+
+export function createBridgeOutboundWorker({
+  redisUrl = config.redisUrl,
+  handler = (message) => sendOutboundMessage({ message, fetchImpl: fetchWithTimeout }),
+  onTerminalFailure = (message, error, attemptsMade) => reportOutboundResult({
+    messageId: message.id,
+    status: "failed",
+    error: error.message,
+    attemptsMade,
+    fetchImpl: fetchWithTimeout
+  }),
+  RedisClass = IORedis,
+  QueueClass = Queue,
+  WorkerClass = Worker
+} = {}) {
+  if (!redisUrl) throw new Error("REDIS_URL is required for the outbound BullMQ worker");
+
+  const workerConnection = new RedisClass(redisUrl, { maxRetriesPerRequest: null });
+  const deadLetterConnection = new RedisClass(redisUrl, { maxRetriesPerRequest: 1 });
+  const deadLetterQueue = new QueueClass(OUTBOUND_DLQ_NAME, { connection: deadLetterConnection });
+  const worker = new WorkerClass(
+    OUTBOUND_QUEUE_NAME,
+    (job) => handler(job.data, job),
+    {
+      connection: workerConnection,
+      concurrency: 5,
+      stalledInterval: 30_000,
+      maxStalledCount: 1
+    }
+  );
+
+  worker.on("failed", async (job, error) => {
+    if (!job || !isExhaustedJob(job, error)) return;
+    const attemptsMade = Math.max(job.attemptsMade, typeof job.opts?.attempts === "number" ? job.opts.attempts : 1);
+    try {
+      await onTerminalFailure(job.data, error, attemptsMade);
+    } catch (reportError) {
+      console.error(`[bridge] failed to record terminal failure ${job.id}: ${reportError instanceof Error ? reportError.message : String(reportError)}`);
+    }
+    try {
+      await deadLetterQueue.add("dead-letter", {
+        message: job.data,
+        failedReason: error.message,
+        attemptsMade,
+        failedAt: new Date().toISOString()
+      }, { jobId: job.id });
+    } catch (dlqError) {
+      console.error(`[bridge] failed to persist dead-letter job ${job.id}: ${dlqError instanceof Error ? dlqError.message : String(dlqError)}`);
+    }
+  });
+  worker.on("error", (error) => {
+    console.error(`[bridge] outbound worker error: ${error.message}`);
+  });
+
+  return {
+    worker,
+    deadLetterQueue,
+    async close() {
+      await worker.close();
+      await deadLetterQueue.close();
+      await workerConnection.quit();
+      await deadLetterConnection.quit();
+    }
+  };
+}
+
+export async function dispatchOutboundMessages(fetchImpl = fetch, runtimeConfig = config) {
   const headers = {
     "Content-Type": "application/json"
   };
@@ -344,25 +435,13 @@ export async function pullOutboundMessages(fetchImpl = fetch, runtimeConfig = co
     body: JSON.stringify({ limit: 10 })
   });
   const body = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(`outbound claim failed: HTTP ${response.status}`);
-  return Array.isArray(body.messages) ? body.messages : [];
+  if (!response.ok) throw new Error(`outbound dispatch failed: HTTP ${response.status}`);
+  return { queued: Number.isInteger(body.queued) ? body.queued : 0 };
 }
 
 async function processOutboundQueue() {
-  const outboundMessages = await pullOutboundMessages(fetchWithTimeout);
-  for (const message of outboundMessages) {
-    if (config.dryRun) {
-      console.log(`[dry-run-outbound] ${JSON.stringify(message)}`);
-      continue;
-    }
-    try {
-      await sendOutboundMessage({ message, fetchImpl: fetchWithTimeout });
-      console.log(`[bridge] sent outbound ${message.id} (${message.targetName})`);
-    } catch (error) {
-      const reason = error instanceof Error ? error.message : String(error);
-      console.error(`[bridge] outbound ${message.id} failed: ${reason}`);
-    }
-  }
+  const { queued } = await dispatchOutboundMessages(fetchWithTimeout);
+  if (queued > 0) console.log(`[bridge] dispatched ${queued} outbound message(s) to BullMQ`);
 }
 
 function sleep(ms) {
@@ -376,6 +455,7 @@ async function main() {
   let lastOutboundPollAt = 0;
 
   await initializeWechatWithRetry();
+  if (!config.dryRun) createBridgeOutboundWorker();
 
   while (true) {
     try {
@@ -391,7 +471,7 @@ async function main() {
         console.log(`[bridge] forwarded ${payload.externalMessageId} (${payload.senderName})`);
       }
 
-      if (Date.now() - lastOutboundPollAt >= config.outboundPollIntervalMs) {
+      if (!config.dryRun && Date.now() - lastOutboundPollAt >= config.outboundPollIntervalMs) {
         lastOutboundPollAt = Date.now();
         await processOutboundQueue();
       }
