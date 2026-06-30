@@ -1,15 +1,19 @@
+import { scryptSync } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import type { AppRepository } from "@/lib/repositories/app-repository";
 import type {
+  AccountCredential,
   AccountSession,
   AuthenticatedActor
 } from "@/lib/domain/access-control";
 import type { AppConfig } from "@/lib/seed";
 import {
+  adminLogin,
   bootstrapFirstAdmin,
   mobileLogin,
   resolveRequestActor
 } from "@/lib/services/auth-service";
+import { hashPassword } from "@/lib/services/password-service";
 import { SESSION_COOKIE_NAMES, sessionTokenHash } from "@/lib/services/session-service";
 
 const config: AppConfig = {
@@ -78,6 +82,34 @@ function session(overrides: Partial<AccountSession> = {}): AccountSession {
   };
 }
 
+function credential(overrides: Partial<AccountCredential> = {}): AccountCredential {
+  return {
+    accountId: "account-admin",
+    passwordHash: "",
+    passwordChangedAt: "2026-01-01T00:00:00.000Z",
+    mustChangePassword: false,
+    failedAttempts: 0,
+    ...overrides
+  };
+}
+
+function legacyHash(password: string) {
+  const salt = Buffer.alloc(16, 3);
+  const key = scryptSync(password, salt, 64, {
+    cost: 16384,
+    blockSize: 8,
+    parallelization: 1
+  });
+  return [
+    "scrypt",
+    16384,
+    8,
+    1,
+    salt.toString("base64url"),
+    key.toString("base64url")
+  ].join("$");
+}
+
 function repository(overrides: Partial<AppRepository> = {}): AppRepository {
   return {
     kind: "file",
@@ -95,6 +127,107 @@ function repository(overrides: Partial<AppRepository> = {}): AppRepository {
 }
 
 describe("auth service", () => {
+  it("transparently upgrades a legacy admin hash after successful login", async () => {
+    const password = "StrongPass123!";
+    const storedHash = legacyHash(password);
+    const admin = actor({
+      accountId: "account-admin",
+      personId: "person-admin",
+      sessionType: "admin",
+      permissions: ["admin.access"]
+    });
+    const upgradeAdminPasswordHash = vi.fn(async () => true);
+    const repo = repository({
+      adminLoginRecord: vi.fn(async () => ({
+        actor: admin,
+        credential: credential({ passwordHash: storedHash })
+      })),
+      recordAdminLoginSuccess: vi.fn(async () => undefined),
+      recordAdminLoginFailure: vi.fn(async () => undefined),
+      upgradeAdminPasswordHash
+    });
+
+    await expect(adminLogin(repo, {
+      phone: admin.phone,
+      password
+    })).resolves.toMatchObject({ actor: admin });
+
+    expect(upgradeAdminPasswordHash).toHaveBeenCalledWith(
+      admin.accountId,
+      storedHash,
+      expect.stringMatching(/^\$argon2id\$v=19\$m=19456,t=2,p=1\$/)
+    );
+    expect(repo.createAccountSession).toHaveBeenCalledOnce();
+  });
+
+  it("does not rehash a current Argon2id credential or an invalid password", async () => {
+    const password = "StrongPass123!";
+    const currentHash = await hashPassword(password);
+    const admin = actor({ sessionType: "admin", permissions: ["admin.access"] });
+    const upgradeAdminPasswordHash = vi.fn(async () => true);
+    const repo = repository({
+      adminLoginRecord: vi.fn(async () => ({
+        actor: admin,
+        credential: credential({
+          accountId: admin.accountId,
+          passwordHash: currentHash
+        })
+      })),
+      recordAdminLoginSuccess: vi.fn(async () => undefined),
+      recordAdminLoginFailure: vi.fn(async () => undefined),
+      upgradeAdminPasswordHash
+    });
+
+    await expect(adminLogin(repo, {
+      phone: admin.phone,
+      password
+    })).resolves.toMatchObject({ actor: admin });
+    expect(upgradeAdminPasswordHash).not.toHaveBeenCalled();
+
+    await expect(adminLogin(repo, {
+      phone: admin.phone,
+      password: "WrongPass123!"
+    })).rejects.toMatchObject({ status: 401 });
+    expect(upgradeAdminPasswordHash).not.toHaveBeenCalled();
+  });
+
+  it("logs a rehash storage error without blocking a successful login", async () => {
+    const password = "StrongPass123!";
+    const storedHash = legacyHash(password);
+    const admin = actor({ sessionType: "admin", permissions: ["admin.access"] });
+    const failure = new Error("password hash CAS unavailable");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const repo = repository({
+      adminLoginRecord: vi.fn(async () => ({
+        actor: admin,
+        credential: credential({
+          accountId: admin.accountId,
+          passwordHash: storedHash
+        })
+      })),
+      recordAdminLoginSuccess: vi.fn(async () => undefined),
+      recordAdminLoginFailure: vi.fn(async () => undefined),
+      upgradeAdminPasswordHash: vi.fn(async () => { throw failure; })
+    });
+
+    try {
+      await expect(adminLogin(repo, {
+        phone: admin.phone,
+        password
+      })).resolves.toMatchObject({ actor: admin });
+
+      expect(warn).toHaveBeenCalledWith(
+        "[auth] password hash transparent upgrade failed",
+        { accountId: admin.accountId, error: failure }
+      );
+      expect(JSON.stringify(warn.mock.calls)).not.toContain(password);
+      expect(JSON.stringify(warn.mock.calls)).not.toContain(storedHash);
+      expect(repo.createAccountSession).toHaveBeenCalledOnce();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it("logs in a mobile user with normalized phone and a seven-day hashed session", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-06-15T08:00:00.000Z"));

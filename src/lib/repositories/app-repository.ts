@@ -76,6 +76,7 @@ import {
   syncAccessRolesWithoutAuditInState,
   unbindChatIdentityInState,
   updateUserInState,
+  upgradeAdminPasswordHashInState,
   userDeletionHistoryInState,
   upsertMobileAccountInState
 } from "../services/access-state-service";
@@ -146,6 +147,7 @@ export type AppRepository = {
   adminLoginRecord(phone: string): Promise<{ actor: AuthenticatedActor; credential: AccountCredential } | undefined>;
   recordAdminLoginFailure(accountId: string, lockedUntil?: string): Promise<void>;
   recordAdminLoginSuccess(accountId: string): Promise<void>;
+  upgradeAdminPasswordHash(accountId: string, expectedHash: string, replacementHash: string): Promise<boolean>;
   resetExpiredAdminLock(accountId: string): Promise<void>;
   bootstrapStatus(): Promise<{ required: boolean }>;
   bootstrapAdmin(input: BootstrapAdminInput): Promise<AuthenticatedActor>;
@@ -441,6 +443,14 @@ export function createFileAppRepository(
     recordAdminLoginSuccess: (accountId) => updateState((state) => {
       recordAdminLoginSuccessInState(state, accountId);
     }),
+    upgradeAdminPasswordHash: (accountId, expectedHash, replacementHash) => (
+      updateState((state) => upgradeAdminPasswordHashInState(
+        state,
+        accountId,
+        expectedHash,
+        replacementHash
+      ))
+    ),
     resetExpiredAdminLock: (accountId) => updateState((state) => {
       resetExpiredAdminLockInState(state, accountId);
     }),
@@ -716,6 +726,9 @@ export function createMariaDbAppRepository(
     ),
     recordAdminLoginSuccess: (accountId) => (
       store.recordAdminLoginSuccess(accountId)
+    ),
+    upgradeAdminPasswordHash: (accountId, expectedHash, replacementHash) => (
+      store.upgradeAdminPasswordHash(accountId, expectedHash, replacementHash)
     ),
     resetExpiredAdminLock: (accountId) => (
       store.resetExpiredAdminLock(accountId)

@@ -20,6 +20,7 @@ const store = vi.hoisted(() => ({
   adminLoginRecord: vi.fn(),
   recordAdminLoginFailure: vi.fn(),
   recordAdminLoginSuccess: vi.fn(),
+  upgradeAdminPasswordHash: vi.fn(),
   resetExpiredAdminLock: vi.fn(),
   createAccountSession: vi.fn(),
   resolveAccountSession: vi.fn(),
@@ -47,6 +48,7 @@ vi.mock("@/lib/repositories/app-repository", () => ({
     adminLoginRecord: store.adminLoginRecord,
     recordAdminLoginFailure: store.recordAdminLoginFailure,
     recordAdminLoginSuccess: store.recordAdminLoginSuccess,
+    upgradeAdminPasswordHash: store.upgradeAdminPasswordHash,
     resetExpiredAdminLock: store.resetExpiredAdminLock,
     createAccountSession: store.createAccountSession,
     resolveAccountSession: store.resolveAccountSession,
@@ -139,6 +141,7 @@ describe("admin auth routes", () => {
     store.adminLoginRecord.mockReset();
     store.recordAdminLoginFailure.mockReset();
     store.recordAdminLoginSuccess.mockReset();
+    store.upgradeAdminPasswordHash.mockReset();
     store.resetExpiredAdminLock.mockReset();
     store.createAccountSession.mockReset();
     store.resolveAccountSession.mockReset();
@@ -157,6 +160,7 @@ describe("admin auth routes", () => {
     store.resolveAccountSession.mockResolvedValue(undefined);
     store.recordAdminLoginFailure.mockResolvedValue(undefined);
     store.recordAdminLoginSuccess.mockResolvedValue(undefined);
+    store.upgradeAdminPasswordHash.mockResolvedValue(true);
     store.resetExpiredAdminLock.mockResolvedValue(undefined);
     store.revokeAccountSession.mockResolvedValue(undefined);
     store.checkRateLimit.mockResolvedValue({ allowed: true, remaining: 4 });

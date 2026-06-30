@@ -1,10 +1,16 @@
 import {
-  randomBytes,
+  hash as argon2Hash,
+  verify as argon2Verify,
+  type Algorithm,
+  type Options as Argon2Options
+} from "@node-rs/argon2";
+import {
   scrypt,
   timingSafeEqual,
   type ScryptOptions
 } from "node:crypto";
 
+export const PASSWORD_MIN_LENGTH = 10;
 export const KEY_LENGTH = 64;
 export const COST = 16384;
 export const BLOCK_SIZE = 8;
@@ -14,6 +20,7 @@ const SALT_LENGTH = 16;
 const SALT_TEXT_LENGTH = 22;
 const KEY_TEXT_LENGTH = 86;
 const MAX_PASSWORD_BYTES = 1024;
+const MAX_ARGON2_HASH_LENGTH = 512;
 const BASE64URL_PATTERN = /^[A-Za-z0-9_-]+$/;
 const HASH_PARAMETER_PREFIX = [
   "scrypt",
@@ -31,6 +38,14 @@ const SCRYPT_OPTIONS: ScryptOptions = {
   cost: COST,
   blockSize: BLOCK_SIZE,
   parallelization: PARALLELIZATION
+};
+const ARGON2_OPTIONS: Argon2Options = {
+  // @node-rs/argon2 declares Algorithm as an ambient const enum, which
+  // isolatedModules cannot access by member name. Runtime Argon2id is 2.
+  algorithm: 2 as Algorithm,
+  memoryCost: 19456,
+  timeCost: 2,
+  parallelism: 1
 };
 
 function deriveKey(
@@ -72,30 +87,17 @@ function decodeBase64url(
 }
 
 export async function hashPassword(password: string): Promise<string> {
-  if (password.length < 10) {
-    throw new Error("后台密码至少需要10位");
+  if (password.length < PASSWORD_MIN_LENGTH) {
+    throw new Error(`后台密码至少需要${PASSWORD_MIN_LENGTH}位`);
   }
   if (Buffer.byteLength(password, "utf8") > MAX_PASSWORD_BYTES) {
     throw new Error("后台密码不能超过1024字节");
   }
 
-  const salt = randomBytes(SALT_LENGTH);
-  const key = await deriveKey(password, salt, SCRYPT_OPTIONS);
-  return [
-    "scrypt",
-    COST,
-    BLOCK_SIZE,
-    PARALLELIZATION,
-    salt.toString("base64url"),
-    key.toString("base64url")
-  ].join("$");
+  return argon2Hash(password, ARGON2_OPTIONS);
 }
 
-export async function verifyPassword(
-  password: string,
-  encoded: string
-): Promise<boolean> {
-  if (Buffer.byteLength(password, "utf8") > MAX_PASSWORD_BYTES) return false;
+function legacyScryptParts(encoded: string) {
   if (encoded.length > MAX_ENCODED_LENGTH) return false;
 
   const parts = encoded.split("$");
@@ -116,7 +118,42 @@ export async function verifyPassword(
     KEY_LENGTH
   );
   if (!salt || !expectedKey) return false;
+  return { salt, expectedKey };
+}
 
-  const actualKey = await deriveKey(password, salt, SCRYPT_OPTIONS);
-  return timingSafeEqual(actualKey, expectedKey);
+async function verifyLegacyScrypt(
+  password: string,
+  encoded: string
+): Promise<boolean> {
+  const parsed = legacyScryptParts(encoded);
+  if (!parsed) return false;
+
+  const actualKey = await deriveKey(password, parsed.salt, SCRYPT_OPTIONS);
+  return timingSafeEqual(actualKey, parsed.expectedKey);
+}
+
+export async function verifyPassword(
+  password: string,
+  encoded: string
+): Promise<boolean> {
+  if (Buffer.byteLength(password, "utf8") > MAX_PASSWORD_BYTES) return false;
+  if (encoded.startsWith("scrypt$")) {
+    return verifyLegacyScrypt(password, encoded);
+  }
+  if (
+    !encoded.startsWith("$argon2id$") ||
+    encoded.length > MAX_ARGON2_HASH_LENGTH
+  ) {
+    return false;
+  }
+
+  try {
+    return await argon2Verify(encoded, password);
+  } catch {
+    return false;
+  }
+}
+
+export function needsRehash(encoded: string): boolean {
+  return Boolean(legacyScryptParts(encoded));
 }

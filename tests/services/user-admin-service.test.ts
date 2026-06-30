@@ -106,7 +106,7 @@ describe("user admin service", () => {
 
     expect(repo.setUserPassword).toHaveBeenCalledWith(
       "person-1",
-      expect.stringMatching(/^scrypt\$/),
+      expect.stringMatching(/^\$argon2id\$/),
       actor()
     );
     expect(repo.setUserPassword).not.toHaveBeenCalledWith(

@@ -1,7 +1,12 @@
 import { createHook } from "node:async_hooks";
+import { scryptSync } from "node:crypto";
 import { createRequire, syncBuiltinESMExports } from "node:module";
 import { describe, expect, it, vi } from "vitest";
-import { hashPassword, verifyPassword } from "@/lib/services/password-service";
+import {
+  hashPassword,
+  needsRehash,
+  verifyPassword
+} from "@/lib/services/password-service";
 
 const PASSWORD = "StrongPass123!";
 const MAX_PASSWORD_BYTES = 1024;
@@ -10,6 +15,16 @@ const CANONICAL_KEY = Buffer.alloc(64, 2).toString("base64url");
 
 function encodedHash(saltText = CANONICAL_SALT, keyText = CANONICAL_KEY) {
   return `scrypt$16384$8$1$${saltText}$${keyText}`;
+}
+
+function legacyHash(password: string) {
+  const salt = Buffer.alloc(16, 1);
+  const key = scryptSync(password, salt, 64, {
+    cost: 16384,
+    blockSize: 8,
+    parallelization: 1
+  });
+  return encodedHash(salt.toString("base64url"), key.toString("base64url"));
 }
 
 function makeNoncanonical(value: string) {
@@ -49,14 +64,12 @@ describe("password service", () => {
     expect(second).not.toContain(PASSWORD);
   });
 
-  it("uses the canonical scrypt format and byte lengths", async () => {
+  it("uses the OWASP Argon2id parameters in PHC format", async () => {
     const encoded = await hashPassword(PASSWORD);
-    const parts = encoded.split("$");
 
-    expect(parts).toHaveLength(6);
-    expect(parts.slice(0, 4)).toEqual(["scrypt", "16384", "8", "1"]);
-    expect(Buffer.from(parts[4], "base64url")).toHaveLength(16);
-    expect(Buffer.from(parts[5], "base64url")).toHaveLength(64);
+    expect(encoded).toMatch(
+      /^\$argon2id\$v=19\$m=19456,t=2,p=1\$[A-Za-z0-9+/]+\$[A-Za-z0-9+/]+$/
+    );
   });
 
   it("verifies the correct password and rejects a wrong password", async () => {
@@ -64,6 +77,21 @@ describe("password service", () => {
 
     await expect(verifyPassword(PASSWORD, encoded)).resolves.toBe(true);
     await expect(verifyPassword("WrongPass123!", encoded)).resolves.toBe(false);
+  });
+
+  it("verifies canonical legacy scrypt hashes for transparent migration", async () => {
+    const encoded = legacyHash(PASSWORD);
+
+    await expect(verifyPassword(PASSWORD, encoded)).resolves.toBe(true);
+    await expect(verifyPassword("WrongPass123!", encoded)).resolves.toBe(false);
+  });
+
+  it("rehashes only legacy scrypt credentials", async () => {
+    const argon2id = await hashPassword(PASSWORD);
+
+    expect(needsRehash(legacyHash(PASSWORD))).toBe(true);
+    expect(needsRehash(argon2id)).toBe(false);
+    expect(needsRehash("not-a-password-hash")).toBe(false);
   });
 
   it("rejects passwords shorter than ten characters", async () => {
@@ -78,13 +106,9 @@ describe("password service", () => {
       MAX_PASSWORD_BYTES
     );
 
-    const scryptRequests = await countScryptRequests(async () => {
-      await expect(hashPassword(password)).rejects.toThrow(
-        "后台密码不能超过1024字节"
-      );
-    });
-
-    expect(scryptRequests).toBe(0);
+    await expect(hashPassword(password)).rejects.toThrow(
+      "后台密码不能超过1024字节"
+    );
   });
 
   it("rejects an oversized authentication password before deriving a key", async () => {
@@ -106,6 +130,7 @@ describe("password service", () => {
     ["empty input", ""],
     ["non-hash text", "not-a-password-hash"],
     ["unsupported algorithm", encodedHash().replace("scrypt", "argon2")],
+    ["malformed argon2id PHC", "$argon2id$broken"],
     ["non-numeric cost", encodedHash().replace("16384", "NaN")],
     ["zero cost", encodedHash().replace("16384", "0")],
     [
