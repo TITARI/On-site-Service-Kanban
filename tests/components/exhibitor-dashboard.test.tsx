@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { ExhibitorDashboard } from "@/components/exhibitor-dashboard";
@@ -100,7 +100,7 @@ describe("ExhibitorDashboard", () => {
     expect(within(table).getAllByText("同展位存在其他展商")).toHaveLength(2);
 
     await user.click(within(table).getByRole("button", { name: "查看汕头市昌隆机械科技有限公司" }));
-    const drawer = screen.getByRole("complementary", { name: "展商详情" });
+    const drawer = screen.getByRole("dialog", { name: "展商详情" });
     expect(within(drawer).getByRole("heading", { name: "汕头市昌隆机械科技有限公司" })).not.toBeNull();
     expect(within(drawer).getByText("展商基础数据")).not.toBeNull();
     expect(within(drawer).getByText("面积规格")).not.toBeNull();
@@ -109,6 +109,136 @@ describe("ExhibitorDashboard", () => {
     expect(within(drawer).getByText("136****4172")).not.toBeNull();
     expect(within(drawer).getByRole("button", { name: "取消" })).not.toBeNull();
     expect(within(drawer).getByRole("button", { name: "编辑展商数据" })).not.toBeNull();
+  });
+
+  it("traps focus in the detail drawer, closes with Escape, and restores the opener", async () => {
+    const user = userEvent.setup();
+    render(<ExhibitorDashboard booths={[booths[0]]} isImporting={false} onImportFile={vi.fn()} />);
+
+    const table = screen.getByRole("table", { name: "展商数据表格" });
+    const opener = within(table).getByRole("button", { name: `查看${booths[0].companyName}` });
+    await user.click(opener);
+
+    const drawer = screen.getByRole("dialog", { name: "展商详情" });
+    expect(drawer.contains(document.activeElement)).toBe(true);
+
+    const firstButton = within(drawer).getByRole("button", { name: "关闭详情" });
+    const buttons = within(drawer).getAllByRole("button");
+    buttons.at(-1)?.focus();
+    await user.tab();
+    expect(document.activeElement).toBe(firstButton);
+
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog", { name: "展商详情" })).toBeNull();
+    await waitFor(() => expect(document.activeElement).toBe(
+      within(table).getByRole("button", { name: `查看${booths[0].companyName}` })
+    ));
+  });
+
+  it("dismisses type settings with Escape and restores focus", async () => {
+    const user = userEvent.setup();
+    render(<ExhibitorDashboard booths={booths.slice(0, 2)} isImporting={false} onImportFile={vi.fn()} />);
+
+    const opener = screen.getByRole("button", { name: "类型设置" });
+    await user.click(opener);
+    const dialog = screen.getByRole("dialog", { name: "展商类型设置" });
+    expect(dialog.contains(document.activeElement)).toBe(true);
+
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog", { name: "展商类型设置" })).toBeNull();
+    await waitFor(() => expect(document.activeElement).toBe(opener));
+  });
+
+  it("closes nested member assignment before the detail drawer and restores focus inside the drawer", async () => {
+    const user = userEvent.setup();
+    render(<ExhibitorDashboard booths={[booths[0]]} isImporting={false} onImportFile={vi.fn()} />);
+
+    const table = screen.getByRole("table", { name: "展商数据表格" });
+    await user.click(within(table).getByRole("button", { name: `查看${booths[0].companyName}` }));
+    const drawer = screen.getByRole("dialog", { name: "展商详情" });
+    const opener = within(drawer).getByRole("button", { name: "添加现场搭建成员" });
+    await user.click(opener);
+
+    expect(screen.getByRole("dialog", { name: "分配现场搭建成员" })).not.toBeNull();
+    await user.keyboard("{Escape}");
+
+    expect(screen.queryByRole("dialog", { name: "分配现场搭建成员" })).toBeNull();
+    const restoredDrawer = screen.getByRole("dialog", { name: "展商详情" });
+    const restoredOpener = within(restoredDrawer).getByRole("button", { name: "添加现场搭建成员" });
+    await waitFor(() => expect(document.activeElement).toBe(restoredOpener));
+  });
+
+  it("dismisses import diff with Escape and restores focus", async () => {
+    const user = userEvent.setup();
+    const diffBooth: BoothRecord = {
+      ...booths[0],
+      companyName: "导入缺字段展商",
+      companyShortName: "",
+      location: "",
+      area: "",
+      boothType: ""
+    };
+    render(<ExhibitorDashboard booths={[diffBooth]} isImporting={false} onImportFile={vi.fn()} />);
+
+    const opener = screen.getByRole("button", { name: "处理导入差异" });
+    await user.click(opener);
+    const dialog = screen.getByRole("dialog", { name: "导入差异数值确认" });
+    expect(dialog.contains(document.activeElement)).toBe(true);
+
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog", { name: "导入差异数值确认" })).toBeNull();
+    await waitFor(() => expect(document.activeElement).toBe(opener));
+  });
+
+  it("dismisses exhibitor editing before the drawer and restores focus", async () => {
+    const user = userEvent.setup();
+    render(<ExhibitorDashboard booths={[booths[0]]} isImporting={false} onImportFile={vi.fn()} />);
+
+    const table = screen.getByRole("table", { name: "展商数据表格" });
+    await user.click(within(table).getByRole("button", { name: `查看${booths[0].companyName}` }));
+    const drawer = screen.getByRole("dialog", { name: "展商详情" });
+    const opener = within(drawer).getByRole("button", { name: "编辑展商数据" });
+    await user.click(opener);
+
+    expect(screen.getByRole("dialog", { name: "编辑展商数据" })).not.toBeNull();
+    await user.keyboard("{Escape}");
+
+    expect(screen.queryByRole("dialog", { name: "编辑展商数据" })).toBeNull();
+    expect(screen.getByRole("dialog", { name: "展商详情" })).not.toBeNull();
+    await waitFor(() => expect(document.activeElement).toBe(opener));
+  });
+
+  it("dismisses batch type with Escape and restores focus", async () => {
+    const user = userEvent.setup();
+    render(<ExhibitorDashboard booths={booths.slice(0, 2)} isImporting={false} onImportFile={vi.fn()} />);
+
+    const table = screen.getByRole("table", { name: "展商数据表格" });
+    await user.click(within(table).getByLabelText(`选择${booths[0].companyName}`));
+    const opener = screen.getByRole("button", { name: "批量修改类型" });
+    await user.click(opener);
+    const dialog = screen.getByRole("dialog", { name: "批量修改类型" });
+    expect(dialog.contains(document.activeElement)).toBe(true);
+
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog", { name: "批量修改类型" })).toBeNull();
+    await waitFor(() => expect(document.activeElement).toBe(opener));
+  });
+
+  it("uses an alertdialog for batch disable and cancels with Escape", async () => {
+    const user = userEvent.setup();
+    render(<ExhibitorDashboard booths={booths.slice(0, 2)} isImporting={false} onImportFile={vi.fn()} />);
+
+    const table = screen.getByRole("table", { name: "展商数据表格" });
+    await user.click(within(table).getByLabelText(`选择${booths[0].companyName}`));
+    const opener = screen.getByRole("button", { name: "批量停用" });
+    await user.click(opener);
+    const alert = screen.getByRole("alertdialog", { name: "批量停用展商" });
+    expect(document.activeElement).toBe(within(alert).getByRole("button", { name: "取消" }));
+
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("alertdialog", { name: "批量停用展商" })).toBeNull();
+    await waitFor(() => expect(document.activeElement).toBe(opener));
+    expect(within(table).queryByText("已停用")).toBeNull();
   });
 
   it("edits only the approved exhibitor business fields from the detail drawer", async () => {
@@ -141,7 +271,7 @@ describe("ExhibitorDashboard", () => {
     expect(within(table).getByText("王新")).not.toBeNull();
     expect(within(table).getByText("36㎡")).not.toBeNull();
     expect(within(table).getByText("6×6m")).not.toBeNull();
-    const drawer = screen.getByRole("complementary", { name: "展商详情" });
+    const drawer = screen.getByRole("dialog", { name: "展商详情" });
     expect(within(drawer).getByText("王新")).not.toBeNull();
   });
 
@@ -239,16 +369,18 @@ describe("ExhibitorDashboard", () => {
     const table = screen.getByRole("table", { name: "展商数据表格" });
     await user.click(within(table).getByRole("button", { name: "查看汕头市昌隆机械科技有限公司" }));
 
-    const drawer = screen.getByRole("complementary", { name: "展商详情" });
+    const drawer = screen.getByRole("dialog", { name: "展商详情" });
     await user.click(within(drawer).getByRole("button", { name: "停用展商" }));
 
-    expect(within(table).getByText("已停用")).not.toBeNull();
-    expect(within(table).getByRole("button", { name: "启用汕头市昌隆机械科技有限公司" })).not.toBeNull();
+    const enableButton = within(drawer).getByRole("button", { name: "启用汕头市昌隆机械科技有限公司" });
+    expect(enableButton).not.toBeNull();
+    await user.click(enableButton);
+    await user.click(within(drawer).getByRole("button", { name: "关闭详情" }));
 
-    await user.click(within(table).getByRole("button", { name: "启用汕头市昌隆机械科技有限公司" }));
-
-    expect(within(table).queryByText("已停用")).toBeNull();
-    expect(within(table).getByRole("button", { name: "查看汕头市昌隆机械科技有限公司" })).not.toBeNull();
+    await waitFor(() => {
+      expect(within(table).queryByText("已停用")).toBeNull();
+      expect(within(table).getByRole("button", { name: "查看汕头市昌隆机械科技有限公司" })).not.toBeNull();
+    });
   });
 
   it("asks for confirmation before batch disabling exhibitors", async () => {
@@ -261,12 +393,12 @@ describe("ExhibitorDashboard", () => {
     await user.click(within(table).getByLabelText("选择山东省聊城经济开发区齐龙精细化工厂"));
     await user.click(screen.getByRole("button", { name: "批量停用" }));
 
-    const dialog = screen.getByRole("dialog", { name: "批量停用展商" });
+    const dialog = screen.getByRole("alertdialog", { name: "批量停用展商" });
     expect(within(dialog).getByText("已选择 2 个展商，停用后将从默认可用列表中移出。")).not.toBeNull();
     await user.click(within(dialog).getByRole("button", { name: "确认停用展商" }));
 
-    expect(screen.queryByRole("dialog", { name: "批量停用展商" })).toBeNull();
-    expect(within(table).getAllByText("已停用")).toHaveLength(2);
+    expect(screen.queryByRole("alertdialog", { name: "批量停用展商" })).toBeNull();
+    await waitFor(() => expect(within(table).getAllByText("已停用")).toHaveLength(2));
   });
 
   it("opens an editable import-diff dialog and applies confirmed values", async () => {
