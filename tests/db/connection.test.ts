@@ -1,18 +1,31 @@
 import { describe, expect, it, vi } from "vitest";
 
 describe("database connection", () => {
-  it("uses utf8mb4 for MariaDB client connections", async () => {
-    const createPool = vi.fn(() => ({ end: vi.fn() }));
-    vi.doMock("mysql2/promise", () => ({
-      default: { createPool }
+  it("shares one utf8mb4 callback pool with the promise API", async () => {
+    const promisePool = { end: vi.fn(async () => undefined) };
+    const callbackPool = { promise: vi.fn(() => promisePool) };
+    const createPool = vi.fn(() => callbackPool);
+    vi.doMock("mysql2", () => ({
+      createPool
     }));
     vi.resetModules();
 
-    const { createDatabasePool } = await import("@/lib/db/connection");
-    createDatabasePool("mysql://board:secret@127.0.0.1:3306/collaboration_board");
+    const {
+      closeDatabasePool,
+      getDatabaseCallbackPool,
+      getDatabasePool
+    } = await import("@/lib/db/connection");
+    const callback = getDatabaseCallbackPool();
+    const promise = getDatabasePool();
 
     expect(createPool).toHaveBeenCalledWith(expect.objectContaining({
       charset: "utf8mb4_unicode_ci"
     }));
+    expect(createPool).toHaveBeenCalledOnce();
+    expect(callback).toBe(callbackPool);
+    expect(promise).toBe(promisePool);
+
+    await closeDatabasePool();
+    expect(promisePool.end).toHaveBeenCalledOnce();
   });
 });
