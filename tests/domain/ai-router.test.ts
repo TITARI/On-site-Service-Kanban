@@ -44,6 +44,9 @@ describe("ai router", () => {
       },
       async customerService() {
         return { modelId: "smart", provider: "mock", scenario: "customer-service", confidence: 0.9, pressureLevel: 4, action: "expedite", replyText: "已加急", reason: "客户催办", latencyMs: 1 };
+      },
+      async mapExhibitorFields() {
+        return { mappings: [] };
       }
     };
 

@@ -1,7 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { AppState } from "@/lib/domain/app-state";
 import type {
   AuthenticatedActor,
+  UserListItem,
   UserMutation
 } from "@/lib/domain/access-control";
 import type { Ticket, UserGroup } from "@/lib/domain/types";
@@ -1187,7 +1188,7 @@ describe("file access repository", () => {
         enabled: true
       }
     ];
-    const created = [];
+    const created: UserListItem[] = [];
     for (const input of inputs) {
       created.push(await repository.createUser(input, actor));
     }

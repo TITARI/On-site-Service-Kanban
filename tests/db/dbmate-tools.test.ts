@@ -3,7 +3,7 @@ import { appendFile, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/pro
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-const temporaryRoots = [];
+const temporaryRoots: string[] = [];
 const validSql = `-- migrate:up transaction:false
 SELECT 1;
 -- migrate:down transaction:false
@@ -18,7 +18,11 @@ async function temporaryMigrationsDir() {
   return migrationsDir;
 }
 
-async function writeMigration(migrationsDir, filename, sql = validSql) {
+async function writeMigration(
+  migrationsDir: string,
+  filename: string,
+  sql = validSql
+) {
   await writeFile(path.join(migrationsDir, filename), sql, "utf8");
 }
 

@@ -71,7 +71,7 @@ describe("config service", () => {
         canProcess: true,
         canAccept: true,
         enabled: true
-      } as typeof config.userGroups[number]
+      } as NonNullable<typeof config.userGroups>[number]
     ];
 
     expect(validateConfig(config).userGroups?.[0]).toEqual(expect.objectContaining({

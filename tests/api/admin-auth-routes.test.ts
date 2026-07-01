@@ -34,7 +34,9 @@ const passwordMocks = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/services/password-service", async (importActual) => {
-  const actual = await importActual();
+  const actual = await importActual<
+    typeof import("@/lib/services/password-service")
+  >();
   passwordMocks.verifyPassword.mockImplementation(actual.verifyPassword);
   return { ...actual, verifyPassword: passwordMocks.verifyPassword };
 });

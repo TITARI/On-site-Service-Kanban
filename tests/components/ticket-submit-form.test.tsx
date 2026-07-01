@@ -1,4 +1,4 @@
-﻿import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { TicketSubmitForm } from "@/components/ticket-submit-form";
@@ -37,7 +37,7 @@ describe("TicketSubmitForm", () => {
   });
 
   it("submits selected images without client submitter identity fields", async () => {
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ kind: "created" }), { status: 200 }));
+    const fetchMock = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({ kind: "created" }), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
     const onSubmitted = vi.fn();
     const user = userEvent.setup();

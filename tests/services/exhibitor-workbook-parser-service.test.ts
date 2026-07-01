@@ -1,9 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
+import type { ExhibitorFieldMappingContext, ExhibitorFieldMappingDecision } from "@/lib/ai/types";
 import { extractMasterDataRowsFromWorkbookSheetsWithAi } from "@/lib/services/exhibitor-workbook-parser-service";
 
 describe("exhibitor workbook parser service", () => {
   it("uses smart AI to recover unmapped booth and company headers", async () => {
-    const ai = vi.fn(async () => ({
+    const ai = vi.fn(async (_context: ExhibitorFieldMappingContext): Promise<ExhibitorFieldMappingDecision> => ({
       mappings: [
         { field: "boothNumber", columnIndex: 0, confidence: 0.95, reason: "席位编码就是展位号" },
         { field: "companyName", columnIndex: 1, confidence: 0.95, reason: "参展单位就是展商名称" }
@@ -33,7 +34,7 @@ describe("exhibitor workbook parser service", () => {
   });
 
   it("uses AI assisted mapping for the exported logistics workbook sheets", async () => {
-    const ai = vi.fn(async (context) => {
+    const ai = vi.fn(async (context: ExhibitorFieldMappingContext): Promise<ExhibitorFieldMappingDecision> => {
       if (context.sheetName === "标展楣牌") {
         return {
           mappings: [
@@ -120,13 +121,13 @@ describe("exhibitor workbook parser service", () => {
   });
 
   it("uses smart AI to parse 标摊楣牌 sheets with unknown headers", async () => {
-    const ai = vi.fn(async (context) => ({
-      mappings: [
+    const ai = vi.fn(async (context: ExhibitorFieldMappingContext): Promise<ExhibitorFieldMappingDecision> => ({
+      mappings: ([
         { field: "companyName", columnIndex: 0, confidence: 0.95, reason: "参展单位是展商名称" },
         { field: "hall", columnIndex: 1, confidence: 0.9, reason: "馆号对应展馆位置" },
         { field: "boothNumber", columnIndex: 2, confidence: 0.96, reason: "席位编码是展位号" },
         { field: "salesOwner", columnIndex: 5, confidence: 0.9, reason: "业务员对应销售人员" }
-      ].filter((mapping) => context.unmappedFields.includes(mapping.field))
+      ] satisfies ExhibitorFieldMappingDecision["mappings"]).filter((mapping) => context.unmappedFields.includes(mapping.field))
     }));
 
     const rows = await extractMasterDataRowsFromWorkbookSheetsWithAi([
@@ -157,7 +158,7 @@ describe("exhibitor workbook parser service", () => {
   });
 
   it("uses smart AI to infer columns from continuation sheets without headers", async () => {
-    const ai = vi.fn(async () => ({
+    const ai = vi.fn(async (_context: ExhibitorFieldMappingContext): Promise<ExhibitorFieldMappingDecision> => ({
       mappings: [
         { field: "companyName", columnIndex: 0, confidence: 0.96, reason: "样例都是展商名称" },
         { field: "floor", columnIndex: 1, confidence: 0.9, reason: "样例是一楼、二楼" },

@@ -352,7 +352,7 @@ describe("TicketDetail", () => {
   });
 
   it("allows builder group users to claim a ticket", async () => {
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ ticket: { ...ticket, status: "处理中" } }), { status: 200 }));
+    const fetchMock = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({ ticket: { ...ticket, status: "处理中" } }), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
     const { queryClient } = render(<TicketDetail ticket={ticket} currentUser={builderUser} />);
     queryClient.setQueryData(queryKeys.mobile.bootstrap, { tickets: [ticket] });
@@ -375,7 +375,7 @@ describe("TicketDetail", () => {
   });
 
   it("requires builder progress updates to include processing content and photos", async () => {
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ ticket: { ...ticket, status: "已解决" } }), { status: 200 }));
+    const fetchMock = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({ ticket: { ...ticket, status: "已解决" } }), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
     const user = userEvent.setup();
 
@@ -399,7 +399,7 @@ describe("TicketDetail", () => {
   });
 
   it("allows business or organizer group users to accept resolved tickets", async () => {
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ ticket: { ...ticket, status: "已关闭" } }), { status: 200 }));
+    const fetchMock = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({ ticket: { ...ticket, status: "已关闭" } }), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
 
     render(<TicketDetail ticket={{ ...ticket, status: "已解决" }} currentUser={businessUser} />);
@@ -415,7 +415,7 @@ describe("TicketDetail", () => {
   });
 
   it("allows business or organizer group users to reject resolved tickets for rework", async () => {
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ ticket: { ...ticket, status: "待再次处理" } }), { status: 200 }));
+    const fetchMock = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({ ticket: { ...ticket, status: "待再次处理" } }), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
     const user = userEvent.setup();
 
@@ -434,7 +434,7 @@ describe("TicketDetail", () => {
   });
 
   it("submits reply images with the reply payload", async () => {
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ ticket }), { status: 200 }));
+    const fetchMock = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({ ticket }), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
     const user = userEvent.setup();
 
@@ -451,7 +451,7 @@ describe("TicketDetail", () => {
   });
 
   it("sends replies without client author or role identity fields", async () => {
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ ticket }), { status: 200 }));
+    const fetchMock = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({ ticket }), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
     const user = userEvent.setup();
 
@@ -472,7 +472,7 @@ describe("TicketDetail", () => {
   });
 
   it("returns to login when a mobile fetch returns 401", async () => {
-    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+    const fetchMock = vi.fn<typeof fetch>(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url === "/api/auth/session?type=mobile") {
         return new Response(JSON.stringify({ user: builderUser }), { status: 200 });
