@@ -2,7 +2,17 @@
 
 import * as Dialog from "@radix-ui/react-dialog";
 import * as AlertDialog from "@radix-ui/react-alert-dialog";
-import { useEffect, useState, type ReactElement, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactElement, type ReactNode } from "react";
+import {
+  getCoreRowModel,
+  getFilteredRowModel,
+  getPaginationRowModel,
+  useReactTable,
+  type ColumnDef,
+  type ColumnFiltersState,
+  type PaginationState,
+  type RowSelectionState
+} from "@tanstack/react-table";
 import { ExhibitorImportWizard } from "@/components/exhibitor-import-wizard";
 import type { BoothRecord } from "@/lib/domain/types";
 
@@ -130,6 +140,37 @@ function builderMembersOf(builder?: string): BuilderMember[] {
     });
 }
 
+const EXHIBITOR_COLUMNS: ColumnDef<DashboardBoothRecord>[] = [
+  { id: "select", header: "" },
+  { accessorKey: "boothNumber", header: "展位号" },
+  { accessorKey: "companyName", header: "展商" },
+  {
+    accessorKey: "location",
+    header: "位置",
+    filterFn: (row, columnId, value) => String(row.getValue(columnId) ?? "").trim() === value
+  },
+  { accessorKey: "area", header: "面积" },
+  {
+    accessorKey: "boothType",
+    header: "类型",
+    filterFn: (row, columnId, value) => String(row.getValue(columnId) ?? "").trim() === value
+  },
+  { accessorKey: "salesOwner", header: "销售" },
+  { accessorKey: "builder", header: "现场搭建成员" },
+  { id: "actions", header: "操作" },
+  {
+    id: "assignment",
+    accessorFn: (booth) => isAssignedBooth(booth) ? "assigned" : "unassigned",
+    filterFn: "equalsString"
+  },
+  {
+    id: "member",
+    accessorFn: (booth) => builderMembersOf(booth.builder).map((member) => member.name),
+    filterFn: (row, _columnId, value) => builderMembersOf(row.original.builder)
+      .some((member) => member.name === value)
+  }
+];
+
 function memberInitialOf(name: string) {
   return name.trim().charAt(0) || "?";
 }
@@ -203,9 +244,11 @@ export function ExhibitorDashboard({
   const [typeFilter, setTypeFilter] = useState("all");
   const [assignmentFilter, setAssignmentFilter] = useState<AssignmentFilter>("all");
   const [memberFilter, setMemberFilter] = useState("all");
-  const [currentPage, setCurrentPage] = useState(1);
-  const [pageSize, setPageSize] = useState(EXHIBITOR_PAGE_SIZE);
-  const [selectedKeys, setSelectedKeys] = useState<Set<string>>(() => new Set());
+  const [pagination, setPagination] = useState<PaginationState>({
+    pageIndex: 0,
+    pageSize: EXHIBITOR_PAGE_SIZE
+  });
+  const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [activeBooth, setActiveBooth] = useState<DashboardBoothRecord | null>(null);
   const [detailTriggerId, setDetailTriggerId] = useState<string | null>(null);
   const [activePanel, setActivePanel] = useState<DashboardPanel>(null);
@@ -225,7 +268,8 @@ export function ExhibitorDashboard({
   const [typeNameDrafts, setTypeNameDrafts] = useState<Record<string, string>>({});
   useEffect(() => {
     setBooths(incomingBooths.map((booth) => ({ ...booth, enabled: true })));
-    setCurrentPage(1);
+    setPagination((current) => ({ ...current, pageIndex: 0 }));
+    setRowSelection({});
   }, [incomingBooths]);
 
   const locationOptions = uniqueDisplayValues(booths.map((booth) => booth.location));
@@ -241,23 +285,47 @@ export function ExhibitorDashboard({
     return counts;
   }, new Map<string, number>());
   const normalizedQuery = searchQuery.trim().toLowerCase();
-  const filteredBooths = booths.filter((booth) => {
-    if (normalizedQuery && !boothSearchText(booth).includes(normalizedQuery)) return false;
-    if (locationFilter !== "all" && booth.location?.trim() !== locationFilter) return false;
-    if (typeFilter !== "all" && booth.boothType?.trim() !== typeFilter) return false;
-    if (assignmentFilter === "assigned" && !isAssignedBooth(booth)) return false;
-    if (assignmentFilter === "unassigned" && isAssignedBooth(booth)) return false;
-    if (memberFilter !== "all" && !builderMembersOf(booth.builder).some((member) => member.name === memberFilter)) return false;
-    return true;
+  const columnFilters = useMemo<ColumnFiltersState>(() => [
+    ...(locationFilter === "all" ? [] : [{ id: "location", value: locationFilter }]),
+    ...(typeFilter === "all" ? [] : [{ id: "boothType", value: typeFilter }]),
+    ...(assignmentFilter === "all" ? [] : [{ id: "assignment", value: assignmentFilter }]),
+    ...(memberFilter === "all" ? [] : [{ id: "member", value: memberFilter }])
+  ], [assignmentFilter, locationFilter, memberFilter, typeFilter]);
+  const table = useReactTable({
+    data: booths,
+    columns: EXHIBITOR_COLUMNS,
+    getRowId: (row) => boothRecordKey(row),
+    getCoreRowModel: getCoreRowModel(),
+    getFilteredRowModel: getFilteredRowModel(),
+    getPaginationRowModel: getPaginationRowModel(),
+    enableRowSelection: true,
+    state: {
+      globalFilter: normalizedQuery,
+      columnFilters,
+      pagination,
+      rowSelection,
+      columnVisibility: { assignment: false, member: false }
+    },
+    onPaginationChange: setPagination,
+    onRowSelectionChange: setRowSelection,
+    globalFilterFn: (row, _columnId, value) => boothSearchText(row.original)
+      .includes(String(value).trim().toLowerCase())
   });
-  const totalPages = Math.max(1, Math.ceil(filteredBooths.length / pageSize));
-  const safeCurrentPage = Math.min(currentPage, totalPages);
-  const pageStartIndex = (safeCurrentPage - 1) * pageSize;
-  const pageEndIndex = filteredBooths.length === 0 ? 0 : Math.min(pageStartIndex + pageSize, filteredBooths.length);
-  const paginatedBooths = filteredBooths.slice(pageStartIndex, pageStartIndex + pageSize);
+  const filteredBooths = table.getFilteredRowModel().rows.map((row) => row.original);
+  const paginatedBooths = table.getRowModel().rows.map((row) => row.original);
+  const totalPages = Math.max(1, table.getPageCount());
+  const safeCurrentPage = Math.min(pagination.pageIndex + 1, totalPages);
+  const pageStartIndex = (safeCurrentPage - 1) * pagination.pageSize;
+  const pageEndIndex = filteredBooths.length === 0
+    ? 0
+    : Math.min(pageStartIndex + pagination.pageSize, filteredBooths.length);
   const paginationItems = buildPaginationItems(safeCurrentPage, totalPages);
-  const visibleKeys = paginatedBooths.map(boothRecordKey);
-  const allVisibleSelected = visibleKeys.length > 0 && visibleKeys.every((key) => selectedKeys.has(key));
+  const selectedKeys = useMemo(
+    () => new Set(Object.entries(rowSelection).filter(([, selected]) => selected).map(([key]) => key)),
+    [rowSelection]
+  );
+  const allVisibleSelected = table.getIsAllPageRowsSelected();
+  const someVisibleSelected = table.getIsSomePageRowsSelected();
   const assignedCount = booths.filter(isAssignedBooth).length;
   const unassignedCount = Math.max(booths.length - assignedCount, 0);
   const importDiffCount = booths.filter(isImportDiffBooth).length;
@@ -280,7 +348,7 @@ export function ExhibitorDashboard({
       && draft.boothType.trim()
     );
   });
-  const selectedBooths = booths.filter((booth) => selectedKeys.has(boothRecordKey(booth)));
+  const selectedBooths = table.getSelectedRowModel().flatRows.map((row) => row.original);
   const activeMembers = builderMembersOf(activeBooth?.builder);
   const assignedPercent = booths.length > 0 ? Math.round((assignedCount / booths.length) * 100) : 0;
   const availableBuilderMembers = ["李铁", "崔晓安", "王宁", "刘文博"];
@@ -292,16 +360,10 @@ export function ExhibitorDashboard({
   };
 
   useEffect(() => {
-    setCurrentPage(1);
-  }, [normalizedQuery, locationFilter, typeFilter, assignmentFilter, memberFilter]);
-
-  useEffect(() => {
-    setCurrentPage((page) => Math.min(page, totalPages));
+    setPagination((current) => current.pageIndex < totalPages
+      ? current
+      : { ...current, pageIndex: totalPages - 1 });
   }, [totalPages]);
-
-  useEffect(() => {
-    setCurrentPage(1);
-  }, [pageSize]);
 
   function handleFileChange(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.currentTarget.files?.[0];
@@ -310,23 +372,11 @@ export function ExhibitorDashboard({
   }
 
   function toggleSelected(key: string, checked: boolean) {
-    setSelectedKeys((current) => {
-      const next = new Set(current);
-      if (checked) next.add(key);
-      else next.delete(key);
-      return next;
-    });
+    table.getRow(key)?.toggleSelected(checked);
   }
 
   function toggleVisible(checked: boolean) {
-    setSelectedKeys((current) => {
-      const next = new Set(current);
-      visibleKeys.forEach((key) => {
-        if (checked) next.add(key);
-        else next.delete(key);
-      });
-      return next;
-    });
+    table.toggleAllPageRowsSelected(checked);
   }
 
   function addManagedType(event: React.FormEvent<HTMLFormElement>) {
@@ -424,7 +474,10 @@ export function ExhibitorDashboard({
       ...current,
       draft: { ...current.draft, boothType: nextName }
     } : current);
-    if (typeFilter === type.name) setTypeFilter(nextName);
+    if (typeFilter === type.name) {
+      setTypeFilter(nextName);
+      table.setPageIndex(0);
+    }
     if (batchTypeName === type.name) setBatchTypeName(nextName);
     setTypeNameDrafts((current) => {
       const { [type.id]: _removed, ...rest } = current;
@@ -495,9 +548,11 @@ export function ExhibitorDashboard({
     if (nextDraft.boothType.trim()) nextBooth.boothType = nextDraft.boothType.trim();
 
     setBooths((current) => current.map((booth) => boothRecordKey(booth) === originalKey ? nextBooth : booth));
-    setSelectedKeys((current) => {
-      const next = new Set(current);
-      if (next.delete(originalKey)) next.add(boothRecordKey(nextBooth));
+    setRowSelection((current) => {
+      if (!current[originalKey]) return current;
+      const next = { ...current };
+      delete next[originalKey];
+      next[boothRecordKey(nextBooth)] = true;
       return next;
     });
     setActiveBooth((current) => current && boothRecordKey(current) === originalKey ? nextBooth : current);
@@ -561,10 +616,10 @@ export function ExhibitorDashboard({
     const targetKey = boothRecordKey(booth);
     setBooths((current) => current.map((item) => boothRecordKey(item) === targetKey ? { ...item, enabled } : item));
     setActiveBooth((current) => current && boothRecordKey(current) === targetKey ? { ...current, enabled } : current);
-    setSelectedKeys((current) => {
-      if (enabled || !current.has(targetKey)) return current;
-      const next = new Set(current);
-      next.delete(targetKey);
+    setRowSelection((current) => {
+      if (enabled || !current[targetKey]) return current;
+      const next = { ...current };
+      delete next[targetKey];
       return next;
     });
   }
@@ -573,7 +628,7 @@ export function ExhibitorDashboard({
     const targetKeys = new Set(selectedKeys);
     setBooths((current) => current.map((booth) => targetKeys.has(boothRecordKey(booth)) ? { ...booth, enabled: false } : booth));
     setActiveBooth((current) => current && targetKeys.has(boothRecordKey(current)) ? { ...current, enabled: false } : current);
-    setSelectedKeys(new Set());
+    setRowSelection({});
     setBatchDisableDialogOpen(false);
   }
 
@@ -583,11 +638,11 @@ export function ExhibitorDashboard({
   }
 
   function goToPage(page: number) {
-    setCurrentPage(Math.min(Math.max(page, 1), totalPages));
+    table.setPageIndex(Math.min(Math.max(page, 1), totalPages) - 1);
   }
 
   function handlePageSizeChange(event: React.ChangeEvent<HTMLSelectElement>) {
-    setPageSize(Number(event.currentTarget.value));
+    setPagination({ pageIndex: 0, pageSize: Number(event.currentTarget.value) });
   }
 
   function renderDetailTrigger(booth: DashboardBoothRecord, surface: "table" | "card") {
@@ -733,16 +788,25 @@ export function ExhibitorDashboard({
                 type="search"
                 placeholder="搜索展位、展商、销售、搭建成员"
                 value={searchQuery}
-                onChange={(event) => setSearchQuery(event.currentTarget.value)}
+                onChange={(event) => {
+                  setSearchQuery(event.currentTarget.value);
+                  table.setPageIndex(0);
+                }}
               />
             </label>
-            <select aria-label="按位置筛选" value={locationFilter} onChange={(event) => setLocationFilter(event.currentTarget.value)}>
+            <select aria-label="按位置筛选" value={locationFilter} onChange={(event) => {
+              setLocationFilter(event.currentTarget.value);
+              table.setPageIndex(0);
+            }}>
               <option value="all">全部位置</option>
               {locationOptions.map((location) => (
                 <option key={location} value={location}>{location}</option>
               ))}
             </select>
-            <select aria-label="按类型筛选" value={typeFilter} onChange={(event) => setTypeFilter(event.currentTarget.value)}>
+            <select aria-label="按类型筛选" value={typeFilter} onChange={(event) => {
+              setTypeFilter(event.currentTarget.value);
+              table.setPageIndex(0);
+            }}>
               <option value="all">全部类型</option>
               {typeOptions.map((type) => (
                 <option key={type} value={type}>{type}</option>
@@ -751,12 +815,18 @@ export function ExhibitorDashboard({
             <Dialog.Trigger {...typeDialogScope} asChild>
               <button className="exhibitor-filter-button" type="button">类型设置</button>
             </Dialog.Trigger>
-            <select aria-label="按成员分配状态筛选" value={assignmentFilter} onChange={(event) => setAssignmentFilter(event.currentTarget.value as AssignmentFilter)}>
+            <select aria-label="按成员分配状态筛选" value={assignmentFilter} onChange={(event) => {
+              setAssignmentFilter(event.currentTarget.value as AssignmentFilter);
+              table.setPageIndex(0);
+            }}>
               <option value="all">全部分配状态</option>
               <option value="assigned">仅看已分配</option>
               <option value="unassigned">仅看待分配</option>
             </select>
-            <select aria-label="按现场搭建成员筛选" value={memberFilter} onChange={(event) => setMemberFilter(event.currentTarget.value)}>
+            <select aria-label="按现场搭建成员筛选" value={memberFilter} onChange={(event) => {
+              setMemberFilter(event.currentTarget.value);
+              table.setPageIndex(0);
+            }}>
               <option value="all">按现场搭建成员筛选</option>
               {memberOptions.map((memberName) => (
                 <option key={memberName} value={memberName}>{memberName}</option>
@@ -823,7 +893,7 @@ export function ExhibitorDashboard({
             <AlertDialog.Trigger asChild>
               <button className="danger-button" type="button">批量停用</button>
             </AlertDialog.Trigger>
-            <button className="ghost-button" type="button" onClick={() => setSelectedKeys(new Set())}>取消选择</button>
+            <button className="ghost-button" type="button" onClick={() => setRowSelection({})}>取消选择</button>
           </div>
         )}
 
@@ -834,6 +904,7 @@ export function ExhibitorDashboard({
                 <th scope="col">
                   <input
                     aria-label="选择当前页全部展商"
+                    aria-checked={someVisibleSelected && !allVisibleSelected ? "mixed" : allVisibleSelected}
                     type="checkbox"
                     checked={allVisibleSelected}
                     onChange={(event) => toggleVisible(event.currentTarget.checked)}
@@ -999,7 +1070,7 @@ export function ExhibitorDashboard({
             </span>
             <label className="exhibitor-page-size">
               <span>每页条数</span>
-              <select value={pageSize} onChange={handlePageSizeChange} aria-label="每页条数">
+              <select value={pagination.pageSize} onChange={handlePageSizeChange} aria-label="每页条数">
                 {EXHIBITOR_PAGE_SIZE_OPTIONS.map((option) => (
                   <option key={option} value={option}>{option}</option>
                 ))}

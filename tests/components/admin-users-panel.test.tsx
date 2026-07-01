@@ -71,6 +71,67 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+describe("AdminUsersPanel pagination", () => {
+  it("loads the next server page through the user table", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input), "http://localhost");
+      const page = Number(url.searchParams.get("page") ?? "1");
+      return new Response(JSON.stringify({
+        users: [user({
+          personId: `person-${page}`,
+          accountId: `account-person-${page}`,
+          name: page === 1 ? "第一页用户" : "第二页用户"
+        })],
+        total: 21,
+        page,
+        pageSize: 20
+      }), { status: 200 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const driver = userEvent.setup();
+
+    renderWithQueryClient(<AdminUsersPanel groups={groups} />);
+    expect(await screen.findByText("第一页用户")).not.toBeNull();
+    await driver.click(screen.getByRole("button", { name: "下一页" }));
+
+    expect(await screen.findByText("第二页用户")).not.toBeNull();
+    expect(fetchMock.mock.calls.some(([input]) => String(input).includes("page=2"))).toBe(true);
+  });
+
+  it("returns to the first server page when filters are submitted", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input), "http://localhost");
+      const page = Number(url.searchParams.get("page") ?? "1");
+      return new Response(JSON.stringify({
+        users: [user({
+          personId: `person-${page}`,
+          accountId: `account-person-${page}`,
+          name: page === 1 ? "第一页用户" : "第二页用户"
+        })],
+        total: 21,
+        page,
+        pageSize: 20
+      }), { status: 200 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const driver = userEvent.setup();
+
+    renderWithQueryClient(<AdminUsersPanel groups={groups} />);
+    expect(await screen.findByText("第一页用户")).not.toBeNull();
+    await driver.click(screen.getByRole("button", { name: "下一页" }));
+    expect(await screen.findByText("第二页用户")).not.toBeNull();
+
+    await driver.type(screen.getByLabelText("搜索姓名或手机号"), "13800138000");
+    fireEvent.submit(screen.getByLabelText("搜索姓名或手机号").closest("form") as HTMLFormElement);
+
+    await waitFor(() => {
+      const lastUrl = String(fetchMock.mock.calls.at(-1)?.[0]);
+      expect(lastUrl).toContain("page=1");
+      expect(lastUrl).toContain("search=13800138000");
+    });
+  });
+});
+
 describe("AdminUsersPanel chat identity controls", () => {
   it("updates the open editor immediately after binding an initially unbound identity", async () => {
     const boundIdentity = {

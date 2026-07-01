@@ -1,8 +1,15 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  flexRender,
+  getCoreRowModel,
+  useReactTable,
+  type ColumnDef,
+  type PaginationState
+} from "@tanstack/react-table";
 import {
   Ban,
   Building2,
@@ -100,8 +107,11 @@ const EMPTY_IDENTITY_DRAFT: Record<MessageChannel, IdentityDraft> = {
   }
 };
 
-function usersUrl(filters: FilterState) {
-  const params = new URLSearchParams({ page: "1", pageSize: "20" });
+function usersUrl(filters: FilterState, pagination: PaginationState) {
+  const params = new URLSearchParams({
+    page: String(pagination.pageIndex + 1),
+    pageSize: String(pagination.pageSize)
+  });
   if (filters.search.trim()) params.set("search", filters.search.trim());
   if (filters.groupId) params.set("groupId", filters.groupId);
   if (filters.enabled) params.set("enabled", filters.enabled);
@@ -198,14 +208,23 @@ export function AdminUsersPanel({
   const [actionErrors, setActionErrors] = useState<Record<string, string>>({});
   const [importOpen, setImportOpen] = useState(false);
   const [password, setPassword] = useState("");
+  const [pagination, setPagination] = useState<PaginationState>({
+    pageIndex: 0,
+    pageSize: 20
+  });
 
   const usersQuery = useQuery({
-    queryKey: queryKeys.admin.users.list(appliedFilters),
+    queryKey: [
+      ...queryKeys.admin.users.list(appliedFilters),
+      pagination.pageIndex,
+      pagination.pageSize
+    ],
     queryFn: ({ signal }) => apiJson<UserPayload>(
-      usersUrl(appliedFilters),
+      usersUrl(appliedFilters, pagination),
       { cache: "no-store", signal },
       "用户列表加载失败"
-    )
+    ),
+    placeholderData: (previous) => previous
   });
   const identityQueries = {
     wechat: useQuery({
@@ -532,6 +551,122 @@ export function AdminUsersPanel({
     }
   }
 
+  const columns = useMemo<ColumnDef<UserListItem>[]>(() => [
+    {
+      id: "user",
+      header: "用户",
+      cell: ({ row }) => {
+        const item = row.original;
+        return (
+          <div className="admin-user-cell admin-user-name" role="cell" data-label="用户">
+            <span className="admin-user-name-line">
+              <strong>{item.name}</strong>
+              {item.groupLocked && <span className="admin-user-lock-label">分组锁定</span>}
+            </span>
+            <small>{item.phone}</small>
+          </div>
+        );
+      }
+    },
+    {
+      id: "access",
+      header: "分组与继承权限",
+      cell: ({ row }) => {
+        const item = row.original;
+        return (
+          <div className="admin-user-cell admin-user-access" role="cell" data-label="分组与继承权限">
+            <strong>{item.groupName}</strong>
+            <div className="admin-user-permissions">
+              {item.permissions.map((permission) => (
+                <span key={permission}>{PERMISSION_LABELS[permission]}</span>
+              ))}
+              {item.permissions.length === 0 && <small>无业务权限</small>}
+            </div>
+          </div>
+        );
+      }
+    },
+    {
+      id: "bindings",
+      header: "消息账号",
+      cell: ({ row }) => (
+        <div className="admin-user-cell admin-user-bindings" role="cell" data-label="消息账号">
+          <BindingSummary user={row.original} platform="wechat" />
+          <BindingSummary user={row.original} platform="wecom" />
+        </div>
+      )
+    },
+    {
+      id: "status",
+      header: "账号状态",
+      cell: ({ row }) => {
+        const item = row.original;
+        const isAdmin = item.permissions.includes("admin.access");
+        return (
+          <div className="admin-user-cell admin-user-account-state" role="cell" data-label="账号状态">
+            <span className={`admin-user-status ${item.enabled ? "enabled" : "disabled"}`}>
+              <i aria-hidden="true" />
+              {item.enabled ? "已启用" : "已停用"}
+            </span>
+            <small>
+              {isAdmin ? (item.hasPassword ? "后台密码已设置" : "后台密码未设置") : "无后台登录"}
+              {" · "}
+              {formatDateTime(item.lastLoginAt)}
+            </small>
+          </div>
+        );
+      }
+    },
+    {
+      id: "actions",
+      header: "操作",
+      cell: ({ row }) => {
+        const item = row.original;
+        return (
+          <div className="admin-user-actions" role="cell" data-label="操作">
+            <button className="secondary-button" type="button" aria-label={`编辑${item.name}`} onClick={() => openEditor("edit", item)} title="编辑用户">
+              <Pencil size={17} aria-hidden="true" />
+            </button>
+            {item.enabled ? (
+              <button className="secondary-button" type="button" aria-label={`停用${item.name}`} title="停用用户" onClick={() => void runUserAction(item, "disable")} disabled={savingAction === `${item.personId}-disable`}>
+                <Ban size={17} aria-hidden="true" />
+              </button>
+            ) : (
+              <button className="secondary-button" type="button" aria-label={`启用${item.name}`} title="启用用户" onClick={() => void runUserAction(item, "enable")} disabled={savingAction === `${item.personId}-enable`}>
+                <CheckCircle2 size={17} aria-hidden="true" />
+              </button>
+            )}
+            <button className="danger-button" type="button" aria-label={`删除${item.name}`} title="删除用户" onClick={() => void runUserAction(item, "delete")} disabled={savingAction === `${item.personId}-delete`}>
+              <Trash2 size={17} aria-hidden="true" />
+            </button>
+            {["enable", "disable", "delete"].map((action) => {
+              const key = `${item.personId}-${action}`;
+              return actionErrors[key] ? <p className="admin-user-action-error" role="alert" key={key}>{actionErrors[key]}</p> : null;
+            })}
+          </div>
+        );
+      }
+    }
+  ], [actionErrors, groups, savingAction]);
+
+  const table = useReactTable({
+    data: users,
+    columns,
+    getCoreRowModel: getCoreRowModel(),
+    getRowId: (row) => row.personId,
+    manualPagination: true,
+    rowCount: total,
+    state: { pagination },
+    onPaginationChange: setPagination
+  });
+  const pageCount = Math.max(table.getPageCount(), 1);
+
+  useEffect(() => {
+    setPagination((current) => current.pageIndex < pageCount
+      ? current
+      : { ...current, pageIndex: pageCount - 1 });
+  }, [pageCount]);
+
   const hasActiveFilters = Boolean(
     filters.search.trim()
     || filters.groupId
@@ -543,6 +678,7 @@ export function AdminUsersPanel({
   function clearFilters() {
     setFilters(DEFAULT_FILTERS);
     setAppliedFilters(DEFAULT_FILTERS);
+    setPagination((current) => ({ ...current, pageIndex: 0 }));
   }
 
   return (
@@ -560,8 +696,9 @@ export function AdminUsersPanel({
         onSubmit={(event) => {
           event.preventDefault();
           const nextFilters = { ...filters };
+          setPagination((current) => ({ ...current, pageIndex: 0 }));
           if (JSON.stringify(nextFilters) === JSON.stringify(appliedFilters)) {
-            void usersQuery.refetch();
+            if (pagination.pageIndex === 0) void usersQuery.refetch();
           } else {
             setAppliedFilters(nextFilters);
           }
@@ -644,72 +781,24 @@ export function AdminUsersPanel({
       {listError && <p className="admin-user-list-message error" role="alert">{listError}</p>}
 
       <div className="admin-user-table" role="table" aria-label="后台用户列表" aria-busy={loading}>
-        <div className="admin-user-row admin-user-head" role="row">
-          <span role="columnheader">用户</span>
-          <span role="columnheader">分组与继承权限</span>
-          <span role="columnheader">消息账号</span>
-          <span role="columnheader">账号状态</span>
-          <span role="columnheader">操作</span>
-        </div>
-        {users.map((item) => {
-          const isAdmin = item.permissions.includes("admin.access");
-          return (
-            <article className="admin-user-row" role="row" key={item.personId}>
-              <div className="admin-user-cell admin-user-name" role="cell" data-label="用户">
-                <span className="admin-user-name-line">
-                  <strong>{item.name}</strong>
-                  {item.groupLocked && <span className="admin-user-lock-label">分组锁定</span>}
-                </span>
-                <small>{item.phone}</small>
-              </div>
-              <div className="admin-user-cell admin-user-access" role="cell" data-label="分组与继承权限">
-                <strong>{item.groupName}</strong>
-                <div className="admin-user-permissions">
-                  {item.permissions.map((permission) => (
-                    <span key={permission}>{PERMISSION_LABELS[permission]}</span>
-                  ))}
-                  {item.permissions.length === 0 && <small>无业务权限</small>}
-                </div>
-              </div>
-              <div className="admin-user-cell admin-user-bindings" role="cell" data-label="消息账号">
-                <BindingSummary user={item} platform="wechat" />
-                <BindingSummary user={item} platform="wecom" />
-              </div>
-              <div className="admin-user-cell admin-user-account-state" role="cell" data-label="账号状态">
-                <span className={`admin-user-status ${item.enabled ? "enabled" : "disabled"}`}>
-                  <i aria-hidden="true" />
-                  {item.enabled ? "已启用" : "已停用"}
-                </span>
-                <small>
-                  {isAdmin ? (item.hasPassword ? "后台密码已设置" : "后台密码未设置") : "无后台登录"}
-                  {" · "}
-                  {formatDateTime(item.lastLoginAt)}
-                </small>
-              </div>
-              <div className="admin-user-actions" role="cell" data-label="操作">
-                <button className="secondary-button" type="button" aria-label={`编辑${item.name}`} onClick={() => openEditor("edit", item)} title="编辑用户">
-                  <Pencil size={17} aria-hidden="true" />
-                </button>
-                {item.enabled ? (
-                  <button className="secondary-button" type="button" aria-label={`停用${item.name}`} title="停用用户" onClick={() => void runUserAction(item, "disable")} disabled={savingAction === `${item.personId}-disable`}>
-                    <Ban size={17} aria-hidden="true" />
-                  </button>
-                ) : (
-                  <button className="secondary-button" type="button" aria-label={`启用${item.name}`} title="启用用户" onClick={() => void runUserAction(item, "enable")} disabled={savingAction === `${item.personId}-enable`}>
-                    <CheckCircle2 size={17} aria-hidden="true" />
-                  </button>
-                )}
-                <button className="danger-button" type="button" aria-label={`删除${item.name}`} title="删除用户" onClick={() => void runUserAction(item, "delete")} disabled={savingAction === `${item.personId}-delete`}>
-                  <Trash2 size={17} aria-hidden="true" />
-                </button>
-                {["enable", "disable", "delete"].map((action) => {
-                  const key = `${item.personId}-${action}`;
-                  return actionErrors[key] ? <p className="admin-user-action-error" role="alert" key={key}>{actionErrors[key]}</p> : null;
-                })}
-              </div>
-            </article>
-          );
-        })}
+        {table.getHeaderGroups().map((headerGroup) => (
+          <div className="admin-user-row admin-user-head" role="row" key={headerGroup.id}>
+            {headerGroup.headers.map((header) => (
+              <span role="columnheader" key={header.id}>
+                {header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}
+              </span>
+            ))}
+          </div>
+        ))}
+        {table.getRowModel().rows.map((row) => (
+          <article className="admin-user-row" role="row" key={row.id}>
+            {row.getVisibleCells().map((cell) => (
+              <Fragment key={cell.id}>
+                {flexRender(cell.column.columnDef.cell, cell.getContext())}
+              </Fragment>
+            ))}
+          </article>
+        ))}
         {!loading && users.length === 0 && (
           <div className="admin-user-empty">
             <SearchX size={22} aria-hidden="true" />
@@ -723,6 +812,27 @@ export function AdminUsersPanel({
           </div>
         )}
       </div>
+      <nav className="admin-users-commandbar admin-user-toolbar-actions" aria-label="用户分页">
+        <button
+          className="secondary-button"
+          type="button"
+          aria-label="上一页"
+          onClick={() => table.previousPage()}
+          disabled={!table.getCanPreviousPage() || loading}
+        >
+          上一页
+        </button>
+        <span>第 {pagination.pageIndex + 1} / {pageCount} 页</span>
+        <button
+          className="secondary-button"
+          type="button"
+          aria-label="下一页"
+          onClick={() => table.nextPage()}
+          disabled={!table.getCanNextPage() || loading}
+        >
+          下一页
+        </button>
+      </nav>
 
       {importOpen && (
         <AdminUserImport
