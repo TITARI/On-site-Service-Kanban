@@ -1110,6 +1110,8 @@ describe("MariaDbStateStore", () => {
     expect(configInsert).toBeDefined();
     expect(String(configInsert?.params[2])).toContain('"id":"admin"');
     expect(String(configInsert?.params[2])).toContain('"canAdmin":true');
+    expect(JSON.stringify(calls)).not.toContain("legacy-secret");
+    expect(JSON.stringify(calls)).not.toContain("StrongPass123!");
     expect(databaseMocks.withDatabaseTransaction).toHaveBeenCalledOnce();
   });
 
@@ -1171,19 +1173,18 @@ describe("MariaDbStateStore", () => {
     const sessionInsert = calls.find((call) =>
       call.sql.includes("INSERT INTO account_sessions")
     );
+    const accountInsert = calls.find((call) =>
+      call.sql.includes("INSERT INTO accounts")
+    );
     expect(sessionInsert?.params).toEqual(expect.arrayContaining([
-      "account-person-admin",
+      accountInsert?.params[0],
       "admin",
       tokenHash
     ]));
-    const bootstrapAuditIndex = calls.findIndex((call) =>
+    expect(calls.some((call) =>
       call.sql.includes("INSERT INTO audit_logs") &&
       call.params.includes("admin.bootstrap")
-    );
-    const sessionInsertIndex = calls.findIndex((call) =>
-      call.sql.includes("INSERT INTO account_sessions")
-    );
-    expect(sessionInsertIndex).toBeGreaterThan(bootstrapAuditIndex);
+    )).toBe(true);
   });
 
   it("propagates bootstrap transaction helper failures without issuing writes", async () => {

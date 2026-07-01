@@ -52,12 +52,15 @@ import {
 } from "../services/auto-acceptance-service";
 import type { IntakeMessageInput } from "../services/message-intake-service";
 import { hashPassword } from "../services/password-service";
+import {
+  bootstrapAdminInState,
+  createAccountSessionInState
+} from "../services/access-state-service";
 import { getDatabasePool, type DatabaseConnection, withDatabaseTransaction } from "./connection";
 import {
   adminLoginRecord as readAdminLoginRecord,
   applyUserImport as applyAccessUserImport,
   bindChatIdentity as bindAccessChatIdentity,
-  bootstrapAdmin as bootstrapAdminAccess,
   bootstrapStatus as readBootstrapStatus,
   createAccountSession as createAccessAccountSession,
   createUser as createAccessUser,
@@ -68,6 +71,7 @@ import {
   getUserImportJobRows as getAccessUserImportJobRows,
   listChatIdentities as listAccessChatIdentities,
   listUsers as listAccessUsers,
+  loadBootstrapAccessState,
   markUserImportRowsStale as markAccessUserImportRowsStale,
   readAccessGroups,
   recordAccessRolesSync,
@@ -79,6 +83,7 @@ import {
   revokeAccountSessions as revokeAccessAccountSessions,
   saveUserImportDecisions as saveAccessUserImportDecisions,
   saveUserImportPreview as saveAccessUserImportPreview,
+  saveBootstrapAccessState,
   setUserEnabled as setAccessUserEnabled,
   setUserPassword as setAccessUserPassword,
   syncAccessRoles as syncDatabaseAccessRoles,
@@ -2435,24 +2440,21 @@ export class MariaDbStateStore {
   }
 
   async bootstrapAdmin(input: BootstrapAdminInput) {
-    if (!input.legacyPassword.trim()) {
-      throw new Error("Legacy password is required");
-    }
     const passwordHash = await hashPassword(input.password);
     return await withDatabaseTransaction(async (connection) => {
-      const actor = await bootstrapAdminAccess(
+      const before = await loadBootstrapAccessState(
         connection,
-        input,
-        passwordHash
+        await latestConfig(connection)
       );
-      const config = {
-        ...await latestConfig(connection),
-        userGroups: await readAccessGroups(connection)
-      };
-      await replaceConfigTables(connection, config);
-      await syncDatabaseAccessRoles(
+      const after = structuredClone(before);
+      const actor = bootstrapAdminInState(after, input, passwordHash);
+      await saveBootstrapAccessState(connection, before, after);
+      await writeConfigVersion(
         connection,
-        config.userGroups ?? []
+        after.config,
+        new Date(),
+        actor,
+        "Administrator bootstrap"
       );
       return actor;
     });
@@ -2463,31 +2465,28 @@ export class MariaDbStateStore {
     tokenHash: string,
     expiresAt: string
   ) {
-    if (!input.legacyPassword.trim()) {
-      throw new Error("Legacy password is required");
-    }
     const passwordHash = await hashPassword(input.password);
     return await withDatabaseTransaction(async (connection) => {
-      const actor = await bootstrapAdminAccess(
+      const before = await loadBootstrapAccessState(
         connection,
-        input,
-        passwordHash
+        await latestConfig(connection)
       );
-      const config = {
-        ...await latestConfig(connection),
-        userGroups: await readAccessGroups(connection)
-      };
-      await replaceConfigTables(connection, config);
-      await syncDatabaseAccessRoles(
-        connection,
-        config.userGroups ?? []
-      );
-      const session = await createAccessAccountSession(
-        connection,
+      const after = structuredClone(before);
+      const actor = bootstrapAdminInState(after, input, passwordHash);
+      const session = createAccountSessionInState(
+        after,
         actor.accountId,
         "admin",
         tokenHash,
         expiresAt
+      );
+      await saveBootstrapAccessState(connection, before, after);
+      await writeConfigVersion(
+        connection,
+        after.config,
+        new Date(),
+        actor,
+        "Administrator bootstrap"
       );
       return { actor, session };
     });

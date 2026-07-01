@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { DatabaseConnection } from "@/lib/db/connection";
+import type { AppState } from "@/lib/domain/app-state";
 import type { AuthenticatedActor } from "@/lib/domain/access-control";
 import type { UserGroup } from "@/lib/domain/types";
 import { defaultConfig } from "@/lib/seed";
@@ -146,7 +147,231 @@ function userDetailRow(overrides: Record<string, unknown> = {}) {
   };
 }
 
+type BootstrapStorageModule = {
+  loadBootstrapAccessState?: (
+    connection: DatabaseConnection,
+    config: ReturnType<typeof defaultConfig>
+  ) => Promise<AppState>;
+  saveBootstrapAccessState?: (
+    connection: DatabaseConnection,
+    before: AppState,
+    after: AppState
+  ) => Promise<void>;
+};
+
+async function bootstrapStorageModule() {
+  return await import("@/lib/db/mariadb-access-store") as BootstrapStorageModule;
+}
+
 describe("MariaDB access store", () => {
+  it("loads a locked bootstrap access snapshot from storage rows", async () => {
+    const at = new Date("2026-07-01T00:00:00.000Z");
+    const { calls, connection } = recordingConnection((sql) => {
+      if (sql.includes("FROM auth_bootstrap_state")) {
+        return [{ completed_at: null, completed_by_account_id: null }];
+      }
+      if (sql.includes("FROM user_groups")) {
+        return [{
+          id: "admin",
+          name: "Administrators",
+          description: "",
+          can_claim: 0,
+          can_process: 0,
+          can_accept: 0,
+          can_admin: 1,
+          enabled: 1
+        }];
+      }
+      if (sql.includes("FROM people")) {
+        return [{
+          id: "person-admin",
+          name: "Root Admin",
+          phone: "13700137000",
+          role: "admin",
+          group_id: "admin",
+          group_name_snapshot: "Administrators",
+          group_locked: 1,
+          name_conflict: null,
+          booth_scope: null,
+          enabled: 1,
+          version: 2,
+          created_at: at,
+          updated_at: at
+        }];
+      }
+      if (sql.includes("FROM accounts") && !sql.includes("JOIN")) {
+        return [{
+          id: "account-person-admin",
+          person_id: "person-admin",
+          login_name: "13700137000",
+          enabled: 1,
+          auth_version: 2,
+          version: 3,
+          last_login_at: null,
+          created_at: at,
+          updated_at: at
+        }];
+      }
+      if (sql.includes("FROM account_credentials")) {
+        return [{
+          account_id: "account-person-admin",
+          password_hash: "scrypt$stored",
+          password_changed_at: at,
+          must_change_password: 0,
+          failed_attempts: 0,
+          locked_until: null
+        }];
+      }
+      if (sql.includes("FROM roles")) {
+        return [{
+          id: "role-admin",
+          name: "Administrators",
+          source_group_id: "admin",
+          enabled: 1,
+          created_at: at,
+          updated_at: at
+        }];
+      }
+      if (sql.includes("FROM account_roles")) {
+        return [{ account_id: "account-person-admin", role_id: "role-admin", created_at: at }];
+      }
+      if (sql.includes("FROM role_permissions")) {
+        return [{ role_id: "role-admin", permission_code: "admin.access", created_at: at }];
+      }
+      if (sql.includes("FROM account_sessions")) return [];
+      return [];
+    });
+    const module = await bootstrapStorageModule();
+
+    expect(module.loadBootstrapAccessState).toBeTypeOf("function");
+    const state = await module.loadBootstrapAccessState!(connection, {
+      ...defaultConfig(),
+      userGroups: []
+    });
+
+    expect(calls.find((call) => call.sql.includes("FROM auth_bootstrap_state"))?.sql)
+      .toContain("FOR UPDATE");
+    expect(state.config.userGroups).toEqual([
+      expect.objectContaining({ id: "admin", canAdmin: true, enabled: true })
+    ]);
+    expect(state.people).toEqual([
+      expect.objectContaining({ id: "person-admin", groupLocked: true, version: 2 })
+    ]);
+    expect(state.accounts).toEqual([
+      expect.objectContaining({ id: "account-person-admin", authVersion: 2, version: 3 })
+    ]);
+    expect(state.accountCredentials).toEqual([
+      expect.objectContaining({ accountId: "account-person-admin", mustChangePassword: false })
+    ]);
+    expect(state.rolePermissions).toEqual([
+      expect.objectContaining({ roleId: "role-admin", permissionCode: "admin.access" })
+    ]);
+    expect(state.authBootstrap).toEqual({});
+  });
+
+  it("persists only bootstrap access deltas without deleting unrelated access rows", async () => {
+    const at = "2026-07-01T00:00:00.000Z";
+    const before = initialState();
+    before.config.userGroups = [{
+      id: "admin",
+      name: "Administrators",
+      description: "",
+      canClaim: false,
+      canProcess: false,
+      canAccept: false,
+      canAdmin: false,
+      enabled: false
+    }];
+    before.authBootstrap = {};
+    const after = structuredClone(before);
+    after.config.userGroups = [{
+      ...before.config.userGroups[0],
+      canAdmin: true,
+      enabled: true
+    }];
+    after.people = [{
+      id: "person-admin",
+      name: "Root Admin",
+      phone: "13700137000",
+      role: "admin",
+      groupId: "admin",
+      groupName: "Administrators",
+      groupLocked: true,
+      enabled: true,
+      version: 0,
+      createdAt: at,
+      updatedAt: at
+    }];
+    after.accounts = [{
+      id: "account-person-admin",
+      personId: "person-admin",
+      loginName: "13700137000",
+      enabled: true,
+      authVersion: 1,
+      version: 0,
+      createdAt: at,
+      updatedAt: at
+    }];
+    after.accountCredentials = [{
+      accountId: "account-person-admin",
+      passwordHash: "scrypt$stored",
+      passwordChangedAt: at,
+      mustChangePassword: false,
+      failedAttempts: 0
+    }];
+    after.roles = [{
+      id: "role-admin",
+      name: "Administrators",
+      sourceGroupId: "admin",
+      enabled: true,
+      createdAt: at,
+      updatedAt: at
+    }];
+    after.accountRoles = [{ accountId: "account-person-admin", roleId: "role-admin", createdAt: at }];
+    after.rolePermissions = [{ roleId: "role-admin", permissionCode: "admin.access", createdAt: at }];
+    after.accountSessions = [{
+      id: "session-admin",
+      accountId: "account-person-admin",
+      sessionType: "admin",
+      tokenHash,
+      authVersion: 1,
+      expiresAt: "2099-01-01T00:00:00.000Z",
+      lastSeenAt: at,
+      createdAt: at
+    }];
+    after.authBootstrap = { completedAt: at, completedByAccountId: "account-person-admin" };
+    after.auditLogs = [{
+      id: "audit-bootstrap",
+      actorId: "account-person-admin",
+      actorName: "Root Admin",
+      action: "admin.bootstrap",
+      targetType: "account",
+      targetId: "account-person-admin",
+      detail: { accountId: "account-person-admin" },
+      createdAt: at
+    }];
+    const { calls, connection, sql } = recordingConnection();
+    const module = await bootstrapStorageModule();
+
+    expect(module.saveBootstrapAccessState).toBeTypeOf("function");
+    await module.saveBootstrapAccessState!(connection, before, after);
+
+    expect(sql()).toContain("INSERT INTO user_groups");
+    expect(sql()).toContain("INSERT INTO roles");
+    expect(sql()).toContain("DELETE FROM role_permissions WHERE role_id = ?");
+    expect(sql()).toContain("INSERT INTO role_permissions");
+    expect(sql()).toContain("INSERT INTO people");
+    expect(sql()).toContain("INSERT INTO accounts");
+    expect(sql()).toContain("INSERT INTO account_credentials");
+    expect(sql()).toContain("DELETE FROM account_roles WHERE account_id = ?");
+    expect(sql()).toContain("INSERT INTO account_roles");
+    expect(sql()).toContain("INSERT INTO account_sessions");
+    expect(sql()).toContain("INSERT INTO auth_bootstrap_state");
+    expect(sql()).toContain("INSERT INTO audit_logs");
+    expect(calls.some((call) => /DELETE FROM (people|accounts|account_credentials|account_sessions|audit_logs)/.test(call.sql)))
+      .toBe(false);
+  });
+
   it("resolves one active session actor through enabled account, person, role, and permission joins", async () => {
     const { calls, connection } = recordingConnection((sql) => {
       if (!sql.includes("FROM account_sessions s")) return [];

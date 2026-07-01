@@ -3,20 +3,24 @@ import type { ResultSetHeader, RowDataPacket } from "mysql2/promise";
 import {
   PERMISSION_CODES,
   permissionCodesForGroup,
+  type Account,
   type AccountCredential,
+  type AccountRole,
   type AccountSession,
   type AdminLoginRecord,
   type AuthenticatedActor,
-  type BootstrapAdminInput,
   type MobileAccountInput,
   type PermissionCode,
+  type Role,
+  type RolePermission,
   type SessionResolution,
   type SessionType,
   type UserListItem,
   type UserMutation,
   type UserQuery
 } from "../domain/access-control";
-import type { ChatIdentity, ChatIdentityRebindExpectation, MessageChannel, PersonRole, UserGroup } from "../domain/types";
+import type { AppState } from "../domain/app-state";
+import type { ChatIdentity, ChatIdentityRebindExpectation, MessageChannel, Person, PersonRole, UserGroup } from "../domain/types";
 import type {
   PersistedUserImportPreview,
   UserImportCommitInput,
@@ -278,6 +282,463 @@ async function readGroups(connection: DatabaseConnection) {
 
 export async function readAccessGroups(connection: DatabaseConnection) {
   return await readGroups(connection);
+}
+
+function domainDate(value: string) {
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) {
+    throw new Error("Domain date value is invalid");
+  }
+  return date;
+}
+
+function optionalDomainDate(value: string | undefined) {
+  return value ? domainDate(value) : null;
+}
+
+function changedEntities<T>(
+  before: T[] | undefined,
+  after: T[] | undefined,
+  key: (value: T) => string
+) {
+  const previous = new Map((before ?? []).map((value) => [key(value), value]));
+  return (after ?? []).filter((value) => (
+    JSON.stringify(previous.get(key(value))) !== JSON.stringify(value)
+  ));
+}
+
+function groupedValues<T>(
+  values: T[] | undefined,
+  key: (value: T) => string
+) {
+  const grouped = new Map<string, T[]>();
+  for (const value of values ?? []) {
+    const id = key(value);
+    grouped.set(id, [...(grouped.get(id) ?? []), value]);
+  }
+  return grouped;
+}
+
+export async function loadBootstrapAccessState(
+  connection: DatabaseConnection,
+  config: AppConfig
+): Promise<AppState> {
+  await execute(
+    connection,
+    `INSERT IGNORE INTO auth_bootstrap_state (
+       id, completed_at, completed_by_account_id
+     ) VALUES (?, NULL, NULL)`,
+    ["admin"]
+  );
+  const [bootstrapRow] = await rows<Row>(
+    connection,
+    `SELECT completed_at, completed_by_account_id
+     FROM auth_bootstrap_state
+     WHERE id = ?
+     FOR UPDATE`,
+    ["admin"]
+  );
+  const groups = await readGroups(connection);
+  const peopleRows = await rows<Row>(
+    connection,
+    "SELECT * FROM people ORDER BY created_at"
+  );
+  const accountRows = await rows<Row>(
+    connection,
+    "SELECT * FROM accounts ORDER BY created_at"
+  );
+  const credentialRows = await rows<Row>(
+    connection,
+    "SELECT * FROM account_credentials ORDER BY account_id"
+  );
+  const roleRows = await rows<Row>(
+    connection,
+    "SELECT * FROM roles ORDER BY id"
+  );
+  const accountRoleRows = await rows<Row>(
+    connection,
+    "SELECT * FROM account_roles ORDER BY account_id"
+  );
+  const rolePermissionRows = await rows<Row>(
+    connection,
+    "SELECT * FROM role_permissions ORDER BY role_id, permission_code"
+  );
+  const sessionRows = await rows<Row>(
+    connection,
+    "SELECT * FROM account_sessions ORDER BY created_at"
+  );
+
+  const people = peopleRows.map((row): Person => ({
+    id: String(row.id),
+    name: String(row.name),
+    phone: String(row.phone),
+    role: row.role as Person["role"],
+    groupId: row.group_id ? String(row.group_id) : undefined,
+    groupName: String(row.group_name_snapshot ?? ""),
+    groupLocked: bool(row.group_locked),
+    nameConflict: parseJsonValue<Person["nameConflict"] | undefined>(
+      row.name_conflict,
+      undefined
+    ),
+    boothScope: parseJsonValue<string[] | undefined>(row.booth_scope, undefined),
+    enabled: bool(row.enabled),
+    version: Number(row.version ?? 0),
+    createdAt: requiredIso(row.created_at),
+    updatedAt: requiredIso(row.updated_at)
+  }));
+  const accounts = accountRows.map((row): Account => ({
+    id: String(row.id),
+    personId: String(row.person_id),
+    loginName: String(row.login_name),
+    enabled: bool(row.enabled),
+    authVersion: Number(row.auth_version),
+    version: Number(row.version ?? 0),
+    lastLoginAt: iso(row.last_login_at),
+    createdAt: requiredIso(row.created_at),
+    updatedAt: requiredIso(row.updated_at)
+  }));
+  const accountCredentials = credentialRows.map((row): AccountCredential => ({
+    accountId: String(row.account_id),
+    passwordHash: String(row.password_hash),
+    passwordChangedAt: requiredIso(row.password_changed_at),
+    mustChangePassword: bool(row.must_change_password),
+    failedAttempts: Number(row.failed_attempts ?? 0),
+    lockedUntil: iso(row.locked_until)
+  }));
+  const roles = roleRows.map((row): Role => ({
+    id: String(row.id),
+    name: String(row.name),
+    sourceGroupId: String(row.source_group_id),
+    enabled: bool(row.enabled),
+    createdAt: requiredIso(row.created_at),
+    updatedAt: requiredIso(row.updated_at)
+  }));
+  const accountRoles = accountRoleRows.map((row): AccountRole => ({
+    accountId: String(row.account_id),
+    roleId: String(row.role_id),
+    createdAt: requiredIso(row.created_at)
+  }));
+  const rolePermissions = rolePermissionRows.map((row): RolePermission => ({
+    roleId: String(row.role_id),
+    permissionCode: String(row.permission_code) as PermissionCode,
+    createdAt: requiredIso(row.created_at)
+  }));
+  const accountSessions = sessionRows.map((row): AccountSession => ({
+    id: String(row.id),
+    accountId: String(row.account_id),
+    sessionType: row.session_type as SessionType,
+    tokenHash: String(row.token_hash),
+    authVersion: Number(row.auth_version),
+    expiresAt: requiredIso(row.expires_at),
+    lastSeenAt: requiredIso(row.last_seen_at),
+    revokedAt: iso(row.revoked_at),
+    createdAt: requiredIso(row.created_at)
+  }));
+
+  return {
+    booths: [],
+    tickets: [],
+    messageRecords: [],
+    people,
+    chatIdentities: [],
+    accounts,
+    accountCredentials,
+    roles,
+    accountRoles,
+    rolePermissions,
+    accountSessions,
+    auditLogs: [],
+    authBootstrap: bootstrapRow?.completed_at
+      ? {
+          completedAt: requiredIso(bootstrapRow.completed_at),
+          completedByAccountId: bootstrapRow.completed_by_account_id
+            ? String(bootstrapRow.completed_by_account_id)
+            : undefined
+        }
+      : {},
+    config: {
+      ...config,
+      userGroups: groups
+    }
+  };
+}
+
+export async function saveBootstrapAccessState(
+  connection: DatabaseConnection,
+  before: AppState,
+  after: AppState
+): Promise<void> {
+  const now = new Date();
+
+  for (const group of changedEntities(
+    before.config.userGroups,
+    after.config.userGroups,
+    (value) => value.id
+  )) {
+    await execute(
+      connection,
+      `INSERT INTO user_groups (
+         id, name, description, can_claim, can_process, can_accept,
+         can_admin, enabled, created_at, updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE
+         name = VALUES(name),
+         description = VALUES(description),
+         can_claim = VALUES(can_claim),
+         can_process = VALUES(can_process),
+         can_accept = VALUES(can_accept),
+         can_admin = VALUES(can_admin),
+         enabled = VALUES(enabled),
+         updated_at = VALUES(updated_at)`,
+      [
+        group.id,
+        group.name,
+        group.description,
+        group.canClaim,
+        group.canProcess,
+        group.canAccept,
+        group.canAdmin,
+        group.enabled,
+        now,
+        now
+      ]
+    );
+  }
+
+  for (const role of changedEntities(before.roles, after.roles, (value) => value.id)) {
+    await execute(
+      connection,
+      `INSERT INTO roles (
+         id, name, source_group_id, enabled, created_at, updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE
+         name = VALUES(name),
+         source_group_id = VALUES(source_group_id),
+         enabled = VALUES(enabled),
+         updated_at = VALUES(updated_at)`,
+      [
+        role.id,
+        role.name,
+        role.sourceGroupId,
+        role.enabled,
+        domainDate(role.createdAt),
+        domainDate(role.updatedAt)
+      ]
+    );
+  }
+
+  const beforePermissions = groupedValues(before.rolePermissions, (value) => value.roleId);
+  const afterPermissions = groupedValues(after.rolePermissions, (value) => value.roleId);
+  for (const roleId of new Set([...beforePermissions.keys(), ...afterPermissions.keys()])) {
+    const previous = beforePermissions.get(roleId) ?? [];
+    const next = afterPermissions.get(roleId) ?? [];
+    if (JSON.stringify(previous) === JSON.stringify(next)) continue;
+    await execute(
+      connection,
+      "DELETE FROM role_permissions WHERE role_id = ?",
+      [roleId]
+    );
+    for (const permission of next) {
+      await execute(
+        connection,
+        `INSERT INTO role_permissions (
+           role_id, permission_code, created_at
+         ) VALUES (?, ?, ?)`,
+        [
+          permission.roleId,
+          permission.permissionCode,
+          domainDate(permission.createdAt)
+        ]
+      );
+    }
+  }
+
+  for (const person of changedEntities(before.people, after.people, (value) => value.id)) {
+    await execute(
+      connection,
+      `INSERT INTO people (
+         id, name, phone, role, group_id, group_name_snapshot, group_locked,
+         name_conflict, booth_scope, enabled, version, created_at, updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE
+         name = VALUES(name),
+         phone = VALUES(phone),
+         role = VALUES(role),
+         group_id = VALUES(group_id),
+         group_name_snapshot = VALUES(group_name_snapshot),
+         group_locked = VALUES(group_locked),
+         name_conflict = VALUES(name_conflict),
+         booth_scope = VALUES(booth_scope),
+         enabled = VALUES(enabled),
+         version = VALUES(version),
+         updated_at = VALUES(updated_at)`,
+      [
+        person.id,
+        person.name,
+        person.phone,
+        person.role,
+        person.groupId ?? null,
+        person.groupName,
+        person.groupLocked ?? false,
+        person.nameConflict ? json(person.nameConflict) : null,
+        person.boothScope ? json(person.boothScope) : null,
+        person.enabled,
+        person.version ?? 0,
+        domainDate(person.createdAt),
+        domainDate(person.updatedAt)
+      ]
+    );
+  }
+
+  for (const account of changedEntities(before.accounts, after.accounts, (value) => value.id)) {
+    await execute(
+      connection,
+      `INSERT INTO accounts (
+         id, person_id, login_name, enabled, auth_version, version,
+         last_login_at, created_at, updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE
+         person_id = VALUES(person_id),
+         login_name = VALUES(login_name),
+         enabled = VALUES(enabled),
+         auth_version = VALUES(auth_version),
+         version = VALUES(version),
+         last_login_at = VALUES(last_login_at),
+         updated_at = VALUES(updated_at)`,
+      [
+        account.id,
+        account.personId,
+        account.loginName,
+        account.enabled,
+        account.authVersion,
+        account.version ?? 0,
+        optionalDomainDate(account.lastLoginAt),
+        domainDate(account.createdAt),
+        domainDate(account.updatedAt)
+      ]
+    );
+  }
+
+  for (const credential of changedEntities(
+    before.accountCredentials,
+    after.accountCredentials,
+    (value) => value.accountId
+  )) {
+    await execute(
+      connection,
+      `INSERT INTO account_credentials (
+         account_id, password_hash, password_changed_at, must_change_password,
+         failed_attempts, locked_until
+       ) VALUES (?, ?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE
+         password_hash = VALUES(password_hash),
+         password_changed_at = VALUES(password_changed_at),
+         must_change_password = VALUES(must_change_password),
+         failed_attempts = VALUES(failed_attempts),
+         locked_until = VALUES(locked_until)`,
+      [
+        credential.accountId,
+        credential.passwordHash,
+        domainDate(credential.passwordChangedAt),
+        credential.mustChangePassword,
+        credential.failedAttempts,
+        optionalDomainDate(credential.lockedUntil)
+      ]
+    );
+  }
+
+  const beforeAssignments = groupedValues(before.accountRoles, (value) => value.accountId);
+  const afterAssignments = groupedValues(after.accountRoles, (value) => value.accountId);
+  for (const accountId of new Set([...beforeAssignments.keys(), ...afterAssignments.keys()])) {
+    const previous = beforeAssignments.get(accountId) ?? [];
+    const next = afterAssignments.get(accountId) ?? [];
+    if (JSON.stringify(previous) === JSON.stringify(next)) continue;
+    await execute(
+      connection,
+      "DELETE FROM account_roles WHERE account_id = ?",
+      [accountId]
+    );
+    for (const assignment of next) {
+      await execute(
+        connection,
+        `INSERT INTO account_roles (
+           account_id, role_id, created_at
+         ) VALUES (?, ?, ?)`,
+        [assignment.accountId, assignment.roleId, domainDate(assignment.createdAt)]
+      );
+    }
+  }
+
+  for (const session of changedEntities(
+    before.accountSessions,
+    after.accountSessions,
+    (value) => value.id
+  )) {
+    await execute(
+      connection,
+      `INSERT INTO account_sessions (
+         id, account_id, session_type, token_hash, auth_version,
+         expires_at, last_seen_at, revoked_at, created_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE
+         account_id = VALUES(account_id),
+         session_type = VALUES(session_type),
+         token_hash = VALUES(token_hash),
+         auth_version = VALUES(auth_version),
+         expires_at = VALUES(expires_at),
+         last_seen_at = VALUES(last_seen_at),
+         revoked_at = VALUES(revoked_at)`,
+      [
+        session.id,
+        session.accountId,
+        session.sessionType,
+        session.tokenHash,
+        session.authVersion,
+        domainDate(session.expiresAt),
+        domainDate(session.lastSeenAt),
+        optionalDomainDate(session.revokedAt),
+        domainDate(session.createdAt)
+      ]
+    );
+  }
+
+  if (JSON.stringify(before.authBootstrap ?? {}) !== JSON.stringify(after.authBootstrap ?? {})) {
+    await execute(
+      connection,
+      `INSERT INTO auth_bootstrap_state (
+         id, completed_at, completed_by_account_id
+       ) VALUES (?, ?, ?)
+       ON DUPLICATE KEY UPDATE
+         completed_at = VALUES(completed_at),
+         completed_by_account_id = VALUES(completed_by_account_id)`,
+      [
+        "admin",
+        optionalDomainDate(after.authBootstrap?.completedAt),
+        after.authBootstrap?.completedByAccountId ?? null
+      ]
+    );
+  }
+
+  const previousAuditIds = new Set((before.auditLogs ?? []).map((entry) => entry.id));
+  for (const entry of (after.auditLogs ?? []).filter((value) => !previousAuditIds.has(value.id))) {
+    await execute(
+      connection,
+      `INSERT INTO audit_logs (
+         id, actor_id, actor_name, action, target_type, target_id,
+         detail_json, created_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        entry.id,
+        entry.actorId ?? null,
+        entry.actorName,
+        entry.action,
+        entry.targetType,
+        entry.targetId ?? null,
+        json(entry.detail),
+        domainDate(entry.createdAt)
+      ]
+    );
+  }
 }
 
 async function readEnabledGroup(
@@ -1193,201 +1654,6 @@ export async function bootstrapStatus(connection: DatabaseConnection) {
     ["admin"]
   );
   return { required: !state?.completed_at };
-}
-
-function createdAdminGroupId(name: string) {
-  return `admin-${createHash("sha256")
-    .update(name.trim().toLowerCase())
-    .digest("base64url")
-    .slice(0, 16)}`;
-}
-
-export async function bootstrapAdmin(
-  connection: DatabaseConnection,
-  input: BootstrapAdminInput,
-  passwordHash: string
-) {
-  const [bootstrap] = await rows<Row>(
-    connection,
-    `SELECT completed_at
-     FROM auth_bootstrap_state
-     WHERE id = ?
-     FOR UPDATE`,
-    ["admin"]
-  );
-  if (bootstrap?.completed_at) {
-    throw new Error("Admin bootstrap has already completed");
-  }
-  if (!input.legacyPassword.trim()) {
-    throw new Error("Legacy password is required");
-  }
-
-  let groupId: string;
-  if (input.group.mode === "existing") {
-    groupId = input.group.groupId;
-    const result = await execute(
-      connection,
-      `UPDATE user_groups
-       SET enabled = true, can_admin = true, updated_at = ?
-       WHERE id = ?`,
-      [new Date(), groupId]
-    );
-    if (result.affectedRows < 1) {
-      throw new Error("未找到管理员初始化分组");
-    }
-  } else {
-    const groupName = nonEmptyName(input.group.name);
-    const baseId = createdAdminGroupId(groupName);
-    const existingIds = new Set(
-      (await rows<Row>(
-        connection,
-        "SELECT id FROM user_groups WHERE id LIKE ?",
-        [`${baseId}%`]
-      )).map((row) => String(row.id))
-    );
-    groupId = baseId;
-    let suffix = 1;
-    while (existingIds.has(groupId)) {
-      groupId = `${baseId}-${suffix}`;
-      suffix += 1;
-    }
-    const now = new Date();
-    await execute(
-      connection,
-      `INSERT INTO user_groups (
-         id, name, description, can_claim, can_process, can_accept,
-         can_admin, enabled, created_at, updated_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        groupId,
-        groupName,
-        "管理员初始化分组",
-        false,
-        false,
-        false,
-        true,
-        true,
-        now,
-        now
-      ]
-    );
-  }
-
-  const groups = await readGroups(connection);
-  await syncAccessRoles(connection, groups);
-  const group = groups.find((item) => item.id === groupId);
-  if (!group) throw new Error("未找到管理员初始化分组");
-
-  const phone = normalizeMobilePhone(input.phone);
-  const name = nonEmptyName(input.name);
-  const existing = await findAccountPersonByPhone(connection, phone);
-  const now = new Date();
-  let personId: string;
-  let accountId: string;
-  if (!existing) {
-    personId = `person-${randomUUID()}`;
-    accountId = `account-${personId}`;
-    await execute(
-      connection,
-      `INSERT INTO people (
-         id, name, phone, role, group_id, group_name_snapshot, group_locked,
-         name_conflict, booth_scope, enabled, created_at, updated_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        personId,
-        name,
-        phone,
-        "admin",
-        group.id,
-        group.name,
-        true,
-        null,
-        null,
-        true,
-        now,
-        now
-      ]
-    );
-    await execute(
-      connection,
-      `INSERT INTO accounts (
-         id, person_id, login_name, enabled, auth_version,
-         last_login_at, created_at, updated_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [accountId, personId, phone, true, 1, null, now, now]
-    );
-  } else {
-    personId = String(existing.person_id);
-    accountId = existing.account_id
-      ? String(existing.account_id)
-      : `account-${personId}`;
-    await execute(
-      connection,
-      `UPDATE people
-       SET name = ?, phone = ?, role = 'admin', group_id = ?,
-           group_name_snapshot = ?, group_locked = true,
-           enabled = true, version = version + 1, updated_at = ?
-       WHERE id = ?`,
-      [name, phone, group.id, group.name, now, personId]
-    );
-    if (existing.account_id) {
-      await execute(
-        connection,
-        `UPDATE accounts
-         SET login_name = ?, enabled = true,
-             version = version + 1, updated_at = ?
-         WHERE id = ?`,
-        [phone, now, accountId]
-      );
-      await invalidateAccount(connection, accountId, now);
-    } else {
-      await execute(
-        connection,
-        `INSERT INTO accounts (
-           id, person_id, login_name, enabled, auth_version,
-           last_login_at, created_at, updated_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        [accountId, personId, phone, true, 1, null, now, now]
-      );
-    }
-  }
-  await synchronizeAccountRole(connection, accountId, group.id, now);
-  await execute(
-    connection,
-    `INSERT INTO account_credentials (
-       account_id, password_hash, password_changed_at, must_change_password,
-       failed_attempts, locked_until
-     ) VALUES (?, ?, ?, ?, ?, ?)
-     ON DUPLICATE KEY UPDATE
-       password_hash = VALUES(password_hash),
-       password_changed_at = VALUES(password_changed_at),
-       must_change_password = VALUES(must_change_password),
-       failed_attempts = 0,
-       locked_until = NULL`,
-    [accountId, passwordHash, now, false, 0, null]
-  );
-  await execute(
-    connection,
-    `INSERT INTO auth_bootstrap_state (
-       id, completed_at, completed_by_account_id
-     ) VALUES (?, ?, ?)
-     ON DUPLICATE KEY UPDATE
-       completed_at = VALUES(completed_at),
-       completed_by_account_id = VALUES(completed_by_account_id)`,
-    ["admin", now, accountId]
-  );
-  const actor = await readActor(connection, accountId, "admin");
-  if (!actor) throw new Error("管理员初始化访问链无效");
-  await writeAudit(
-    connection,
-    "admin.bootstrap",
-    "account",
-    accountId,
-    { accountId, personId, groupId: group.id },
-    actor,
-    now
-  );
-  return actor;
 }
 
 type UserFilter = {
