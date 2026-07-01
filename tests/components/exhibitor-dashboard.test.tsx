@@ -558,3 +558,28 @@ describe("ExhibitorDashboard", () => {
     expect(onImportFile).toHaveBeenCalledWith(file, ["普通绿色搭建汇总"]);
   });
 });
+
+describe("ExhibitorDashboard table selection lifecycle", () => {
+  it("clears table selection when the incoming exhibitor dataset changes", async () => {
+    const driver = userEvent.setup();
+    const { rerender } = render(
+      <ExhibitorDashboard booths={makePaginationBooths(2)} isImporting={false} onImportFile={vi.fn()} />
+    );
+    await driver.click(within(screen.getByRole("table", { name: "展商数据表格" })).getByLabelText("选择Company 1"));
+    expect(screen.getByText("已选择 1 个展商")).not.toBeNull();
+
+    rerender(
+      <ExhibitorDashboard
+        booths={makePaginationBooths(2).map((booth, index) => ({
+          ...booth,
+          boothNumber: `R${index + 1}`,
+          companyName: `Replacement ${index + 1}`
+        }))}
+        isImporting={false}
+        onImportFile={vi.fn()}
+      />
+    );
+
+    await waitFor(() => expect(screen.queryByText("已选择 1 个展商")).toBeNull());
+  });
+});
