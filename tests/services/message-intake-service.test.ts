@@ -190,7 +190,8 @@ describe("message intake service", () => {
 
   it("persists the inbound message when automatic ticket creation fails", async () => {
     const appState = state();
-    appState.config.messageIntegrations[0].autoCreateTickets = true;
+    const integrations = appState.config.messageIntegrations ?? [];
+    integrations[0].autoCreateTickets = true;
     ticketServiceMock.submitTicket.mockImplementationOnce(async () => {
       expect(appState.messageRecords).toHaveLength(1);
       throw new Error("AI unavailable");

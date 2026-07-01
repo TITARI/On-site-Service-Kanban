@@ -279,7 +279,10 @@ describe("auth service", () => {
     const repo = repository({
       bootstrapStatus: vi.fn(async () => ({ required: true })),
       bootstrapAdmin: vi.fn(async () => adminActor),
-      bootstrapAdminWithSession: vi.fn(async () => ({ actor: adminActor })),
+      bootstrapAdminWithSession: vi.fn(async () => ({
+        actor: adminActor,
+        session: session({ accountId: adminActor.accountId, sessionType: "admin" })
+      })),
       createAccountSession: vi.fn(async (
         accountId: string,
         type,
@@ -299,7 +302,7 @@ describe("auth service", () => {
       const result = await bootstrapFirstAdmin(
         repo,
         input,
-        { ADMIN_BOOTSTRAP_PASSWORD: "legacy-secret" } as NodeJS.ProcessEnv
+        { ...process.env, ADMIN_BOOTSTRAP_PASSWORD: "legacy-secret" }
       );
 
       expect(result.actor).toBe(adminActor);

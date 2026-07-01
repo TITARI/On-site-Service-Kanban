@@ -145,7 +145,7 @@ function previewRepository(existingPhone?: string) {
             personId: "person-existing",
             accountId: "account-existing",
             name: "Existing",
-            phone: existingPhone,
+            phone: existingPhone ?? "",
             groupId: "builder",
             groupName: "Builder",
             groupLocked: false,
@@ -153,6 +153,7 @@ function previewRepository(existingPhone?: string) {
             permissions: ["ticket.process" as const],
             hasPassword: false,
             identities: {},
+            version: 0,
             updatedAt: "2026-06-15T00:00:00.000Z"
           }]
         : [],

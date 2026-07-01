@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import type { ExhibitorFieldMappingContext, ExhibitorFieldMappingDecision } from "@/lib/ai/types";
 import { mapExhibitorFields } from "@/lib/services/exhibitor-field-mapping-service";
 
 function sheet(headers: string[] = ["展位号", "企业名称", "楼层", "展馆", "面积", "方案类型", "销售人员", "搭建商"]) {
@@ -14,7 +15,9 @@ function sheet(headers: string[] = ["展位号", "企业名称", "楼层", "展�
 
 describe("exhibitor field mapping service", () => {
   it("maps known Chinese headers without calling AI", async () => {
-    const ai = vi.fn();
+    const ai = vi.fn<(
+      context: ExhibitorFieldMappingContext
+    ) => Promise<ExhibitorFieldMappingDecision>>();
 
     const result = await mapExhibitorFields(sheet(), { ai });
 
@@ -36,7 +39,7 @@ describe("exhibitor field mapping service", () => {
   });
 
   it("uses smart AI only for fields that rules cannot map", async () => {
-    const ai = vi.fn(async () => ({
+    const ai = vi.fn(async (_context: ExhibitorFieldMappingContext): Promise<ExhibitorFieldMappingDecision> => ({
       mappings: [
         { field: "boothNumber", columnIndex: 0, confidence: 0.92, reason: "席位编码是项目内展位号" },
         { field: "companyName", columnIndex: 1, confidence: 0.91, reason: "参展单位对应展商名称" }
@@ -97,7 +100,7 @@ describe("exhibitor field mapping service", () => {
 
   it("marks low-confidence AI mappings as requiring confirmation", async () => {
     const result = await mapExhibitorFields(sheet(["展位编码", "展商全称"]), {
-      ai: vi.fn(async () => ({
+      ai: vi.fn(async (_context: ExhibitorFieldMappingContext): Promise<ExhibitorFieldMappingDecision> => ({
         mappings: [
           { field: "boothNumber", columnIndex: 0, confidence: 0.72, reason: "可能是展位号" }
         ]

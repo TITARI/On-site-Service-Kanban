@@ -285,7 +285,7 @@ describe("AdminConfigCenter user groups", () => {
   });
 
   it("saves user groups as one editable list and disables instead of deleting rows", async () => {
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ config }), { status: 200 }));
+    const fetchMock = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({ config }), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
     const user = userEvent.setup();
 
@@ -318,7 +318,7 @@ describe("AdminConfigCenter user groups", () => {
   });
 
   it("deletes groups with no tickets and keeps used groups disable-only", async () => {
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ config }), { status: 200 }));
+    const fetchMock = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({ config }), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
     const user = userEvent.setup();
 
@@ -341,7 +341,7 @@ describe("AdminConfigCenter user groups", () => {
   });
 
   it("saves issue types as one list, excludes automatic option and uses configured group choices", async () => {
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ config }), { status: 200 }));
+    const fetchMock = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({ config }), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
     const user = userEvent.setup();
 
@@ -377,7 +377,7 @@ describe("AdminConfigCenter user groups", () => {
   });
 
   it("uses real default values for new issue urgency and priority", async () => {
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ config }), { status: 200 }));
+    const fetchMock = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({ config }), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
     const user = userEvent.setup();
 
@@ -475,7 +475,7 @@ describe("AdminConfigCenter user groups", () => {
   });
 
   it("deletes issue types with no tickets and keeps used issue types disable-only", async () => {
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ config: issueDeletionConfig }), { status: 200 }));
+    const fetchMock = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({ config: issueDeletionConfig }), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
     const user = userEvent.setup();
 
@@ -503,7 +503,7 @@ describe("AdminConfigCenter user groups", () => {
   });
 
   it("edits ai http settings", async () => {
-    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const fetchMock = vi.fn<typeof fetch>(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url === "/api/admin/ai-models") {
         return new Response(JSON.stringify({ models: ["gpt-fast", "gpt-smart"] }), { status: 200 });
@@ -545,7 +545,7 @@ describe("AdminConfigCenter user groups", () => {
   });
 
   it("uses a saved ai api key marker to fetch models after refresh", async () => {
-    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+    const fetchMock = vi.fn<typeof fetch>(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url === "/api/admin/ai-models") {
         return new Response(JSON.stringify({ models: ["gpt-smart", "gpt-fast"] }), { status: 200 });
@@ -582,7 +582,7 @@ describe("AdminConfigCenter user groups", () => {
   });
 
   it("fills common ai provider settings automatically when a preset is selected", async () => {
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ config }), { status: 200 }));
+    const fetchMock = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({ config }), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
     const user = userEvent.setup();
 
@@ -615,7 +615,7 @@ describe("AdminConfigCenter user groups", () => {
   });
 
   it("renders ai prompt scenarios and copies a built-in prompt before editing", async () => {
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ config }), { status: 200 }));
+    const fetchMock = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({ config }), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
     const user = userEvent.setup();
 
@@ -642,7 +642,7 @@ describe("AdminConfigCenter user groups", () => {
   });
 
   it("edits a copied prompt template and makes it the default", async () => {
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ config: configWithCustomPrompt }), { status: 200 }));
+    const fetchMock = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({ config: configWithCustomPrompt }), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
     const user = userEvent.setup();
 
@@ -668,7 +668,7 @@ describe("AdminConfigCenter user groups", () => {
   });
 
   it("deletes a copied prompt template and restores the built-in default", async () => {
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ config: configWithDefaultCustomPrompt }), { status: 200 }));
+    const fetchMock = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({ config: configWithDefaultCustomPrompt }), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
     const user = userEvent.setup();
 
@@ -683,7 +683,7 @@ describe("AdminConfigCenter user groups", () => {
   });
 
   it("configures the embedded wxauto MCP service without legacy server fields", async () => {
-    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const fetchMock = vi.fn<typeof fetch>(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url === "/api/admin/wxauto-mcp" && init?.method === "PUT") {
         return new Response(JSON.stringify({
@@ -742,7 +742,7 @@ describe("AdminConfigCenter user groups", () => {
   });
 
   it("rotates the wxauto access token from the system page", async () => {
-    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const fetchMock = vi.fn<typeof fetch>(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url === "/api/admin/wxauto-mcp" && init?.method === "POST") {
         return new Response(JSON.stringify({ accessToken: "new-token" }), { status: 200 });
@@ -771,7 +771,7 @@ describe("AdminConfigCenter user groups", () => {
   });
 
   it("edits auto acceptance settings on the system page", async () => {
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ config }), { status: 200 }));
+    const fetchMock = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({ config }), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
     const user = userEvent.setup();
 
@@ -789,7 +789,7 @@ describe("AdminConfigCenter user groups", () => {
   });
 
   it("blocks invalid auto acceptance timeout minutes before saving", async () => {
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ config }), { status: 200 }));
+    const fetchMock = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({ config }), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
     const user = userEvent.setup();
 
@@ -828,7 +828,7 @@ describe("AdminConfigCenter user groups", () => {
         }
       ]
     };
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ keywordGroups: keywordConfig.keywordGroups }), { status: 200 }));
+    const fetchMock = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({ keywordGroups: keywordConfig.keywordGroups }), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
     const user = userEvent.setup();
 
@@ -919,7 +919,7 @@ describe("AdminConfigCenter user groups", () => {
   });
 
   it("imports exhibition data from an uploaded workbook file", async () => {
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ ok: true }), { status: 200 }));
+    const fetchMock = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({ ok: true }), { status: 200 }));
     const user = userEvent.setup();
     vi.stubGlobal("fetch", fetchMock);
 
@@ -974,7 +974,7 @@ describe("AdminConfigCenter user groups", () => {
       area: "9",
       boothType: "精标"
     };
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ ok: true, booths: [importedBooth] }), { status: 200 }));
+    const fetchMock = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({ ok: true, booths: [importedBooth] }), { status: 200 }));
     const user = userEvent.setup();
     vi.stubGlobal("fetch", fetchMock);
 
@@ -1026,7 +1026,7 @@ describe("AdminConfigCenter user groups", () => {
       salesOwner: "王宁",
       builder: "搭建组"
     };
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ ok: true, booths: [importedBooth] }), { status: 200 }));
+    const fetchMock = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({ ok: true, booths: [importedBooth] }), { status: 200 }));
     const user = userEvent.setup();
     vi.stubGlobal("fetch", fetchMock);
 
@@ -1076,7 +1076,7 @@ describe("AdminConfigCenter user groups", () => {
       boothType: "精标"
     };
     const refreshedBooth = { ...importedBooth, salesOwner: "刷新销售" };
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ ok: true, booths: [importedBooth] }), { status: 200 }));
+    const fetchMock = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({ ok: true, booths: [importedBooth] }), { status: 200 }));
     const user = userEvent.setup();
     vi.stubGlobal("fetch", fetchMock);
 
@@ -1581,7 +1581,7 @@ describe("AdminConfigCenter user groups", () => {
   });
 
   it("uploads titled logistics workbook for server-side sheet inspection instead of parsing only the first sheet", async () => {
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ ok: true }), { status: 200 }));
+    const fetchMock = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({ ok: true }), { status: 200 }));
     const user = userEvent.setup();
     vi.stubGlobal("fetch", fetchMock);
 

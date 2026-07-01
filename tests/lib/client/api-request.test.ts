@@ -39,7 +39,7 @@ describe("api request errors", () => {
 
   it("preserves status and passes AbortSignal to fetch", async () => {
     const controller = new AbortController();
-    const fetchMock = vi.fn(async () => new Response(null, { status: 503 }));
+    const fetchMock = vi.fn<typeof fetch>(async () => new Response(null, { status: 503 }));
     vi.stubGlobal("fetch", fetchMock);
 
     await expect(apiJson("/api/example", { signal: controller.signal }, "服务失败"))

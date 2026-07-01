@@ -146,7 +146,7 @@ describe("login and role access", () => {
         }
       ]
     };
-    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+    const fetchMock = vi.fn<typeof fetch>(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url === "/api/auth/session?type=mobile") {
         return new Response(JSON.stringify({ message: "未登录" }), { status: 401 });
@@ -163,7 +163,7 @@ describe("login and role access", () => {
   });
 
   it("restores a valid mobile session before loading the board", async () => {
-    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+    const fetchMock = vi.fn<typeof fetch>(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url === "/api/auth/session?type=mobile") {
         return new Response(JSON.stringify({ user: sessionUser() }), { status: 200 });
@@ -183,7 +183,7 @@ describe("login and role access", () => {
   });
 
   it("posts member login to the mobile auth route before using the board", async () => {
-    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+    const fetchMock = vi.fn<typeof fetch>(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url === "/api/auth/session?type=mobile") {
         return new Response(JSON.stringify({ message: "未登录" }), { status: 401 });
@@ -239,7 +239,7 @@ describe("login and role access", () => {
   });
 
   it("shows an error when member login cannot reach the auth route", async () => {
-    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+    const fetchMock = vi.fn<typeof fetch>(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url === "/api/auth/session?type=mobile") {
         return new Response(JSON.stringify({ message: "未登录" }), { status: 401 });
@@ -266,7 +266,7 @@ describe("login and role access", () => {
   });
 
   it("shows an error when the auth route returns a malformed success payload", async () => {
-    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+    const fetchMock = vi.fn<typeof fetch>(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url === "/api/auth/session?type=mobile") {
         return new Response(JSON.stringify({ message: "未登录" }), { status: 401 });
@@ -293,7 +293,7 @@ describe("login and role access", () => {
   });
 
   it("posts logout to the mobile auth route and returns to login", async () => {
-    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+    const fetchMock = vi.fn<typeof fetch>(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url === "/api/auth/session?type=mobile") {
         return new Response(JSON.stringify({ user: sessionUser() }), { status: 200 });

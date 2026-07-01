@@ -33,7 +33,9 @@ describe("app repository", () => {
     } satisfies RateLimiter;
     const fileRepository = createFileAppRepository({
       readState: vi.fn(async () => state()),
-      updateState: vi.fn(async <T>(operation: (state: AppState) => Promise<T> | T) => operation(state()))
+      updateState: async <T>(
+        operation: (state: AppState) => Promise<T> | T
+      ) => operation(state())
     }, limiter);
     const mariaRepository = createMariaDbAppRepository({} as MariaDbStateStore, limiter);
 
@@ -61,9 +63,9 @@ describe("app repository", () => {
     const appState = state();
     const repository = createFileAppRepository({
       readState: vi.fn(async () => appState),
-      updateState: vi.fn(async <T>(
+      updateState: async <T>(
         operation: (state: AppState) => Promise<T> | T
-      ) => operation(appState))
+      ) => operation(appState)
     });
 
     await expect(repository.adminBootstrap()).resolves.toEqual({

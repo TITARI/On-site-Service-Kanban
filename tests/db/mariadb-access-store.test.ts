@@ -2567,7 +2567,7 @@ describe("MariaDB access store", () => {
       rows: [{
         id: "row-1",
         rowNumber: 1,
-        raw: { name: "Alice Import" },
+        raw: { 姓名: "Alice Import" },
         value: {
           name: "Alice Import",
           phone: "13800138000",

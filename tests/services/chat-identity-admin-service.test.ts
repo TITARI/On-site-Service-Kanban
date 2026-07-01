@@ -4,6 +4,7 @@ import type { AuthenticatedActor } from "@/lib/domain/access-control";
 import type { AppState } from "@/lib/domain/app-state";
 import type { ChatIdentity } from "@/lib/domain/types";
 import type { AppRepository } from "@/lib/repositories/app-repository";
+import { defaultConfig } from "@/lib/seed";
 import { bindChatIdentityInState } from "@/lib/services/access-state-service";
 import {
   ChatIdentityConflictError,
@@ -69,20 +70,24 @@ function confirmedBindingInput() {
   };
 }
 
-async function conflictToken(repo: AppRepository, secret = "test-secret") {
+async function conflictToken(repo: AppRepository, secret = "test-secret"): Promise<string> {
   const service = createChatIdentityAdminService(repo, {
     env: {
+      ...process.env,
       AUTH_CONFIRMATION_SECRET: secret
-    } as NodeJS.ProcessEnv
+    }
   });
   const attempt = service.bindIdentity(
     { userId: "person-1", platform: "wechat", externalUserId: "wxid-1" },
     adminActor()
   );
-  await expect(attempt).rejects.toBeInstanceOf(ChatIdentityConflictError);
-  return await attempt.catch((error: ChatIdentityConflictError) => (
-    error.confirmationToken
-  ));
+  try {
+    await attempt;
+    throw new Error("expected chat identity conflict");
+  } catch (error) {
+    if (!(error instanceof ChatIdentityConflictError)) throw error;
+    return error.confirmationToken;
+  }
 }
 
 function claimFromToken(token: string) {
@@ -105,8 +110,9 @@ describe("chat identity admin service", () => {
     });
     const service = createChatIdentityAdminService(repo, {
       env: {
+        ...process.env,
         AUTH_CONFIRMATION_SECRET: "test-secret"
-      } as NodeJS.ProcessEnv
+      }
     });
 
     await expect(
@@ -129,17 +135,11 @@ describe("chat identity admin service", () => {
     });
     const service = createChatIdentityAdminService(repo, {
       env: {
+        ...process.env,
         AUTH_CONFIRMATION_SECRET: "test-secret"
-      } as NodeJS.ProcessEnv
+      }
     });
-    const firstAttempt = service.bindIdentity(
-      { userId: "person-1", platform: "wechat", externalUserId: "wxid-1" },
-      adminActor()
-    );
-    await expect(firstAttempt).rejects.toBeInstanceOf(ChatIdentityConflictError);
-    const token = await firstAttempt.catch((error: ChatIdentityConflictError) => (
-      error.confirmationToken
-    ));
+    const token = await conflictToken(repo);
 
     await service.bindIdentity({
       ...confirmedBindingInput(),
@@ -172,8 +172,9 @@ describe("chat identity admin service", () => {
     const token = await conflictToken(repo);
     const service = createChatIdentityAdminService(repo, {
       env: {
+        ...process.env,
         AUTH_CONFIRMATION_SECRET: "test-secret"
-      } as NodeJS.ProcessEnv
+      }
     });
 
     await expect(service.bindIdentity({
@@ -195,8 +196,9 @@ describe("chat identity admin service", () => {
     const token = await conflictToken(repo);
     const service = createChatIdentityAdminService(repo, {
       env: {
+        ...process.env,
         AUTH_CONFIRMATION_SECRET: "test-secret"
-      } as NodeJS.ProcessEnv
+      }
     });
 
     await expect(service.bindIdentity({
@@ -218,8 +220,9 @@ describe("chat identity admin service", () => {
     const token = await conflictToken(repo);
     const service = createChatIdentityAdminService(repo, {
       env: {
+        ...process.env,
         AUTH_CONFIRMATION_SECRET: "test-secret"
-      } as NodeJS.ProcessEnv
+      }
     });
 
     await expect(service.bindIdentity({
@@ -241,8 +244,9 @@ describe("chat identity admin service", () => {
     const token = await conflictToken(repo);
     const service = createChatIdentityAdminService(repo, {
       env: {
+        ...process.env,
         AUTH_CONFIRMATION_SECRET: "test-secret"
-      } as NodeJS.ProcessEnv
+      }
     });
 
     await expect(service.bindIdentity({
@@ -270,8 +274,9 @@ describe("chat identity admin service", () => {
     );
     const service = createChatIdentityAdminService(repo, {
       env: {
+        ...process.env,
         AUTH_CONFIRMATION_SECRET: "test-secret"
-      } as NodeJS.ProcessEnv
+      }
     });
 
     await expect(service.bindIdentity({
@@ -289,8 +294,9 @@ describe("chat identity admin service", () => {
     });
     const service = createChatIdentityAdminService(repo, {
       env: {
+        ...process.env,
         AUTH_CONFIRMATION_SECRET: "test-secret"
-      } as NodeJS.ProcessEnv
+      }
     });
 
     await expect(
@@ -307,8 +313,9 @@ describe("chat identity admin service", () => {
     });
     const service = createChatIdentityAdminService(repo, {
       env: {
+        ...process.env,
         AUTH_CONFIRMATION_SECRET: "test-secret"
-      } as NodeJS.ProcessEnv
+      }
     });
 
     await service.bindIdentity({
@@ -406,8 +413,9 @@ describe("chat identity access-state mutations", () => {
       accountSessions: [],
       auditLogs: [],
       config: {
+        ...defaultConfig(),
         userGroups: []
-      } as AppState["config"]
+      }
     };
 
     expect(() => bindChatIdentityInState(state, {
@@ -502,8 +510,9 @@ describe("chat identity access-state mutations", () => {
       accountSessions: [],
       auditLogs: [],
       config: {
+        ...defaultConfig(),
         userGroups: []
-      } as AppState["config"]
+      }
     };
 
     expect(() => bindChatIdentityInState(state, {

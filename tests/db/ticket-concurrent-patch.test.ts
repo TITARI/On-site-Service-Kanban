@@ -142,6 +142,7 @@ function appendPatch(ticket: Ticket, suffix: "a" | "b") {
   });
   ticket.aiDecisions.push({
     modelId: "smart",
+    provider: "mock",
     scenario: "dedupe",
     confidence: 0,
     action: "create",

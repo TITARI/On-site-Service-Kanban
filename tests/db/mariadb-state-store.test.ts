@@ -223,23 +223,25 @@ function wechatProcessingConnection() {
       }
     ]
   };
-  const connection = {
-    execute: vi.fn(async (sql: string, params: unknown[] = []) => {
-      calls.push({ sql, params });
-      if (sql.includes("FROM app_config_versions")) {
-        return [[{ config_json: JSON.stringify(config) }]];
-      }
-      if (sql.includes("FROM exhibition_booths")) {
-        return [[{
+  const execute = vi.fn(async (
+    sql: string,
+    params: unknown[] = []
+  ): Promise<unknown> => {
+    calls.push({ sql, params });
+    if (sql.includes("FROM app_config_versions")) {
+      return [[{ config_json: JSON.stringify(config) }]];
+    }
+    if (sql.includes("FROM exhibition_booths")) {
+      return [[{
           booth_number: "A01",
           company_name: "Example Exhibitor",
           company_short_name: "Example",
           sales_owner: "Sales",
           builder: "Builder"
-        }]];
-      }
-      if (sql.includes("FROM chat_identities")) {
-        return [[{
+      }]];
+    }
+    if (sql.includes("FROM chat_identities")) {
+      return [[{
           id: "chat-wechat-user",
           platform: "wechat",
           external_user_id: "wxid-runtime",
@@ -250,10 +252,10 @@ function wechatProcessingConnection() {
           verified_at: null,
           first_seen_at: rowDate(),
           last_seen_at: rowDate()
-        }]];
-      }
-      if (sql.includes("FROM conversations")) {
-        return [[{
+      }]];
+    }
+    if (sql.includes("FROM conversations")) {
+      return [[{
           id: "conversation-runtime",
           platform: "wechat",
           type: "group",
@@ -262,10 +264,10 @@ function wechatProcessingConnection() {
           default_notify: 1,
           created_at: rowDate(),
           updated_at: rowDate()
-        }]];
-      }
-      if (sql.includes("FROM pending_work_order_sessions")) {
-        return [[{
+      }]];
+    }
+    if (sql.includes("FROM pending_work_order_sessions")) {
+      return [[{
           id: "pending-runtime",
           platform: "wechat",
           conversation_id: "conversation-runtime",
@@ -283,13 +285,13 @@ function wechatProcessingConnection() {
           created_at: rowDate(),
           updated_at: rowDate(),
           last_prompt_at: new Date()
-        }]];
-      }
-      if (sql.trimStart().startsWith("SELECT")) return [[]];
-      return [{ affectedRows: 1 }];
-    })
-  } as unknown as DatabaseConnection;
-  return { calls, connection };
+      }]];
+    }
+    if (sql.trimStart().startsWith("SELECT")) return [[]];
+    return [{ affectedRows: 1 }];
+  });
+  const connection = { execute } as unknown as DatabaseConnection;
+  return { calls, connection, execute };
 }
 
 function normalizedSql(sql: string) {
@@ -887,8 +889,7 @@ describe("MariaDbStateStore", () => {
   });
 
   it("invalidates MariaDB runtime sessions when WeChat registration changes the account role", async () => {
-    const { calls, connection } = wechatProcessingConnection();
-    const baseExecute = vi.mocked(connection.execute);
+    const { calls, connection, execute: baseExecute } = wechatProcessingConnection();
     const originalExecute = baseExecute.getMockImplementation();
     baseExecute.mockImplementation(async (sql: string, params: unknown[] = []) => {
       if (sql.includes("FROM accounts") && sql.includes("FOR UPDATE")) {
@@ -931,8 +932,7 @@ describe("MariaDbStateStore", () => {
   });
 
   it("does not invalidate MariaDB runtime sessions when the account role is unchanged", async () => {
-    const { calls, connection } = wechatProcessingConnection();
-    const baseExecute = vi.mocked(connection.execute);
+    const { calls, connection, execute: baseExecute } = wechatProcessingConnection();
     const originalExecute = baseExecute.getMockImplementation();
     baseExecute.mockImplementation(async (sql: string, params: unknown[] = []) => {
       if (sql.includes("FROM accounts") && sql.includes("FOR UPDATE")) {
@@ -974,8 +974,7 @@ describe("MariaDbStateStore", () => {
   });
 
   it("rejects runtime account upserts when login belongs to a different person", async () => {
-    const { calls, connection } = wechatProcessingConnection();
-    const baseExecute = vi.mocked(connection.execute);
+    const { calls, connection, execute: baseExecute } = wechatProcessingConnection();
     const originalExecute = baseExecute.getMockImplementation();
     baseExecute.mockImplementation(async (sql: string, params: unknown[] = []) => {
       if (sql.includes("FROM accounts") && sql.includes("FOR UPDATE")) {
@@ -1208,19 +1207,18 @@ describe("MariaDbStateStore", () => {
   });
 
   it("rejects disabled users during MariaDB session resolution", async () => {
-    const connection = {
-      execute: vi.fn(async (sql: string) => {
-        if (sql.includes("FROM account_sessions s")) return [[]];
-        return [[]];
-      })
-    } as unknown as DatabaseConnection;
+    const execute = vi.fn(async (sql: string) => {
+      if (sql.includes("FROM account_sessions s")) return [[]];
+      return [[]];
+    });
+    const connection = { execute } as unknown as DatabaseConnection;
     databaseMocks.setConnection(connection);
 
     await expect(
       new MariaDbStateStore().resolveAccountSession("a".repeat(64), "mobile")
     ).resolves.toBeUndefined();
 
-    const query = vi.mocked(connection.execute).mock.calls[0]?.[0] as string;
+    const query = execute.mock.calls[0]?.[0];
     expect(query).toContain("a.enabled = true");
     expect(query).toContain("p.enabled = true");
   });

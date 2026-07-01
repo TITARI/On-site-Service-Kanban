@@ -41,7 +41,7 @@ async function routeFetch(input: string | URL | Request, init?: RequestInit) {
 
 function contentResult<T extends Record<string, unknown>>(result: Awaited<ReturnType<Client["callTool"]>>) {
   if (result.structuredContent) return result.structuredContent as T;
-  const item = result.content?.[0];
+  const item = Array.isArray(result.content) ? result.content[0] : undefined;
   if (item?.type === "text") return JSON.parse(item.text) as T;
   throw new Error("Tool result did not contain structured content or JSON text");
 }

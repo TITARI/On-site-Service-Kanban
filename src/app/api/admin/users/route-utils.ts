@@ -17,7 +17,17 @@ export type RouteContext = {
   params: Promise<{ userId: string }>;
 };
 
-export async function adminActorOrResponse(request: Request) {
+type AdminActorOrResponse =
+  | {
+      actor: Awaited<ReturnType<typeof resolveRequestActor>>;
+    }
+  | {
+      response: NextResponse;
+    };
+
+export async function adminActorOrResponse(
+  request: Request
+): Promise<AdminActorOrResponse> {
   const unauthorized = await requireAdminAccess(request);
   if (unauthorized) return { response: unauthorized };
 
