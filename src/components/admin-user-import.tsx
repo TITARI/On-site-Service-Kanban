@@ -1,6 +1,7 @@
 ﻿"use client";
 
 import { useState } from "react";
+import * as Dialog from "@radix-ui/react-dialog";
 import { Check, Download, FileSpreadsheet, Upload, X } from "lucide-react";
 import * as XLSX from "xlsx";
 import {
@@ -12,7 +13,6 @@ import {
 } from "@/lib/domain/user-import";
 
 type Props = {
-  onClose: () => void;
   onCompleted: () => void | Promise<void>;
 };
 
@@ -124,7 +124,7 @@ function issueLabel(code: string) {
   return ERROR_LABELS[code] ?? CONFLICT_LABELS[code] ?? code;
 }
 
-export function AdminUserImport({ onClose, onCompleted }: Props) {
+export function AdminUserImport({ onCompleted }: Props) {
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<UserImportPreview | null>(null);
   const [decisions, setDecisions] = useState<Record<string, UserImportDecision>>({});
@@ -322,17 +322,22 @@ export function AdminUserImport({ onClose, onCompleted }: Props) {
   }
 
   return (
-    <div className="admin-import-layer">
-      <button className="admin-import-scrim" type="button" aria-label="关闭批量导入" onClick={onClose} />
-      <section className="admin-import-panel" role="dialog" aria-modal="true" aria-labelledby="admin-import-title">
+    <Dialog.Portal>
+      <div className="admin-import-layer">
+        <Dialog.Overlay className="admin-import-scrim" />
+        <Dialog.Content className="admin-import-panel" aria-label="批量导入用户" aria-describedby={undefined}>
         <header>
           <div>
             <p className="eyebrow">用户与权限</p>
-            <h2 id="admin-import-title">批量导入用户</h2>
+            <Dialog.Title asChild>
+              <h2>批量导入用户</h2>
+            </Dialog.Title>
           </div>
-          <button className="admin-icon-button" type="button" onClick={onClose} aria-label="关闭导入向导" title="关闭">
-            <X size={18} aria-hidden="true" />
-          </button>
+          <Dialog.Close asChild>
+            <button className="admin-icon-button" type="button" aria-label="关闭导入向导" title="关闭">
+              <X size={18} aria-hidden="true" />
+            </button>
+          </Dialog.Close>
         </header>
 
         <ol className="admin-import-steps" aria-label="导入进度">
@@ -493,13 +498,16 @@ export function AdminUserImport({ onClose, onCompleted }: Props) {
                 <Download size={16} aria-hidden="true" />
                 {busy ? "下载中..." : "下载导入报告"}
               </button>
-              <button className="primary-button" type="button" onClick={onClose}>完成</button>
+              <Dialog.Close asChild>
+                <button className="primary-button" type="button">完成</button>
+              </Dialog.Close>
             </div>
           )}
 
           {error && <p className="admin-import-error" role="alert">{error}</p>}
         </div>
-      </section>
-    </div>
+        </Dialog.Content>
+      </div>
+    </Dialog.Portal>
   );
 }

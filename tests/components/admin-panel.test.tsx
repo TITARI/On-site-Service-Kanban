@@ -1312,7 +1312,7 @@ describe("AdminConfigCenter user groups", () => {
     expect(screen.getByRole("button", { name: "批量修改类型" })).not.toBeNull();
 
     await user.click(within(table).getByRole("button", { name: "查看汕头市昌隆机械科技有限公司" }));
-    const drawer = screen.getByRole("complementary", { name: "展商详情" });
+    const drawer = screen.getByRole("dialog", { name: "展商详情" });
     expect(within(drawer).getByRole("heading", { name: "汕头市昌隆机械科技有限公司" })).not.toBeNull();
     expect(within(drawer).getByText("展位 1ET06")).not.toBeNull();
     expect(within(drawer).getByText("展商基础数据")).not.toBeNull();
@@ -1320,7 +1320,7 @@ describe("AdminConfigCenter user groups", () => {
     expect(within(drawer).getByText("李铁")).not.toBeNull();
 
     await user.click(within(drawer).getByRole("button", { name: "关闭详情" }));
-    expect(screen.queryByRole("complementary", { name: "展商详情" })).toBeNull();
+    expect(screen.queryByRole("dialog", { name: "展商详情" })).toBeNull();
   });
 
   it("opens import history and import-diff review panels from the dashboard toolbar", async () => {
@@ -1407,7 +1407,7 @@ describe("AdminConfigCenter user groups", () => {
     await user.click(within(dialog).getByRole("button", { name: "关闭成员分配" }));
 
     await user.click(within(table).getByRole("button", { name: "查看汕头市昌隆机械科技有限公司" }));
-    const drawer = screen.getByRole("complementary", { name: "展商详情" });
+    const drawer = screen.getByRole("dialog", { name: "展商详情" });
     await user.click(within(drawer).getByRole("button", { name: "添加现场搭建成员" }));
     dialog = screen.getByRole("dialog", { name: "分配现场搭建成员" });
     expect(within(dialog).getByText("汕头市昌隆机械科技有限公司")).not.toBeNull();
@@ -1505,14 +1505,16 @@ describe("AdminConfigCenter user groups", () => {
     const table = screen.getByRole("table", { name: "展商数据表格" });
     const viewButton = within(table).getByRole("button", { name: "查看汕头市昌隆机械科技有限公司" });
     await user.click(viewButton);
-    const drawer = screen.getByRole("complementary", { name: "展商详情" });
+    const drawer = screen.getByRole("dialog", { name: "展商详情" });
     expect(within(drawer).getByText("李铁")).not.toBeNull();
     expect(within(drawer).getByText("136****4172")).not.toBeNull();
 
     await user.keyboard("{Escape}");
 
-    expect(screen.queryByRole("complementary", { name: "展商详情" })).toBeNull();
-    expect(document.activeElement).toBe(viewButton);
+    expect(screen.queryByRole("dialog", { name: "展商详情" })).toBeNull();
+    await waitFor(() => expect(document.activeElement).toBe(
+      within(table).getByRole("button", { name: "查看汕头市昌隆机械科技有限公司" })
+    ));
   });
 
   it("shows a text notice when one booth contains multiple exhibitors", () => {

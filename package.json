@@ -9,7 +9,7 @@
     "dev": "next dev",
     "dev:external": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\start-external.ps1",
     "build": "next build",
-    "start": "next start",
+    "start": "next start",https://github.com/TITARI/On-site-Service-Kanban/pulls
     "start:external": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\start-external.ps1 -Mode prod",
     "restart:external": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\start-external.ps1 -Mode prod -Restart",
     "test": "vitest",
