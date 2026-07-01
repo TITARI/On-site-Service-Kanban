@@ -35,11 +35,21 @@ describe("initial MariaDB schema", () => {
   const userVersionSchema = existsSync(userVersionSchemaPath)
     ? migrationUpSql("20260101000009_user_version_column.sql")
     : "";
+  const flexibleRateLimitSchemaPath = path.join(
+    process.cwd(),
+    "db",
+    "migrations",
+    "20260701000010_rate_limiter_flexible.sql"
+  );
+  const flexibleRateLimitSchema = existsSync(flexibleRateLimitSchemaPath)
+    ? migrationUpSql("20260701000010_rate_limiter_flexible.sql")
+    : "";
   const normalizedRbacSchema = normalizeSql(rbacSchema);
   const normalizedTicketOptimisticLockSchema = normalizeSql(ticketOptimisticLockSchema);
   const normalizedBootstrapRateLimitSchema = normalizeSql(bootstrapRateLimitSchema);
   const normalizedSessionKindSchema = normalizeSql(sessionKindSchema);
   const normalizedUserVersionSchema = normalizeSql(userVersionSchema);
+  const normalizedFlexibleRateLimitSchema = normalizeSql(flexibleRateLimitSchema);
 
   function tableDefinition(table: string) {
     const match = rbacSchema.match(new RegExp(`CREATE TABLE IF NOT EXISTS ${table} \\(([\\s\\S]*?)\\) ENGINE=`));
@@ -112,6 +122,20 @@ describe("initial MariaDB schema", () => {
         PRIMARY KEY (ip_key)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     `));
+  });
+
+  it("migrates bootstrap rate limits to the rate-limiter-flexible schema", () => {
+    expect(normalizedFlexibleRateLimitSchema).toContain(normalizeSql(`
+      CREATE TABLE bootstrap_rate_limits (
+        \`key\` VARCHAR(255) CHARACTER SET utf8 NOT NULL,
+        \`points\` INT(9) NOT NULL DEFAULT 0,
+        \`expire\` BIGINT UNSIGNED,
+        PRIMARY KEY (\`key\`)
+      ) ENGINE=InnoDB
+    `));
+    expect(normalizedFlexibleRateLimitSchema).toContain(
+      "DROP TABLE IF EXISTS bootstrap_rate_limits"
+    );
   });
 
   it("adds and backfills pending work order session kinds", () => {

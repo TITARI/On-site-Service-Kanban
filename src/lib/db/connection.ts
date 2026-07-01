@@ -1,7 +1,9 @@
-import mysql, { type Pool, type PoolConnection } from "mysql2/promise";
+import { createPool, type Pool as CallbackPool } from "mysql2";
+import type { Pool, PoolConnection } from "mysql2/promise";
 
 export type DatabaseConnection = Pool | PoolConnection;
 
+let callbackPool: CallbackPool | undefined;
 let pool: Pool | undefined;
 
 export function databaseUrl(env: NodeJS.ProcessEnv = process.env) {
@@ -10,8 +12,8 @@ export function databaseUrl(env: NodeJS.ProcessEnv = process.env) {
   return url;
 }
 
-export function createDatabasePool(url = databaseUrl()) {
-  return mysql.createPool({
+export function createDatabaseCallbackPool(url = databaseUrl()) {
+  return createPool({
     uri: url,
     connectionLimit: 10,
     waitForConnections: true,
@@ -22,15 +24,32 @@ export function createDatabasePool(url = databaseUrl()) {
   });
 }
 
+export function createDatabasePool(url = databaseUrl()) {
+  return createDatabaseCallbackPool(url).promise();
+}
+
+function initializeDatabasePool() {
+  if (!callbackPool) {
+    callbackPool = createDatabaseCallbackPool();
+    pool = callbackPool.promise();
+  }
+}
+
+export function getDatabaseCallbackPool() {
+  initializeDatabasePool();
+  return callbackPool as CallbackPool;
+}
+
 export function getDatabasePool() {
-  pool ??= createDatabasePool();
-  return pool;
+  initializeDatabasePool();
+  return pool as Pool;
 }
 
 export async function closeDatabasePool() {
   if (!pool) return;
   await pool.end();
   pool = undefined;
+  callbackPool = undefined;
 }
 
 export async function withDatabaseConnection<T>(fn: (connection: PoolConnection) => Promise<T>) {

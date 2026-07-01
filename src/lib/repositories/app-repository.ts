@@ -40,8 +40,8 @@ import { processWechatWatchtowerMessage } from "../services/wechat-watchtower-se
 import { claimPendingOutboundMessages, markOutboundMessageFailed, markOutboundMessageSent, queueTicketFeedbackMessage } from "../services/outbound-message-service";
 import { runAutoAcceptanceForState } from "../services/auto-acceptance-service";
 import {
-  createFileRateLimiter,
   createMariaDbRateLimiter,
+  createMemoryRateLimiter,
   type RateLimiter
 } from "../services/rate-limiter";
 import { normalizeKeywordGroups } from "../domain/keyword-config";
@@ -322,7 +322,7 @@ export function createFileAppRepository(
     readState: readJsonState,
     updateState: updateJsonState
   },
-  rateLimiter: RateLimiter = createFileRateLimiter()
+  rateLimiter: RateLimiter = createMemoryRateLimiter()
 ): AppRepository {
   const updateState = createStateUpdater(store);
   return {
