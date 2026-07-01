@@ -712,6 +712,59 @@ describe("file access repository", () => {
     expect(JSON.stringify(entry)).not.toContain("StrongPass123!");
   });
 
+  it("upgrades an admin password hash with compare-and-swap and no password-reset side effects", async () => {
+    const store = memoryStore();
+    const repository = createFileAppRepository(store);
+    const admin = await repository.bootstrapAdmin({
+      legacyPassword: "legacy-secret",
+      name: "Root Admin",
+      phone: "13700137000",
+      password: "StrongPass123!",
+      group: { mode: "existing", groupId: "admin" }
+    });
+    const legacyHash = "scrypt$legacy-hash";
+    const replacementHash = "$argon2id$replacement-hash";
+    store.mutate((state) => {
+      const credential = state.accountCredentials?.find(
+        (item) => item.accountId === admin.accountId
+      );
+      if (!credential) throw new Error("credential fixture missing");
+      credential.passwordHash = legacyHash;
+      credential.passwordChangedAt = "2026-01-01T00:00:00.000Z";
+      credential.mustChangePassword = true;
+      credential.failedAttempts = 3;
+      credential.lockedUntil = "2099-01-01T00:00:00.000Z";
+      state.auditLogs = [];
+    });
+
+    await expect(repository.upgradeAdminPasswordHash(
+      admin.accountId,
+      legacyHash,
+      replacementHash
+    )).resolves.toBe(true);
+
+    const afterUpgrade = store.snapshot();
+    expect(afterUpgrade.accountCredentials?.find(
+      (item) => item.accountId === admin.accountId
+    )).toMatchObject({
+      passwordHash: replacementHash,
+      passwordChangedAt: "2026-01-01T00:00:00.000Z",
+      mustChangePassword: true,
+      failedAttempts: 3,
+      lockedUntil: "2099-01-01T00:00:00.000Z"
+    });
+    expect(afterUpgrade.auditLogs).toEqual([]);
+
+    await expect(repository.upgradeAdminPasswordHash(
+      admin.accountId,
+      legacyHash,
+      "$argon2id$stale-writer"
+    )).resolves.toBe(false);
+    expect(store.snapshot().accountCredentials?.find(
+      (item) => item.accountId === admin.accountId
+    )?.passwordHash).toBe(replacementHash);
+  });
+
   it("handles admin login records, lock counters, and successful login state", async () => {
     const store = memoryStore();
     const repository = createFileAppRepository(store);

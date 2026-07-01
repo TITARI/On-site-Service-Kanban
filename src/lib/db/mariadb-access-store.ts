@@ -1138,6 +1138,25 @@ export async function recordAdminLoginSuccess(
   );
 }
 
+export async function upgradeAdminPasswordHash(
+  connection: DatabaseConnection,
+  accountId: string,
+  expectedHash: string,
+  replacementHash: string
+): Promise<boolean> {
+  if (!expectedHash || !replacementHash) {
+    throw new Error("Password hashes are required");
+  }
+  const result = await execute(
+    connection,
+    `UPDATE account_credentials
+     SET password_hash = ?
+     WHERE account_id = ? AND password_hash = ?`,
+    [replacementHash, accountId, expectedHash]
+  );
+  return result.affectedRows === 1;
+}
+
 export async function resetExpiredAdminLock(
   connection: DatabaseConnection,
   accountId: string,

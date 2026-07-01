@@ -84,6 +84,7 @@ import {
   syncAccessRoles as syncDatabaseAccessRoles,
   unbindChatIdentity as unbindAccessChatIdentity,
   updateUser as updateAccessUser,
+  upgradeAdminPasswordHash as upgradeAccessAdminPasswordHash,
   userDeletionHistory as readAccessUserDeletionHistory,
   userImportReport as readAccessUserImportReport,
   upsertMobileAccount as upsertAccessMobileAccount
@@ -2398,6 +2399,21 @@ export class MariaDbStateStore {
     await withDatabaseTransaction(async (connection) => {
       await writeAdminLoginSuccess(connection, accountId);
     });
+  }
+
+  async upgradeAdminPasswordHash(
+    accountId: string,
+    expectedHash: string,
+    replacementHash: string
+  ) {
+    return await withDatabaseTransaction(async (connection) => (
+      upgradeAccessAdminPasswordHash(
+        connection,
+        accountId,
+        expectedHash,
+        replacementHash
+      )
+    ));
   }
 
   async resetExpiredAdminLock(accountId: string) {

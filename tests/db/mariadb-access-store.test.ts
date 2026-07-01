@@ -23,6 +23,7 @@ import {
   setUserPassword,
   syncAccessRoles,
   updateUser,
+  upgradeAdminPasswordHash,
   upsertMobileAccount,
   userImportReport
 } from "@/lib/db/mariadb-access-store";
@@ -888,6 +889,38 @@ describe("MariaDB access store", () => {
     expect(audit?.params[1]).toBe("account-admin");
     expect(audit?.params[2]).toBe("Root Admin");
     expect(audit?.params[3]).toBe("admin.login.success");
+  });
+
+  it("upgrades a password hash with one compare-and-swap update and no audit", async () => {
+    const { calls, connection } = recordingConnection(() => ({ affectedRows: 1 }));
+
+    await expect(upgradeAdminPasswordHash(
+      connection,
+      "account-admin",
+      "scrypt$legacy",
+      "$argon2id$replacement"
+    )).resolves.toBe(true);
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0].sql).toContain("SET password_hash = ?");
+    expect(calls[0].sql).toContain("AND password_hash = ?");
+    expect(calls[0].params).toEqual([
+      "$argon2id$replacement",
+      "account-admin",
+      "scrypt$legacy"
+    ]);
+    expect(calls.some((call) => call.sql.includes("INSERT INTO audit_logs"))).toBe(false);
+  });
+
+  it("does not overwrite a password hash changed by a concurrent writer", async () => {
+    const { connection } = recordingConnection(() => ({ affectedRows: 0 }));
+
+    await expect(upgradeAdminPasswordHash(
+      connection,
+      "account-admin",
+      "scrypt$stale",
+      "$argon2id$replacement"
+    )).resolves.toBe(false);
   });
 
   it("uses the same recursive secret sanitizer for JSON and MariaDB audits", async () => {
