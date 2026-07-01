@@ -520,10 +520,14 @@ async function readResolvedTicketByIdForUpdate(connection: DatabaseConnection, t
   return ticketFromRow(connection, ticketId, row);
 }
 
-async function readOpenTicketsForBooth(connection: DatabaseConnection, boothNumber: string): Promise<Ticket[]> {
+async function readOpenTicketsForBooth(
+  connection: DatabaseConnection,
+  boothNumber: string,
+  options: { forUpdate?: boolean } = {}
+): Promise<Ticket[]> {
   const ticketRows = await rows<Row>(
     connection,
-    "SELECT id FROM tickets WHERE booth_number = ? AND status <> ? ORDER BY created_at FOR UPDATE",
+    `SELECT id FROM tickets WHERE booth_number = ? AND status <> ? ORDER BY created_at${options.forUpdate === false ? "" : " FOR UPDATE"}`,
     [boothNumber, "已关闭"]
   );
   const tickets: Ticket[] = [];
@@ -532,6 +536,29 @@ async function readOpenTicketsForBooth(connection: DatabaseConnection, boothNumb
     if (ticket) tickets.push(ticket);
   }
   return tickets;
+}
+
+function ticketCandidatesChanged(snapshot: Ticket[], locked: Ticket[]) {
+  if (snapshot.length !== locked.length) return true;
+  const snapshotFingerprints = new Map(snapshot.map((ticket) => [
+    ticket.id,
+    `${ticket.status}:${ticket.updatedAt}:${ticket.version ?? ""}`
+  ]));
+  return locked.some((ticket) => (
+    snapshotFingerprints.get(ticket.id) !== `${ticket.status}:${ticket.updatedAt}:${ticket.version ?? ""}`
+  ));
+}
+
+function fallbackDedupeDecision(): AiPrecomputedContext["dedupe"] {
+  return {
+    modelId: "smart",
+    provider: "mock",
+    scenario: "dedupe",
+    confidence: 0,
+    action: "create",
+    suggestion: "AI dedupe 不可用，默认创建新工单",
+    latencyMs: 0
+  };
 }
 
 async function upsertTicketGraph(connection: DatabaseConnection, ticket: Ticket, now = new Date()) {
@@ -2138,25 +2165,30 @@ export class MariaDbStateStore {
       }
     }
 
-    // 短事务：SELECT FOR UPDATE 候选 + dedupe + INSERT
+    const candidateSnapshot = await readOpenTicketsForBooth(getDatabasePool(), boothNumber, { forUpdate: false });
+    let precomputedDedupe: AiPrecomputedContext["dedupe"];
+    try {
+      precomputedDedupe = await ai.dedupeIssue(boothNumber, description, candidateSnapshot);
+    } catch (error) {
+      console.warn("[mariadb-state-store] 预计算 dedupeIssue 失败，降级为创建", {
+        boothNumber, error: error instanceof Error ? error.message : String(error)
+      });
+      precomputedDedupe = fallbackDedupeDecision();
+    }
+
+    // 短事务：SELECT FOR UPDATE 复核候选 + INSERT。候选未变化时不在事务内调用 AI。
     return await withDatabaseTransaction(async (connection) => {
       const openTickets = await readOpenTicketsForBooth(connection, boothNumber);
-      let dedupe: AiPrecomputedContext["dedupe"];
-      try {
-        dedupe = await ai.dedupeIssue(boothNumber, description, openTickets);
-      } catch (error) {
-        console.warn("[mariadb-state-store] dedupeIssue 失败，降级为创建", {
-          boothNumber, error: error instanceof Error ? error.message : String(error)
-        });
-        dedupe = {
-          modelId: "smart",
-          provider: "mock",
-          scenario: "dedupe",
-          confidence: 0,
-          action: "create",
-          suggestion: "AI dedupe 不可用，默认创建新工单",
-          latencyMs: 0
-        };
+      let dedupe = precomputedDedupe;
+      if (ticketCandidatesChanged(candidateSnapshot, openTickets)) {
+        try {
+          dedupe = await ai.dedupeIssue(boothNumber, description, openTickets);
+        } catch (error) {
+          console.warn("[mariadb-state-store] 锁内重算 dedupeIssue 失败，降级为创建", {
+            boothNumber, error: error instanceof Error ? error.message : String(error)
+          });
+          dedupe = fallbackDedupeDecision();
+        }
       }
 
       const state: AppState = {
