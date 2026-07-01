@@ -11,7 +11,11 @@ import {
   requestSessionToken,
   sessionTokenHash
 } from "@/lib/services/session-service";
-import { hashPassword, verifyPassword } from "@/lib/services/password-service";
+import {
+  hashPassword,
+  needsRehash,
+  verifyPassword
+} from "@/lib/services/password-service";
 
 const MOBILE_SESSION_DAYS = 7;
 const ADMIN_SESSION_DAYS = 1;
@@ -120,6 +124,32 @@ async function createAccountSession(
   return { actor, token, expiresAt };
 }
 
+async function upgradeLegacyAdminPasswordHash(
+  repository: AppRepository,
+  accountId: string,
+  password: string,
+  storedHash: string
+) {
+  if (!needsRehash(storedHash)) return;
+
+  try {
+    const replacementHash = await hashPassword(password);
+    const upgraded = await repository.upgradeAdminPasswordHash(
+      accountId,
+      storedHash,
+      replacementHash
+    );
+    if (upgraded) {
+      console.info("[auth] password hash upgraded to argon2id", { accountId });
+    }
+  } catch (error) {
+    console.warn("[auth] password hash transparent upgrade failed", {
+      accountId,
+      error
+    });
+  }
+}
+
 export async function mobileLogin(
   repository: AppRepository,
   input: MobileAccountInput,
@@ -222,6 +252,12 @@ export async function adminLogin(
   }
 
   await repository.recordAdminLoginSuccess(record.actor.accountId);
+  await upgradeLegacyAdminPasswordHash(
+    repository,
+    record.actor.accountId,
+    password,
+    record.credential.passwordHash
+  );
   return createAccountSession(repository, record.actor, "admin", ADMIN_SESSION_DAYS);
 }
 

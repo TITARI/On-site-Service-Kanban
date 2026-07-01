@@ -865,6 +865,28 @@ export function recordAdminLoginSuccessInState(
   );
 }
 
+export function upgradeAdminPasswordHashInState(
+  stateInput: AppState,
+  accountId: string,
+  expectedHash: string,
+  replacementHash: string
+): boolean {
+  if (!expectedHash || !replacementHash) {
+    throw new Error("Password hashes are required");
+  }
+  const state = normalizeAccessState(stateInput);
+  const credential = state.accountCredentials.find(
+    (item) => item.accountId === accountId
+  );
+  if (!credential) {
+    throw new Error("Admin credential was not found");
+  }
+  if (credential.passwordHash !== expectedHash) return false;
+
+  credential.passwordHash = replacementHash;
+  return true;
+}
+
 export function resetExpiredAdminLockInState(
   stateInput: AppState,
   accountId: string

@@ -143,6 +143,7 @@ describe("app repository", () => {
       adminLoginRecord: vi.fn(async () => undefined),
       recordAdminLoginFailure: vi.fn(async () => undefined),
       recordAdminLoginSuccess: vi.fn(async () => undefined),
+      upgradeAdminPasswordHash: vi.fn(async () => true),
       resetExpiredAdminLock: vi.fn(async () => undefined),
       bootstrapStatus: vi.fn(async () => ({ required: true })),
       bootstrapAdmin: vi.fn(async () => actor),
@@ -166,6 +167,11 @@ describe("app repository", () => {
     await repository.adminLoginRecord("13700137000");
     await repository.recordAdminLoginFailure("account-admin", "2099-01-01T00:00:00.000Z");
     await repository.recordAdminLoginSuccess("account-admin");
+    await repository.upgradeAdminPasswordHash(
+      "account-admin",
+      "scrypt$legacy",
+      "$argon2id$replacement"
+    );
     await repository.resetExpiredAdminLock("account-admin");
     await repository.bootstrapStatus();
     await repository.bootstrapAdmin(bootstrapInput);
@@ -199,6 +205,11 @@ describe("app repository", () => {
       "2099-01-01T00:00:00.000Z"
     );
     expect(store.recordAdminLoginSuccess).toHaveBeenCalledWith("account-admin");
+    expect(store.upgradeAdminPasswordHash).toHaveBeenCalledWith(
+      "account-admin",
+      "scrypt$legacy",
+      "$argon2id$replacement"
+    );
     expect(store.resetExpiredAdminLock).toHaveBeenCalledWith("account-admin");
     expect(store.bootstrapStatus).toHaveBeenCalledOnce();
     expect(store.bootstrapAdmin).toHaveBeenCalledWith(bootstrapInput);
