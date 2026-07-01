@@ -2222,7 +2222,7 @@ export class MariaDbStateStore {
     });
   }
 
-  async markOutboundMessage(messageId: string, status: "sent" | "failed", error?: string) {
+  async markOutboundMessage(messageId: string, status: "sent" | "failed", error?: string, retryCount?: number) {
     const now = new Date();
     const pool = getDatabasePool();
 
@@ -2232,17 +2232,25 @@ export class MariaDbStateStore {
         pool,
         `UPDATE outbound_messages
          SET status = 'sent', sent_at = ?, last_error = NULL, updated_at = ?
-         WHERE id = ? AND status = 'sending'`,
+         WHERE id = ? AND status <> 'sent'`,
         [now, now, messageId]
       );
     } else {
-      result = await execute(
-        pool,
-        `UPDATE outbound_messages
-         SET status = 'failed', retry_count = retry_count + 1, last_error = ?, updated_at = ?
-         WHERE id = ? AND status = 'sending'`,
-        [error ?? null, now, messageId]
-      );
+      result = retryCount === undefined
+        ? await execute(
+            pool,
+            `UPDATE outbound_messages
+             SET status = 'failed', retry_count = retry_count + 1, last_error = ?, updated_at = ?
+             WHERE id = ? AND status = 'sending'`,
+            [error ?? null, now, messageId]
+          )
+        : await execute(
+            pool,
+            `UPDATE outbound_messages
+             SET status = 'failed', retry_count = GREATEST(retry_count, ?), last_error = ?, updated_at = ?
+             WHERE id = ? AND status <> 'sent'`,
+            [retryCount, error ?? null, now, messageId]
+          );
     }
     if (result.affectedRows < 1) return undefined;
 

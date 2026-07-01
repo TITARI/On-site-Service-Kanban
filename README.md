@@ -155,7 +155,8 @@ data/app-state.json
 | `WXAUTO_NAME` | 可选 wxauto 实例名称 |
 | `WXAUTO_FILTER_MUTE` | 是否过滤免打扰会话，默认 `false` |
 | `INTAKE_URL` | 入站消息接口，默认 `http://127.0.0.1:3000/api/integrations/wechat/messages` |
-| `OUTBOUND_URL` | 出站消息领取接口，默认 `http://127.0.0.1:3000/api/integrations/wechat/outbound` |
+| `OUTBOUND_URL` | 出站消息调度接口，默认 `http://127.0.0.1:3000/api/integrations/wechat/outbound` |
+| `REDIS_URL` | BullMQ 出站队列 Redis 地址，例如 `redis://127.0.0.1:6379`；非 dry-run 必填 |
 | `INTAKE_SECRET` | 桥接脚本推送到看板时使用的密钥 |
 | `BRIDGE_POLL_INTERVAL_MS` | 入站轮询间隔，默认 `1200` |
 | `BRIDGE_OUTBOUND_POLL_INTERVAL_MS` | 出站轮询间隔，默认 `1500` |
@@ -354,6 +355,7 @@ $env:WXAUTO_REST_BASE_URL = "http://127.0.0.1:8001"
 $env:WXAUTO_REST_TOKEN = "replace-with-token"
 $env:INTAKE_URL = "http://127.0.0.1:3000/api/integrations/wechat/messages"
 $env:OUTBOUND_URL = "http://127.0.0.1:3000/api/integrations/wechat/outbound"
+$env:REDIS_URL = "redis://127.0.0.1:6379"
 $env:INTAKE_SECRET = "replace-with-secret"
 npm run bridge:wxauto
 ```

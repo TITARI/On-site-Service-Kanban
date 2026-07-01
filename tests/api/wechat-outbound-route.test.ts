@@ -17,6 +17,10 @@ const store = vi.hoisted(() => ({
   markOutboundMessage: vi.fn()
 }));
 
+const queue = vi.hoisted(() => ({
+  enqueueOutboundMessages: vi.fn()
+}));
+
 vi.mock("@/lib/repositories/app-repository", () => ({
   getAppRepository: (): AppRepository => ({
     kind: "mariadb",
@@ -25,6 +29,10 @@ vi.mock("@/lib/repositories/app-repository", () => ({
     claimOutboundMessages: store.claimOutboundMessages,
     markOutboundMessage: store.markOutboundMessage
   } as unknown as AppRepository)
+}));
+
+vi.mock("@/lib/queue/outbound-queue", () => ({
+  enqueueOutboundMessages: queue.enqueueOutboundMessages
 }));
 
 const outboundRoute = await import("@/app/api/integrations/wechat/outbound/route");
@@ -63,35 +71,49 @@ beforeEach(() => {
   store.getConfig.mockReset();
   store.claimOutboundMessages.mockReset();
   store.markOutboundMessage.mockReset();
+  queue.enqueueOutboundMessages.mockReset();
   store.runAutoAcceptance.mockResolvedValue(undefined);
   store.getConfig.mockImplementation(async () => store.state!.config);
   store.claimOutboundMessages.mockImplementation(async (limit?: number) => claimPendingOutboundMessages(store.state!, { limit }));
-  store.markOutboundMessage.mockImplementation(async (messageId: string, status: "sent" | "failed", error?: string) => {
+  store.markOutboundMessage.mockImplementation(async (messageId: string, status: "sent" | "failed", error?: string, retryCount?: number) => {
     try {
       return status === "sent"
         ? markOutboundMessageSent(store.state!, messageId)
-        : markOutboundMessageFailed(store.state!, messageId, error ?? "发送失败");
+        : markOutboundMessageFailed(store.state!, messageId, error ?? "发送失败", undefined, retryCount);
     } catch {
       return undefined;
     }
   });
+  queue.enqueueOutboundMessages.mockImplementation(async (messages: unknown[]) => messages.length);
   process.env.WECHAT_MCP_SECRET = "bridge-secret";
   process.env.CUSTOM_WECHAT_SECRET = "custom-secret";
 });
 
 describe("wechat outbound routes", () => {
-  it("claims pending outbound messages for the bridge", async () => {
+  it("dispatches claimed outbound messages to BullMQ", async () => {
     queueOutboundMessage(store.state!, { channel: "wechat", targetName: "张三", text: "请补充展位号" });
 
     const response = await outboundRoute.POST(request({ limit: 5 }, { "x-mcp-secret": "bridge-secret" }));
 
     expect(response.status).toBe(200);
-    const { messages } = await response.json();
-    expect(messages).toHaveLength(1);
-    expect(messages[0]).toMatchObject({ targetName: "张三", text: "请补充展位号", status: "sending" });
+    const body = await response.json();
+    expect(body).toEqual({ messages: [], queued: 1 });
+    expect(queue.enqueueOutboundMessages).toHaveBeenCalledWith([
+      expect.objectContaining({ targetName: "张三", text: "请补充展位号", status: "sending" })
+    ]);
     expect(store.runAutoAcceptance).toHaveBeenCalledOnce();
     expect(store.claimOutboundMessages).toHaveBeenCalledWith(5);
     expect(store.runAutoAcceptance.mock.invocationCallOrder[0]).toBeLessThan(store.claimOutboundMessages.mock.invocationCallOrder[0]);
+  });
+
+  it("returns 503 when Redis cannot accept claimed messages", async () => {
+    queueOutboundMessage(store.state!, { channel: "wechat", targetName: "张三", text: "请补充展位号" });
+    queue.enqueueOutboundMessages.mockRejectedValueOnce(new Error("redis unavailable"));
+
+    const response = await outboundRoute.POST(request({ limit: 5 }, { "x-mcp-secret": "bridge-secret" }));
+
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({ message: "出站队列暂不可用" });
   });
 
   it("marks a claimed message as sent", async () => {
@@ -103,6 +125,21 @@ describe("wechat outbound routes", () => {
 
     expect(response.status).toBe(200);
     expect(store.state!.outboundMessages?.[0].status).toBe("sent");
+  });
+
+  it("records exhausted BullMQ attempts on terminal failure", async () => {
+    const message = queueOutboundMessage(store.state!, { channel: "wechat", targetName: "张三", text: "发送失败测试" });
+
+    const response = await outboundResultRoute.PATCH(request({
+      status: "failed",
+      error: "wxauto unavailable",
+      attemptsMade: 3
+    }, { "x-mcp-secret": "bridge-secret" }), {
+      params: Promise.resolve({ messageId: message.id })
+    });
+
+    expect(response.status).toBe(200);
+    expect(store.state!.outboundMessages?.[0]).toMatchObject({ status: "failed", retryCount: 3 });
   });
 
   it("rejects bridge calls with a wrong secret", async () => {
@@ -167,6 +204,6 @@ describe("wechat outbound routes", () => {
     });
 
     expect(response.status).toBe(404);
-    expect(store.markOutboundMessage).toHaveBeenCalledWith("missing-outbound", "sent", undefined);
+    expect(store.markOutboundMessage).toHaveBeenCalledWith("missing-outbound", "sent", undefined, undefined);
   });
 });

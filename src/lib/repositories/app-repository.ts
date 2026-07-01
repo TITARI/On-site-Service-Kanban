@@ -137,7 +137,7 @@ export type AppRepository = {
   submitTicket(input: SubmitTicketInput): Promise<SubmitTicketResult>;
   processWechatMessage(input: IntakeMessageInput): Promise<WatchtowerResult>;
   claimOutboundMessages(limit?: number): Promise<NonNullable<AppState["outboundMessages"]>>;
-  markOutboundMessage(messageId: string, status: "sent" | "failed", error?: string): Promise<NonNullable<AppState["outboundMessages"]>[number] | undefined>;
+  markOutboundMessage(messageId: string, status: "sent" | "failed", error?: string, retryCount?: number): Promise<NonNullable<AppState["outboundMessages"]>[number] | undefined>;
   listWechatOrderLogs(limit?: number): Promise<WechatOrderLog[]>;
   upsertMobileAccount(input: MobileAccountInput): Promise<{ actor: AuthenticatedActor }>;
   createAccountSession(accountId: string, type: SessionType, tokenHash: string, expiresAt: string): Promise<AccountSession>;
@@ -399,12 +399,12 @@ export function createFileAppRepository(
     claimOutboundMessages: async (limit) => updateState((state) => {
       return claimPendingOutboundMessages(state, { limit });
     }),
-    markOutboundMessage: async (messageId, status, error) => updateState((state) => {
+    markOutboundMessage: async (messageId, status, error, retryCount) => updateState((state) => {
       const existing = state.outboundMessages?.find((message) => message.id === messageId);
       if (!existing) return undefined;
       return status === "sent"
         ? markOutboundMessageSent(state, messageId)
-        : markOutboundMessageFailed(state, messageId, error ?? "发送失败");
+        : markOutboundMessageFailed(state, messageId, error ?? "发送失败", undefined, retryCount);
     }),
     listWechatOrderLogs: async () => [],
     upsertMobileAccount: (input) => updateState((state) => (
@@ -705,7 +705,7 @@ export function createMariaDbAppRepository(
     submitTicket: (input) => store.submitTicket(input),
     processWechatMessage: (input) => store.processWechatMessage(input),
     claimOutboundMessages: (limit) => store.claimOutboundMessages(limit),
-    markOutboundMessage: (messageId, status, error) => store.markOutboundMessage(messageId, status, error),
+    markOutboundMessage: (messageId, status, error, retryCount) => store.markOutboundMessage(messageId, status, error, retryCount),
     listWechatOrderLogs: (limit = 100) => store.listWechatOrderLogs(limit),
     upsertMobileAccount: (input) => store.upsertMobileAccount(input),
     createAccountSession: (accountId, type, tokenHash, expiresAt) => (

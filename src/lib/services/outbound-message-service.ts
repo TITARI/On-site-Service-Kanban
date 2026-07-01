@@ -24,6 +24,10 @@ function outboundMessagesOf(state: AppState) {
   return state.outboundMessages;
 }
 
+/**
+ * Records the business decision in the transactional outbox. After the state
+ * commit, the WeChat outbound route dispatches this record to BullMQ.
+ */
 export function queueOutboundMessage(state: AppState, input: QueueOutboundMessageInput): OutboundMessage {
   const createdAt = now();
   const message: OutboundMessage = {
@@ -79,12 +83,20 @@ export function markOutboundMessageSent(state: AppState, messageId: string, nowI
   return message;
 }
 
-export function markOutboundMessageFailed(state: AppState, messageId: string, error: string, nowIso = now()) {
+export function markOutboundMessageFailed(
+  state: AppState,
+  messageId: string,
+  error: string,
+  nowIso = now(),
+  minimumRetryCount = 0
+) {
   const message = outboundMessagesOf(state).find((item) => item.id === messageId);
   if (!message) throw new Error("出站消息不存在");
   if (message.status === "sent") return message;
   message.status = "failed";
-  message.retryCount += 1;
+  message.retryCount = minimumRetryCount > 0
+    ? Math.max(message.retryCount, minimumRetryCount)
+    : message.retryCount + 1;
   message.lastError = error.trim() || "发送失败";
   message.updatedAt = nowIso;
   return message;

@@ -12,6 +12,7 @@
 3. `wxauto-restful-api` 已启动（默认 `http://127.0.0.1:8001`）。
 4. 本项目已启动（默认 `http://127.0.0.1:3000`）。
 5. 在管理页启用 `微信 MCP` 或 `企业微信 MCP` 配置，并配置对应 `secretEnv`。
+6. Redis 已启动，且看板服务与 bridge 使用同一个 `REDIS_URL`。
 
 ## 2. 启动桥接
 
@@ -25,6 +26,7 @@ $env:WXAUTO_FILTER_MUTE = "false"
 
 $env:INTAKE_URL = "http://127.0.0.1:3000/api/integrations/wechat/messages"
 $env:INTAKE_SECRET = "替换为你配置的MCP密钥"
+$env:REDIS_URL = "redis://127.0.0.1:6379"
 
 $env:BRIDGE_POLL_INTERVAL_MS = "1200"
 $env:BRIDGE_REQUEST_TIMEOUT_MS = "10000"
@@ -76,14 +78,15 @@ npm run bridge:wxauto
 
 1. 从 wxauto REST 拉取所有新微信消息。
 2. 转发到 `/api/integrations/wechat/messages`，由系统侧过滤普通聊天。
-3. 从 `/api/integrations/wechat/outbound` 拉取待发通知。
-4. 调用 wxauto `/v1/wechat/send` 回发微信。
+3. 从 `/api/integrations/wechat/outbound` 将待发通知调度到 BullMQ。
+4. BullMQ Worker 调用 wxauto `/v1/wechat/send` 回发微信，并自动重试临时失败。
 5. 回调系统标记发送成功或失败。
 
 新增环境变量：
 
 ```powershell
 $env:OUTBOUND_URL = "http://127.0.0.1:3000/api/integrations/wechat/outbound"
+$env:REDIS_URL = "redis://127.0.0.1:6379"
 $env:BRIDGE_OUTBOUND_POLL_INTERVAL_MS = "1500"
 ```
 

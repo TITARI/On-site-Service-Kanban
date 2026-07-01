@@ -6,7 +6,8 @@ import { getAppRepository } from "@/lib/repositories/app-repository";
 
 const resultSchema = z.object({
   status: z.enum(["sent", "failed"]),
-  error: z.string().optional()
+  error: z.string().optional(),
+  attemptsMade: z.number().int().min(1).optional()
 });
 
 export async function PATCH(request: Request, { params }: { params: Promise<{ messageId: string }> }) {
@@ -24,7 +25,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ me
   if (!integration?.enabled) return badRequest("微信 MCP 接入未启用");
   if (!isWechatRequestAuthorized(request, integration.secretEnv)) return NextResponse.json({ message: "MCP 密钥校验失败" }, { status: 401 });
 
-  const message = await repository.markOutboundMessage(messageId, input.status, input.error);
+  const message = await repository.markOutboundMessage(messageId, input.status, input.error, input.attemptsMade);
   if (!message) {
     return NextResponse.json({ message: "出站消息不存在" }, { status: 404 });
   }

@@ -69,15 +69,24 @@ function fakeConnection(initial?: MessageRow) {
       if (sql.startsWith("UPDATE outbound_messages")) {
         const nextStatus = sql.includes("status = 'sent'") ? "sent" : "failed";
         await new Promise((resolve) => setTimeout(resolve, nextStatus === "sent" ? 0 : 5));
-        if (!row || (sql.includes("AND status = 'sending'") && row.status !== "sending")) {
+        if (
+          !row
+          || (sql.includes("AND status = 'sending'") && row.status !== "sending")
+          || (sql.includes("status <> 'sent'") && row.status === "sent")
+        ) {
           return [{ affectedRows: 0 }];
         }
         row.status = nextStatus;
-        row.updated_at = params[1] as Date;
         if (nextStatus === "sent") {
+          row.updated_at = params[1] as Date;
           row.sent_at = params[0] as Date;
           row.last_error = null;
+        } else if (sql.includes("GREATEST(retry_count")) {
+          row.updated_at = params[2] as Date;
+          row.retry_count = Math.max(row.retry_count, Number(params[0]));
+          row.last_error = params[1] as string | null;
         } else {
+          row.updated_at = params[1] as Date;
           row.retry_count += 1;
           row.last_error = params[0] as string | null;
         }
@@ -116,6 +125,35 @@ describe("MariaDbStateStore.markOutboundMessage concurrency", () => {
     await expect(new MariaDbStateStore().markOutboundMessage("message-1", "failed"))
       .resolves.toBeUndefined();
     expect(database.current()?.status).toBe("sent");
+  });
+
+  it("allows a BullMQ retry to mark a previously failed message as sent", async () => {
+    const database = fakeConnection(message("failed"));
+    databaseMocks.setConnection(database.connection);
+
+    await expect(new MariaDbStateStore().markOutboundMessage("message-1", "sent"))
+      .resolves.toEqual(expect.objectContaining({ status: "sent" }));
+    expect(database.current()?.status).toBe("sent");
+  });
+
+  it("records BullMQ's exhausted attempt count on terminal failure", async () => {
+    const database = fakeConnection(message());
+    databaseMocks.setConnection(database.connection);
+
+    await expect(new MariaDbStateStore().markOutboundMessage("message-1", "failed", "timeout", 3))
+      .resolves.toEqual(expect.objectContaining({ status: "failed", retryCount: 3 }));
+    expect(database.current()?.retry_count).toBe(3);
+  });
+
+  it("does not double-count a repeated terminal failure callback", async () => {
+    const database = fakeConnection(message());
+    databaseMocks.setConnection(database.connection);
+    const store = new MariaDbStateStore();
+
+    await store.markOutboundMessage("message-1", "failed", "timeout", 3);
+    await store.markOutboundMessage("message-1", "failed", "timeout", 3);
+
+    expect(database.current()?.retry_count).toBe(3);
   });
 
   it("returns undefined for a missing message", async () => {
