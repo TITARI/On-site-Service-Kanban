@@ -448,18 +448,12 @@ export function createFileAppRepository(
       bootstrapStatusFromState(await store.readState())
     ),
     bootstrapAdmin: async (input) => {
-      if (!input.legacyPassword.trim()) {
-        throw new Error("Legacy password is required");
-      }
       const passwordHash = await hashPassword(input.password);
       return updateState((state) => (
         bootstrapAdminInState(state, input, passwordHash)
       ));
     },
     bootstrapAdminWithSession: async (input, tokenHash, expiresAt) => {
-      if (!input.legacyPassword.trim()) {
-        throw new Error("Legacy password is required");
-      }
       const passwordHash = await hashPassword(input.password);
       return updateState((state) => {
         const actor = bootstrapAdminInState(state, input, passwordHash);
